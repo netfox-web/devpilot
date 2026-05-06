@@ -10,6 +10,181 @@
   <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted">待驗收</div><div class="display-6">{{ stats.acceptance }}</div></div></div></div>
   <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted">有問題 / 逾期</div><div class="display-6">{{ stats.problem }}</div></div></div></div>
 </div>
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card shadow-sm border-primary">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>AI Providers</span>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="btnCheckAiProviders">重新測試</button>
+      </div>
+      <div class="card-body">
+        <div class="row row-cols-1 row-cols-md-3 g-3" id="aiProviderHealth">
+          <div class="col">
+            <div class="border rounded p-3 h-100">
+              <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">GPT</span>
+                <span class="badge text-bg-secondary" data-provider-status="openai">未測試</span>
+              </div>
+              <div class="small text-muted mt-2" data-provider-detail="openai">按「重新測試」檢查 OpenAI 連線。</div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="border rounded p-3 h-100">
+              <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">Gemini</span>
+                <span class="badge text-bg-secondary" data-provider-status="gemini">未測試</span>
+              </div>
+              <div class="small text-muted mt-2" data-provider-detail="gemini">按「重新測試」檢查 Gemini 連線。</div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="border rounded p-3 h-100">
+              <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">Claude</span>
+                <span class="badge text-bg-warning" data-provider-status="claude">Pending</span>
+              </div>
+              <div class="small text-muted mt-2" data-provider-detail="claude">Claude 目前只檢查是否已設定 API Key。</div>
+            </div>
+          </div>
+        </div>
+        <div class="small text-muted mt-3" id="aiProviderHealthUpdated">不會顯示或記錄 API Key。</div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="row g-4 mb-4">
+  <div class="col-12">
+    <div class="card shadow-sm border-primary h-100">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center flex-wrap gap-3 py-3 px-3 px-md-4">
+        <span class="fs-5 lh-base">今日早報</span>
+        <div class="d-flex align-items-center flex-wrap gap-2 gap-md-3">
+          {% if daily_report %}
+            <span class="small text-muted text-nowrap">{{ daily_report.created_at }}</span>
+          {% endif %}
+          <button type="button" class="btn btn-sm btn-primary px-3" id="btnGenerateDailyReport">產生今日早報</button>
+        </div>
+      </div>
+      <div class="card-body px-3 px-md-4 py-4">
+        {% if daily_report %}
+          {% set yesterday_completed = daily_report.get('yesterday_completed', 0) %}
+          {% set pending_approval = daily_report.get('pending_approval', daily_report.get('pending_approvals', 0)) %}
+          {% set failed_tasks = daily_report.get('failed_tasks', endpoint_stats.endpoint_unreachable) %}
+          {% set docker_abnormal = daily_report.get('docker_abnormal', docker_stats.docker_stopped) %}
+          {% set ai_cost_today = daily_report.get('ai_cost_today', daily_report.get('today_ai_cost', 0)) %}
+          {% set ns = namespace(offline_ai=0) %}
+          {% for h in recent_heartbeats %}
+            {% if h.is_offline %}
+              {% set ns.offline_ai = ns.offline_ai + 1 %}
+            {% endif %}
+          {% endfor %}
+          <div class="mb-4 pb-1">
+            <div class="fw-semibold fs-5 lh-base mb-2">{{ daily_report.title }}</div>
+            <div class="text-muted small lh-lg">{{ daily_report.summary }}</div>
+          </div>
+          <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
+            <div class="col">
+              <div class="border rounded-3 p-4 h-100 bg-success-subtle border-success d-flex flex-column">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                  <span class="small text-muted lh-sm">昨日完成</span>
+                  <span class="fs-3 lh-1" aria-hidden="true" title="已完成">✅</span>
+                </div>
+                <div class="display-6 fw-bold text-success lh-1 mt-auto">{{ yesterday_completed }}</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="border rounded-3 p-4 h-100 bg-warning-subtle border-warning d-flex flex-column">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                  <span class="small text-muted lh-sm">待核准</span>
+                  <span class="fs-3 lh-1" aria-hidden="true" title="待核准">🟡</span>
+                </div>
+                <div class="display-6 fw-bold text-warning lh-1 mt-auto">{{ pending_approval }}</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="border rounded-3 p-4 h-100 bg-danger-subtle border-danger d-flex flex-column">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                  <span class="small text-muted lh-sm">失敗任務</span>
+                  <span class="fs-3 lh-1" aria-hidden="true" title="失敗">🔴</span>
+                </div>
+                <div class="display-6 fw-bold text-danger lh-1 mt-auto">{{ failed_tasks }}</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="border rounded-3 p-4 h-100 bg-danger-subtle border-danger d-flex flex-column">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                  <span class="small text-muted lh-sm">離線 AI</span>
+                  <span class="fs-3 lh-1" aria-hidden="true" title="離線 AI">🤖</span>
+                </div>
+                <div class="display-6 fw-bold text-danger lh-1 mt-auto">{{ ns.offline_ai }}</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="border rounded-3 p-4 h-100 bg-danger-subtle border-danger d-flex flex-column">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                  <span class="small text-muted lh-sm">Docker 異常</span>
+                  <span class="fs-3 lh-1" aria-hidden="true" title="Docker">🐳</span>
+                </div>
+                <div class="display-6 fw-bold text-danger lh-1 mt-auto">{{ docker_abnormal }}</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="border rounded-3 p-4 h-100 bg-primary-subtle border-primary d-flex flex-column">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                  <span class="small text-muted lh-sm">今日 AI 成本</span>
+                  <span class="fs-3 lh-1" aria-hidden="true" title="成本">💰</span>
+                </div>
+                <div class="display-6 fw-bold text-primary lh-1 mt-auto">{{ ai_cost_today }}</div>
+              </div>
+            </div>
+          </div>
+          <details class="mt-4 pt-2">
+            <summary class="small text-primary user-select-none">查看完整早報內容</summary>
+            <pre class="small bg-light border rounded p-3 mt-3 mb-0" style="white-space: pre-wrap;">{{ daily_report.content }}</pre>
+          </details>
+        {% else %}
+          <div class="text-muted py-2">尚未產生今日早報</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card shadow-sm border-secondary">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>Docker 服務概況</span>
+        <a class="btn btn-sm btn-outline-primary" href="/docker-scan">NAS Docker 掃描</a>
+      </div>
+      <div class="card-body">
+        <div class="row row-cols-2 row-cols-md-5 g-3 text-center">
+          <div><div class="text-muted small">服務總數</div><div class="fs-4 fw-semibold">{{ docker_stats.docker_service_total }}</div></div>
+          <div><div class="text-muted small">執行中 (running)</div><div class="fs-4 fw-semibold text-success">{{ docker_stats.docker_running }}</div></div>
+          <div><div class="text-muted small">已停止 / exited</div><div class="fs-4 fw-semibold text-secondary">{{ docker_stats.docker_stopped }}</div></div>
+          <div><div class="text-muted small">未綁定專案</div><div class="fs-4 fw-semibold text-warning">{{ docker_stats.docker_unbound }}</div></div>
+          <div class="col-md-12 col-lg"><div class="text-muted small">最後掃描時間</div><div class="small fw-semibold">{{ docker_stats.docker_last_scan_at }}</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card shadow-sm border-info">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>服務網址狀態</span>
+        <a class="btn btn-sm btn-outline-primary" href="/docker-scan">查看端點掃描</a>
+      </div>
+      <div class="card-body">
+        <div class="row row-cols-2 row-cols-md-4 g-3 text-center">
+          <div><div class="text-muted small">已偵測網址數</div><div class="fs-4 fw-semibold">{{ endpoint_stats.endpoint_total }}</div></div>
+          <div><div class="text-muted small">200 OK</div><div class="fs-4 fw-semibold text-success">{{ endpoint_stats.endpoint_ok_200 }}</div></div>
+          <div><div class="text-muted small">需要確認</div><div class="fs-4 fw-semibold text-warning">{{ endpoint_stats.endpoint_needs_confirm }}</div></div>
+          <div><div class="text-muted small">無法連線</div><div class="fs-4 fw-semibold text-danger">{{ endpoint_stats.endpoint_unreachable }}</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="row g-3">
   <div class="col-lg-7">
     <div class="card shadow-sm">
@@ -34,6 +209,30 @@
   </div>
   <div class="col-lg-5">
     <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>AI 心跳狀態</span>
+        <a class="btn btn-sm btn-outline-secondary" href="/ai-heartbeats">查看全部</a>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for h in recent_heartbeats %}
+          <a class="list-group-item list-group-item-action" href="/ai-heartbeats">
+            <div class="d-flex justify-content-between gap-2">
+              <div>
+                <span class="badge text-bg-dark">{{ h.source }}</span>
+                <span class="fw-bold">{{ h.agent_name }}</span>
+                <div class="small">{{ h.project_name or ('#' ~ h.project_id if h.project_id else '-') }}｜{{ h.machine_name or '-' }}</div>
+                <div class="small text-muted">{{ h.current_task or '-' }}</div>
+              </div>
+              <div class="text-end">
+                <span class="badge text-bg-{{ 'danger' if h.is_offline else ('success' if h.display_status in ['running', 'done'] else ('warning' if h.display_status == 'error' else 'secondary')) }}">{{ h.display_status }}</span>
+                <div class="small text-muted mt-1">{{ h.last_seen_at or '-' }}</div>
+              </div>
+            </div>
+          </a>
+        {% else %}<div class="list-group-item text-muted">尚無 AI 心跳</div>{% endfor %}
+      </div>
+    </div>
+    <div class="card shadow-sm mb-3">
       <div class="card-header fw-bold">最近 AI 交接紀錄</div>
       <div class="list-group list-group-flush">
         {% for l in recent_logs %}
@@ -55,4 +254,82 @@
     </div>
   </div>
 </div>
+<script>
+  (function () {
+    const btn = document.getElementById('btnGenerateDailyReport');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '產生中...';
+      try {
+        const resp = await fetch('/api/reports/daily/generate', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer {{ api_token }}',
+            'Content-Type': 'application/json; charset=utf-8'
+          },
+          body: JSON.stringify({})
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        window.location.reload();
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '重試產生今日早報';
+      } finally {
+        if (btn.disabled) btn.textContent = original;
+      }
+    });
+  })();
+
+  (function () {
+    const btn = document.getElementById('btnCheckAiProviders');
+    if (!btn) return;
+    const statusText = {
+      online: '✅ Online',
+      not_configured: '⚠ Not configured',
+      configured: '⚠ Pending',
+      error: '❌ Error'
+    };
+    const statusClass = {
+      online: 'text-bg-success',
+      not_configured: 'text-bg-secondary',
+      configured: 'text-bg-warning',
+      error: 'text-bg-danger'
+    };
+    function setProvider(name, result) {
+      const badge = document.querySelector(`[data-provider-status="${name}"]`);
+      const detail = document.querySelector(`[data-provider-detail="${name}"]`);
+      if (!badge || !detail) return;
+      const status = result.status || 'error';
+      badge.className = `badge ${statusClass[status] || 'text-bg-danger'}`;
+      badge.textContent = statusText[status] || status;
+      const countText = typeof result.modelCount === 'number' ? `models: ${result.modelCount}` : '';
+      detail.textContent = result.error || countText || status;
+    }
+    async function checkProviders() {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '測試中...';
+      try {
+        const resp = await fetch('/api/ai/providers/health', {
+          headers: { 'Authorization': 'Bearer {{ api_token }}' }
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        setProvider('openai', data.openai || {});
+        setProvider('gemini', data.gemini || {});
+        setProvider('claude', data.claude || {});
+        document.getElementById('aiProviderHealthUpdated').textContent = '最後測試：' + new Date().toLocaleString();
+      } catch (err) {
+        document.getElementById('aiProviderHealthUpdated').textContent = '測試失敗：' + err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    }
+    btn.addEventListener('click', checkProviders);
+    checkProviders();
+  })();
+</script>
 {% endblock %}

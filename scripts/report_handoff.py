@@ -1,7 +1,8 @@
 """DevPilot AI 交接回寫工具
 
 用法：
-python scripts/report_handoff.py --base-url http://127.0.0.1:5000 --token YOUR_TOKEN --project-id 1 --source claude --summary "完成第三階段 API" --phase "第三階段" --test-result "測試通過"
+python scripts/report_handoff.py --project-id 1 --source claude --summary "完成第三階段 API" --phase "第三階段" --test-result "測試通過"
+（基底 URL 優先讀取 .env 的 DEV_PILOT_API_URL；未設定則預設 http://127.0.0.1:5000。可傳入 --base-url 覆寫。）
 """
 import argparse
 import json
@@ -33,7 +34,11 @@ def run(cmd):
 def main():
     load_env_file()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://127.0.0.1:5000")
+    parser.add_argument(
+        "--base-url",
+        default=(os.getenv("DEV_PILOT_API_URL") or "http://127.0.0.1:5000").strip().rstrip("/"),
+        help="Handoff API 基底 URL（預設：環境變數 DEV_PILOT_API_URL 或 http://127.0.0.1:5000）",
+    )
     parser.add_argument("--token", default=os.getenv("DEV_PILOT_API_TOKEN") or os.getenv("API_TOKEN"))
     parser.add_argument("--project-id", required=True, type=int)
     parser.add_argument("--source", default="claude", choices=["codex", "claude", "cursor", "antigravity", "manual", "github", "deploy"])

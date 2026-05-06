@@ -3,9 +3,11 @@
 <div class="d-flex justify-content-between align-items-start mb-3">
   <div>
     <h1 class="h3 mb-1">{{ project.name }}</h1>
-    <div class="text-muted">{{ project.client_name or '無客戶名稱' }}｜{{ project.project_type or '未分類' }}｜負責：{{ project.owner_machine or '-' }}</div>
+    <div class="text-muted">{{ project.client_name or '無客戶名稱' }}｜{{ project.project_type or '未分類' }}｜負責：{{ machine_display_name(project.owner_machine) or '-' }}</div>
   </div>
   <div>
+    <a class="btn btn-outline-success" href="/projects/{{ project.id }}/engineering-report">工程報告</a>
+    <a class="btn btn-outline-secondary" href="/projects/{{ project.id }}/engineering-report/export?format=markdown">匯出 MD</a>
     <a class="btn btn-outline-primary" href="/projects/{{ project.id }}/edit">編輯專案</a>
     <form class="d-inline" method="post" action="/projects/{{ project.id }}/delete" onsubmit="return confirm('確定刪除？')"><button class="btn btn-outline-danger">刪除</button></form>
   </div>
@@ -43,8 +45,484 @@
 </div>
 
 <div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>AI Tasks</span>
+    <span class="badge text-bg-light">project task flow</span>
+  </div>
+  <div class="card-body">
+    <div class="row g-3 align-items-end mb-3">
+      <div class="col-lg-3">
+        <form method="post" action="/projects/{{ project.id }}/ai-tasks/create-default-flow">
+          <button class="btn btn-success w-100">建立預設 AI 流程</button>
+        </form>
+      </div>
+      <div class="col-lg-3">
+        <form method="post" action="/projects/{{ project.id }}/run-ai-flow-safe">
+          <button class="btn btn-outline-primary w-100">安全自動跑流程</button>
+        </form>
+      </div>
+      <div class="col-lg-3">
+        <form method="post" action="/projects/{{ project.id }}/run-ai-flow-full" onsubmit="return confirm('全自動模式只會執行白名單 AI 任務，不會部署或執行系統指令。確定執行？')">
+          <button class="btn btn-outline-danger w-100">全自動跑流程</button>
+        </form>
+      </div>
+      <div class="col-lg-3">
+        <div class="small text-muted">Safe 會停在人工審核；Full 只允許安全白名單 task_type。</div>
+      </div>
+      <div class="col-lg-12">
+        <form class="row g-2 align-items-end" method="post" action="/projects/{{ project.id }}/ai-tasks/from-template">
+          <div class="col-md-9">
+            <label class="form-label">從模板新增任務</label>
+            <select class="form-select" name="template_id">
+              {% for template in task_templates %}
+                <option value="{{ template.id }}">{{ template.sort_order }}. {{ template.name }} / {{ template.provider }} / {{ template.priority }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <button class="btn btn-outline-primary w-100">新增</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {% if flow_messages %}
+    <div class="border rounded p-3 mb-3">
+      <div class="fw-semibold mb-2">Flow mode 執行結果</div>
+      <div class="list-group list-group-flush">
+        {% for message in flow_messages[:5] %}
+          <div class="list-group-item px-0">
+            <div class="d-flex justify-content-between gap-2">
+              <span>{{ message.prompt_summary }}</span>
+              <span class="small text-muted">{{ message.created_at }}</span>
+            </div>
+            <div class="small text-muted">{{ message.response_text or message.raw_response }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="border rounded p-3 mb-3">
+      <div class="fw-semibold mb-2">AI Flow 執行紀錄</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Mode</th>
+              <th>Status</th>
+              <th>Started</th>
+              <th>Finished</th>
+              <th>Done / Failed</th>
+              <th>Stopped Reason</th>
+              <th>Summary</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in flow_runs %}
+              <tr>
+                <td><a href="/flow-runs/{{ run.id }}" class="badge text-bg-dark text-decoration-none">{{ run.mode }}</a></td>
+                <td><span class="badge text-bg-{{ 'success' if run.status == 'completed' else ('warning' if run.status == 'approval_required' else ('danger' if run.status == 'failed' else 'secondary')) }}">{{ run.status }}</span></td>
+                <td class="small text-muted">{{ run.started_at or '-' }}</td>
+                <td class="small text-muted">{{ run.finished_at or '-' }}</td>
+                <td>{{ run.done_tasks or 0 }} / {{ run.failed_tasks or 0 }}</td>
+                <td><code class="small">{{ run.stopped_reason or '-' }}</code></td>
+                <td style="min-width: 24rem;">
+                  <pre class="small bg-light border rounded p-2 mb-0 text-wrap">{{ run.summary or '-' }}</pre>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="text-center text-muted">尚無 AI Flow 執行紀錄</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <form class="row g-3 align-items-end mb-3" method="post" action="/projects/{{ project.id }}/ai-tasks">
+      <div class="col-lg-3">
+        <label class="form-label">Title</label>
+        <input class="form-control" name="title" placeholder="Review staging result" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Provider</label>
+        <select class="form-select" name="provider">
+          <option value="openai">OpenAI GPT</option>
+          <option value="gemini">Gemini</option>
+          <option value="claude">Claude</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Task Type</label>
+        <select class="form-select" name="task_type">
+          <option value="general">general</option>
+          <option value="planning">planning</option>
+          <option value="review">review</option>
+          <option value="test">test</option>
+          <option value="deploy-check">deploy-check</option>
+          <option value="content">content</option>
+          <option value="automation">automation</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Priority</label>
+        <select class="form-select" name="priority">
+          <option value="medium">medium</option>
+          <option value="low">low</option>
+          <option value="high">high</option>
+          <option value="urgent">urgent</option>
+        </select>
+      </div>
+      <div class="col-md-1">
+        <label class="form-label">Retries</label>
+        <input class="form-control" type="number" min="0" max="20" name="max_retries" value="3">
+      </div>
+      <div class="col-md-1">
+        <label class="form-label d-block">Auto</label>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="auto_run_next" value="1" id="projectAiTaskAutoNext">
+          <label class="form-check-label small" for="projectAiTaskAutoNext">next</label>
+        </div>
+      </div>
+      <div class="col-md-1">
+        <label class="form-label d-block">Approval</label>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="requires_approval" value="1" id="projectAiTaskApproval">
+          <label class="form-check-label small" for="projectAiTaskApproval">required</label>
+        </div>
+      </div>
+      <div class="col-md-1">
+        <button class="btn btn-primary w-100">Create</button>
+      </div>
+      <div class="col-12">
+        <label class="form-label">Prompt</label>
+        <textarea class="form-control" name="prompt" rows="3" placeholder="Describe the AI task for this project" required></textarea>
+      </div>
+    </form>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Task</th>
+            <th>Status</th>
+            <th>Provider</th>
+            <th>Priority</th>
+            <th>Retry</th>
+            <th>Auto Next</th>
+            <th>Last Auto</th>
+            <th>Approval</th>
+            <th>Result</th>
+            <th>Updated</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for task in ai_tasks %}
+          <tr>
+            <td>
+              <div class="fw-semibold"><a href="/ai-tasks/{{ task.id }}">#{{ task.id }} {{ task.title }}</a></div>
+              <div class="small text-muted">{{ task.task_type or 'general' }}</div>
+            </td>
+            <td>
+              {% set task_status_class = 'success' if task.status == 'done' else ('danger' if task.status == 'failed' else ('warning' if task.status == 'running' else ('dark' if task.status == 'blocked' else ('secondary' if task.status == 'canceled' else 'primary')))) %}
+              <span class="badge text-bg-{{ task_status_class }}">{{ task.status or 'queued' }}</span>
+            </td>
+            <td>{{ task.provider or '-' }}</td>
+            <td><span class="badge text-bg-{{ 'danger' if task.priority == 'urgent' else ('warning' if task.priority == 'high' else ('info' if task.priority == 'medium' else 'secondary')) }}">{{ task.priority or 'medium' }}</span></td>
+            <td class="small">{{ task.retry_count or 0 }} / {{ task.max_retries if task.max_retries is not none else 3 }}</td>
+            <td><span class="badge text-bg-{{ 'success' if task.auto_run_next else 'secondary' }}">{{ 'on' if task.auto_run_next else 'off' }}</span></td>
+            <td class="small text-muted">{{ task.last_auto_run_at or '-' }}</td>
+            <td class="small">
+              <span class="badge text-bg-{{ 'warning' if task.requires_approval and task.approval_status == 'pending' else ('success' if task.approval_status == 'approved' else ('danger' if task.approval_status == 'rejected' else 'secondary')) }}">
+                {{ task.approval_status or 'none' }}
+              </span>
+              {% if task.requires_approval %}
+                <div class="text-muted">requires approval</div>
+              {% endif %}
+              {% if task.approved_at %}
+                <div class="text-muted">{{ task.approved_by or 'local_admin' }} / {{ task.approved_at }}</div>
+              {% endif %}
+            </td>
+            <td class="small text-break" style="min-width: 240px;">{{ task.result or task.error_message or task.prompt }}</td>
+            <td class="small text-muted">{{ task.updated_at or '-' }}</td>
+            <td>
+              <div class="d-flex flex-wrap gap-1 justify-content-end">
+                {% if task.status == 'queued' or not task.status %}
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/run"><button class="btn btn-sm btn-outline-primary">Run</button></form>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/run-flow"><button class="btn btn-sm btn-outline-success">Run Flow</button></form>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/block"><button class="btn btn-sm btn-outline-dark">Block</button></form>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/cancel"><button class="btn btn-sm btn-outline-secondary">Cancel</button></form>
+                {% elif task.status == 'running' %}
+                  <button class="btn btn-sm btn-outline-warning" disabled>Running</button>
+                  <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/block"><button class="btn btn-sm btn-outline-dark">Block</button></form>
+                {% elif task.status == 'failed' %}
+                  <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/retry"><button class="btn btn-sm btn-outline-primary">Retry</button></form>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/block"><button class="btn btn-sm btn-outline-dark">Block</button></form>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/cancel"><button class="btn btn-sm btn-outline-secondary">Cancel</button></form>
+                {% elif task.status == 'blocked' %}
+                  <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/unblock"><button class="btn btn-sm btn-outline-primary">Unblock</button></form>
+                  <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/cancel"><button class="btn btn-sm btn-outline-secondary">Cancel</button></form>
+                {% elif task.status == 'done' %}
+                  <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                  {% if task.requires_approval and task.approval_status == 'pending' %}
+                    <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/approve"><button class="btn btn-sm btn-success">Approve</button></form>
+                    <form method="post" action="/projects/{{ project.id }}/ai-tasks/{{ task.id }}/reject"><button class="btn btn-sm btn-outline-danger">Reject</button></form>
+                  {% endif %}
+                  <span class="small text-muted">Done</span>
+                {% elif task.status == 'canceled' %}
+                  <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                  <span class="small text-muted">Canceled</span>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="11" class="text-center text-muted">No AI tasks for this project.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>Git / Worktree / Deploy</span>
+    <span class="badge text-bg-secondary">{{ project_repo.repo_status if project_repo else 'missing' }}</span>
+  </div>
+  <div class="card-body">
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <div class="text-muted small">Repo URL</div>
+        <div class="text-break">{{ project_repo.repo_url if project_repo and project_repo.repo_url else '-' }}</div>
+      </div>
+      <div class="col-md-6">
+        <div class="text-muted small">Repo Path</div>
+        <div class="text-break">{{ project_repo.repo_path if project_repo and project_repo.repo_path else '-' }}</div>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted small">Worktree Path</div>
+        <div class="text-break">{{ project_repo.worktree_path if project_repo and project_repo.worktree_path else '-' }}</div>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted small">Deploy Path</div>
+        <div class="text-break">{{ project_repo.deploy_path if project_repo and project_repo.deploy_path else '-' }}</div>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted small">Branch / Commit</div>
+        <div class="text-break">{{ project_repo.branch if project_repo and project_repo.branch else '-' }} / {{ project_repo.last_commit[:12] if project_repo and project_repo.last_commit else '-' }}</div>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted small">Production 路徑</div>
+        <div class="text-break">{{ deployment_env_paths.production }}</div>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted small">Staging 路徑</div>
+        <div class="text-break">{{ deployment_env_paths.staging }}</div>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted small">Backup 路徑</div>
+        <div class="text-break">{{ deployment_env_paths.backup }}</div>
+      </div>
+    </div>
+    <form class="row g-2 align-items-end" method="post" action="/projects/{{ project.id }}/repo">
+      <div class="col-lg-6">
+        <label class="form-label">repo_url</label>
+        <input class="form-control" name="repo_url" value="{{ project_repo.repo_url if project_repo else '' }}" placeholder="https://gitea.example.com/org/repo.git">
+      </div>
+      <div class="col-lg-6">
+        <label class="form-label">repo_path</label>
+        <input class="form-control" name="repo_path" value="{{ project_repo.repo_path if project_repo else '' }}" placeholder="/volume1/repos/project-name">
+      </div>
+      <div class="col-lg-4">
+        <label class="form-label">worktree_path</label>
+        <input class="form-control" name="worktree_path" value="{{ project_repo.worktree_path if project_repo else '' }}" placeholder="E:\Ai-project\repo 或 /volume1/worktrees/repo">
+      </div>
+      <div class="col-lg-4">
+        <label class="form-label">deploy_path</label>
+        <input class="form-control" name="deploy_path" value="{{ project_repo.deploy_path if project_repo else '' }}" placeholder="/volume1/docker/project-name">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">repo_status</label>
+        <select class="form-select" name="repo_status">
+          {% for status in repo_statuses %}
+            <option value="{{ status }}" {% if project_repo and project_repo.repo_status == status %}selected{% endif %}>{{ status }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">sync_method</label>
+        <select class="form-select" name="sync_method">
+          {% for method in sync_methods %}
+            <option value="{{ method }}" {% if project_repo and project_repo.sync_method == method %}selected{% endif %}>{{ method }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <div class="small text-muted">AI 只能修改 worktree；Docker 目錄是 runtime，不要直接在 <code>/volume1/docker/*</code> 寫 code。</div>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-primary w-100">儲存 Repo</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>AI 派工（dispatch）</span>
+    <span class="badge text-bg-light">worktree → deploy</span>
+  </div>
+  <div class="card-body">
+    <div class="mb-3">
+      <h5 class="mb-1">新增 AI dispatch 任務</h5>
+      <div class="small text-muted">建立後狀態會是 queued；Windows runner 可用 <code>--project-id {{ project.id }}</code> 只抓取此專案任務。</div>
+    </div>
+    <form class="row g-3 align-items-end" method="post" action="/projects/{{ project.id }}/dispatch">
+      <div class="col-12">
+        <button class="btn btn-primary">新增 AI 任務</button>
+      </div>
+      <div class="col-lg-7">
+        <label class="form-label">任務內容</label>
+        <textarea class="form-control" name="task" rows="3" placeholder="例如：修正 API /api/orders 500 錯誤" required></textarea>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Agent</label>
+        <select class="form-select" name="agent">
+          <option value="codex">codex</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <div>
+          <input class="form-check-input" type="hidden" name="provider" value="openai">
+          <input class="form-check-input" type="hidden" name="task_role" value="executor">
+          <input class="form-check-input" type="hidden" name="approval_required" value="1">
+          <label class="form-label">risk_level</label>
+          <select class="form-select" name="risk_level">
+            {% for level in dispatch_risk_levels %}
+              <option value="{{ level }}">{{ level }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="small text-muted">Worker 只會在 worktree 執行 Codex；部署需另外核准。</div>
+      </div>
+      <div class="col-md-1">
+        <button class="btn btn-primary w-100">派工</button>
+      </div>
+    </form>
+    <div class="small text-muted mt-3">
+      DevPilot 會先在 worktree 寫入 <code>.devpilot_last_task.txt</code>；若勾選部署，才會同步到 deploy path 並執行 <code>docker compose up -d</code>。
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>內容生成</span>
+    <span class="badge text-bg-light">商品 → 影片 → 文案 → 預覽 → 手動發佈</span>
+  </div>
+  <div class="card-body">
+    <form class="row g-3" method="post" action="/projects/{{ project.id }}/content/product-video">
+      <div class="col-lg-3">
+        <label class="form-label">商品名稱</label>
+        <input class="form-control" name="product_name" placeholder="濕紙巾" required>
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label">目標族群</label>
+        <input class="form-control" name="target" placeholder="媽媽族群">
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label">風格</label>
+        <input class="form-control" name="style" placeholder="促銷 / 溫馨 / 快速">
+      </div>
+      <div class="col-lg-3 d-flex align-items-end">
+        <button class="btn btn-success w-100">生成商品影片</button>
+      </div>
+      <div class="col-12">
+        <label class="form-label">商品特色（每行一項）</label>
+        <textarea class="form-control" name="features" rows="3" placeholder="台灣製&#10;80抽&#10;RO純水"></textarea>
+      </div>
+    </form>
+    <div class="small text-muted mt-2">Claude 產生短影音腳本與貼文文案；Kling 生成影片。所有 access token 只從環境變數讀取，不會顯示、寫入 log 或存進資料庫；發佈必須手動按鈕確認。</div>
+
+    <hr>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>時間</th>
+            <th>類型</th>
+            <th>商品</th>
+            <th>狀態</th>
+            <th>貼文</th>
+            <th>影片</th>
+            <th>文案預覽</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in content_jobs %}
+            <tr>
+              <td class="small text-muted">{{ job.created_at }}</td>
+              <td><span class="badge text-bg-secondary">{{ job.type }}</span></td>
+              <td>{{ job.title or '-' }}</td>
+              <td>
+                <span class="badge text-bg-{% if job.status == 'done' %}success{% elif job.status == 'failed' %}danger{% elif job.status == 'running' %}warning{% else %}secondary{% endif %}">{{ job.status }}</span>
+                <div class="small mt-1">
+                  <span class="badge text-bg-{% if job.post_status == 'published' %}success{% elif job.post_status == 'ready' %}primary{% else %}secondary{% endif %}">{{ job.post_status or 'draft' }}</span>
+                  {% if job.post_platform %}<span class="badge text-bg-light">{{ job.post_platform }}</span>{% endif %}
+                </div>
+              </td>
+              <td class="small text-break" style="max-width: 320px; white-space: pre-wrap;">{{ job.post_text or '-' }}</td>
+              <td>
+                {% if job.output_url %}
+                  <video class="d-block mb-1" controls style="max-width: 180px; max-height: 120px;" src="{{ job.output_url }}"></video>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ job.output_url }}" target="_blank" rel="noopener">下載</a>
+                {% else %}
+                  <span class="text-muted small">尚未產生</span>
+                {% endif %}
+              </td>
+              <td class="small text-break" style="max-width: 360px;">{{ job.script or '-' }}</td>
+              <td class="text-end">
+                {% if job.type == 'product_video' %}
+                  <form class="mb-1" method="post" action="/projects/{{ project.id }}/content/product-video">
+                    <input type="hidden" name="product_name" value="{{ job.title }}">
+                    <input type="hidden" name="features" value="">
+                    <input type="hidden" name="target" value="">
+                    <input type="hidden" name="style" value="重新生成">
+                    <button class="btn btn-sm btn-outline-secondary">重新生成</button>
+                  </form>
+                {% endif %}
+                {% if job.output_url and job.post_text %}
+                  <form class="mb-1" method="post" action="/content/{{ job.id }}/publish/facebook" onsubmit="return confirm('確定要手動發佈到 Facebook 嗎？')">
+                    <button class="btn btn-sm btn-outline-primary">發佈到 Facebook</button>
+                  </form>
+                  <form method="post" action="/content/{{ job.id }}/publish/line" onsubmit="return confirm('確定要手動發佈到 LINE 嗎？')">
+                    <button class="btn btn-sm btn-outline-success">發佈到 LINE</button>
+                  </form>
+                {% else %}
+                  <div class="small text-muted">影片與文案完成後可發佈</div>
+                {% endif %}
+                {% if job.post_id %}<div class="small text-muted mt-1">post_id: {{ job.post_id }}</div>{% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8" class="text-muted">尚無內容生成紀錄</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
   <div class="card-header fw-bold">一鍵複製 AI 工具回寫指令</div>
   <div class="card-body">
+    <div class="small text-muted mb-3">目前回寫目標 API：<code>{{ api_base_url }}</code></div>
     <div class="row g-3 align-items-stretch">
       <div class="col-xl-3 col-lg-4 col-md-6">
         <div class="border rounded p-3 h-100 d-flex flex-column">
@@ -78,6 +556,51 @@
       </div>
     </div>
     <div id="copyHandoffStatus" class="small text-success mt-3" role="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">複製 AI 心跳回報指令</div>
+      <div class="card-body">
+        <div class="small text-muted mb-3">每段指令會呼叫 <code>POST /api/ai-heartbeats</code>，並使用 UTF-8 bytes 送出中文內容。</div>
+        <div class="row g-2">
+          <div class="col-sm-6"><button type="button" class="btn btn-dark w-100 js-copy-heartbeat" data-command-key="codex_ps">Codex 心跳 PowerShell</button></div>
+          <div class="col-sm-6"><button type="button" class="btn btn-primary w-100 js-copy-heartbeat" data-command-key="claude_ps">Claude 心跳 PowerShell</button></div>
+          <div class="col-sm-6"><button type="button" class="btn btn-info text-white w-100 js-copy-heartbeat" data-command-key="cursor_ps">Cursor 心跳 PowerShell</button></div>
+          <div class="col-sm-6"><button type="button" class="btn btn-success w-100 js-copy-heartbeat" data-command-key="antigravity_ps">Antigravity 心跳 PowerShell</button></div>
+        </div>
+        <div id="copyHeartbeatStatus" class="small text-success mt-3" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>此專案 AI 活動</span>
+        <a class="btn btn-sm btn-outline-secondary" href="/ai-heartbeats?project_id={{ project.id }}">查看全部</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>來源</th><th>Agent</th><th>狀態</th><th>電腦</th><th>目前任務</th><th>最後回報</th></tr></thead>
+          <tbody>
+            {% for h in project_heartbeats %}
+              <tr>
+                <td><span class="badge text-bg-dark">{{ h.source }}</span></td>
+                <td>{{ h.agent_name or '-' }}</td>
+                <td><span class="badge text-bg-{{ 'danger' if h.is_offline else ('success' if h.display_status in ['running', 'done'] else ('warning' if h.display_status == 'error' else 'secondary')) }}">{{ h.display_status }}</span></td>
+                <td>{{ h.machine_name or '-' }}</td>
+                <td class="small">{{ h.current_task or '-' }}<div class="text-muted">{{ h.last_message or '' }}</div></td>
+                <td class="small text-muted">{{ h.last_seen_at or '-' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-center text-muted">此專案尚無 AI 心跳</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -184,6 +707,120 @@
 
   <div class="tab-pane fade" id="deploy">
     <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>多環境部署</span>
+        <span class="badge text-bg-warning">Production 需核准</span>
+      </div>
+      <div class="card-body">
+        <div class="row g-3 mb-3">
+          <div class="col-md-4"><div class="text-muted small">Production</div><div class="text-break">{{ deployment_env_paths.production }}</div></div>
+          <div class="col-md-4"><div class="text-muted small">Staging</div><div class="text-break">{{ deployment_env_paths.staging }}</div></div>
+          <div class="col-md-4"><div class="text-muted small">Backup</div><div class="text-break">{{ deployment_env_paths.backup }}</div></div>
+        </div>
+        <div class="row g-3">
+          <div class="col-lg-6">
+            <form class="border rounded p-3 h-100" method="post" action="/projects/{{ project.id }}/deploy-staging">
+              <h6>Deploy Staging</h6>
+              <input class="form-control mb-2" name="task" placeholder="部署說明 / 任務摘要">
+              <input class="form-control mb-2" name="health_url" placeholder="Health check URL（可空）">
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" name="run_compose" value="1" id="stagingRunCompose">
+                <label class="form-check-label" for="stagingRunCompose">同步後執行 docker compose up -d</label>
+              </div>
+              <button class="btn btn-primary">部署到 Staging</button>
+              <div class="small text-muted mt-2">AI 只能部署 staging；production 需人工核准 job。</div>
+            </form>
+          </div>
+          <div class="col-lg-6">
+            <form class="border rounded p-3 h-100" method="post" action="/projects/{{ project.id }}/deploy-production">
+              <h6>Deploy Production</h6>
+              <select class="form-select mb-2" name="job_id" required>
+                <option value="">選擇已核准 production job</option>
+                {% for job in deployment_jobs %}
+                  {% if job.environment == 'production' and job.status == 'approved' %}
+                    <option value="{{ job.id }}">#{{ job.id }} {{ job.task or 'production deploy' }}</option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+              <input class="form-control mb-2" name="health_url" placeholder="Health check URL（可空）">
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" name="run_compose" value="1" id="productionRunCompose">
+                <label class="form-check-label" for="productionRunCompose">同步後執行 docker compose up -d</label>
+              </div>
+              <button class="btn btn-danger">部署到 Production</button>
+              <div class="small text-muted mt-2">未核准的 production job 會被 API 阻擋。</div>
+            </form>
+          </div>
+        </div>
+        <div class="table-responsive mt-3">
+          <table class="table table-sm mb-0 align-middle">
+            <thead><tr><th>Job</th><th>環境</th><th>狀態</th><th>驗收</th><th>任務</th><th>目標路徑</th><th>更新時間</th><th></th></tr></thead>
+            <tbody>
+              {% for job in deployment_jobs %}
+                <tr>
+                  <td>#{{ job.id }}</td>
+                  <td>{{ job.environment }}</td>
+                  <td><span class="badge text-bg-{{ 'success' if job.status in ['approved', 'succeeded'] else ('danger' if job.status == 'failed' else 'secondary') }}">{{ job.status }}</span></td>
+                  <td>{% if job.validation_status %}<span class="badge text-bg-{{ 'success' if job.validation_status == 'pass' else 'danger' }}">{{ job.validation_status }}</span>{% else %}-{% endif %}</td>
+                  <td class="small">{{ job.task or '-' }}</td>
+                  <td class="small text-break">{{ job.target_path or '-' }}</td>
+                  <td class="small text-muted">{{ job.updated_at or '-' }}</td>
+                  <td>
+                    {% if job.environment == 'staging' %}
+                      <form class="d-inline" method="post" action="/deployment-jobs/{{ job.id }}/validate-staging">
+                        <button class="btn btn-sm btn-outline-primary">驗收 staging</button>
+                      </form>
+                    {% endif %}
+                    {% if job.environment == 'production' and job.status in ['pending', 'waiting_approval'] %}
+                      <form class="d-inline" method="post" action="/deployment-jobs/{{ job.id }}/approve">
+                        <button class="btn btn-sm btn-outline-success">核准</button>
+                      </form>
+                    {% endif %}
+                    {% if latest_snapshot %}
+                      <form class="d-inline" method="post" action="/deployment-jobs/{{ job.id }}/rollback" onsubmit="return confirm('確定要 rollback 這個部署 job 嗎？')">
+                        <button class="btn btn-sm btn-outline-danger">rollback</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="8" class="text-center text-muted">尚無部署 job</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="row g-3 mt-2">
+          <div class="col-lg-6">
+            <div class="border rounded p-3 h-100">
+              <div class="fw-bold mb-2">Gemini staging 驗收</div>
+              {% for report in validation_reports %}
+                <div class="small border-bottom py-2">
+                  <span class="badge text-bg-{{ 'success' if report.status == 'pass' else 'danger' }}">{{ report.status }}</span>
+                  <span class="ms-1">score {{ report.score }}</span>
+                  <div>{{ report.summary or '-' }}</div>
+                  <div class="text-muted">{{ report.created_at }}</div>
+                </div>
+              {% else %}
+                <div class="small text-muted">尚無 Gemini 驗收紀錄</div>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="border rounded p-3 h-100">
+              <div class="fw-bold mb-2">最後 snapshot</div>
+              {% if latest_snapshot %}
+                <div class="small">環境：{{ latest_snapshot.environment }}</div>
+                <div class="small text-break">snapshot：{{ latest_snapshot.snapshot_path }}</div>
+                <div class="small text-muted">{{ latest_snapshot.created_at }}</div>
+              {% else %}
+                <div class="small text-muted">尚無 snapshot</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card shadow-sm mb-3">
       <div class="card-header fw-bold">部署位置管理</div>
       <div class="card-body">
         <div class="table-responsive">
@@ -234,6 +871,61 @@
         </div>
       </div>
     </div>
+    <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>服務網址</span>
+        <a class="btn btn-sm btn-outline-primary" href="/docker-scan">前往端點掃描</a>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 align-middle">
+            <thead><tr><th>類型</th><th>網址</th><th>狀態碼</th><th>標題</th><th>Container</th><th>最後檢查</th></tr></thead>
+            <tbody>
+              {% for e in service_endpoints %}
+              <tr>
+                <td>
+                  <span class="badge text-bg-{{ 'success' if e.endpoint_type == 'frontend' else ('primary' if e.endpoint_type == 'admin' else ('dark' if e.endpoint_type == 'api' else ('info' if e.endpoint_type == 'health' else 'secondary'))) }}">{{ e.endpoint_type }}</span>
+                  {% if e.is_confirmed %}<span class="badge text-bg-success">已確認</span>{% endif %}
+                </td>
+                <td class="small text-break"><a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.url }}</a></td>
+                <td><span class="badge text-bg-{{ 'success' if e.status_code == 200 else ('warning' if e.status_code and e.status_code < 500 else 'danger') }}">{{ e.status_code if e.status_code is not none else 'ERR' }}</span></td>
+                <td class="small">{{ e.title or e.notes or '-' }}</td>
+                <td><code class="small">{{ e.container_name }}</code></td>
+                <td class="small text-muted">{{ e.last_checked_at or '-' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="6" class="text-center text-muted py-3">尚未掃描到服務網址。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>Docker 服務</span>
+        <a class="btn btn-sm btn-outline-primary" href="/docker-scan">前往掃描／綁定</a>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 align-middle">
+            <thead><tr><th>Container</th><th>Image</th><th>狀態</th><th>Ports</th><th>部署路徑</th><th>Compose</th><th>主機</th><th>最後觀測</th></tr></thead>
+            <tbody>
+              {% for d in docker_svc_rows %}<tr>
+                <td><code class="small">{{ d.container_name }}</code></td>
+                <td class="small">{{ d.image or '-' }}</td>
+                <td><span class="badge text-bg-secondary">{{ d.status or '-' }}</span></td>
+                <td class="small text-break" style="max-width:12rem">{{ d.ports or '-' }}</td>
+                <td class="small">{{ d.deploy_path or '-' }}</td>
+                <td class="small">{{ d.compose_path or '-' }}</td>
+                <td class="small">{{ d.target_name or '-' }}</td>
+                <td class="small text-muted">{{ d.last_seen_at or '-' }}</td>
+              </tr>{% else %}<tr><td colspan="8" class="text-center text-muted py-3">尚未綁定或未掃描到 Docker 容器</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
     <form class="card shadow-sm p-3 mb-3" method="post" action="/projects/{{ project.id }}/project-deployments">
       <h5>新增部署位置</h5>
       <div class="row g-2">
@@ -266,9 +958,66 @@
     <div class="col-lg-4"><form class="card shadow-sm p-3" method="post" action="/projects/{{ project.id }}/acceptance"><h5>新增驗收項目</h5><input class="form-control mb-2" name="title" placeholder="驗收項目" required><input class="form-control mb-2" name="status" value="未驗收"><div class="form-check"><input class="form-check-input" type="checkbox" name="tested" id="tested"><label class="form-check-label" for="tested">已測試</label></div><div class="form-check"><input class="form-check-input" type="checkbox" name="accepted" id="accepted"><label class="form-check-label" for="accepted">已驗收</label></div><textarea class="form-control my-2" name="notes" placeholder="備註"></textarea><button class="btn btn-primary">新增</button></form></div></div>
   </div>
 </div>
+<div class="card shadow-sm my-3">
+  <div class="card-header fw-bold">AI dispatch 任務列表</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th>Job</th><th>Agent</th><th>Status</th><th>Risk</th><th>Task</th><th>Updated</th><th></th></tr></thead>
+      <tbody>
+        {% for job in dispatch_jobs %}
+          <tr>
+            <td>#{{ job.id }}</td>
+            <td>{{ job.agent or '-' }}</td>
+            <td><span class="badge text-bg-{{ 'success' if job.status in ['waiting_approval', 'deployed'] else ('danger' if job.status == 'failed' else ('warning' if job.status == 'running' else 'secondary')) }}">{{ job.status }}</span></td>
+            <td>{{ job.risk_level or '-' }}</td>
+            <td class="small" style="min-width: 280px;">
+              <div>{{ job.task_prompt or job.task or '-' }}</div>
+              {% if job.changed_files %}
+                <div class="mt-2">
+                  <span class="fw-semibold">changed_files</span>
+                  <pre class="small bg-light border rounded p-2 mb-1 text-wrap">{{ job.changed_files }}</pre>
+                </div>
+              {% endif %}
+              {% if job.diff_stat %}
+                <div class="mt-2">
+                  <span class="fw-semibold">diff_stat</span>
+                  <pre class="small bg-light border rounded p-2 mb-1 text-wrap">{{ job.diff_stat }}</pre>
+                </div>
+              {% endif %}
+              {% if job.error_message %}
+                <div class="mt-2 text-danger">
+                  <span class="fw-semibold">error_message</span>
+                  <pre class="small bg-light border border-danger-subtle rounded p-2 mb-1 text-wrap">{{ job.error_message }}</pre>
+                </div>
+              {% endif %}
+            </td>
+            <td class="small text-muted">{{ job.updated_at or '-' }}</td>
+            <td>
+              {% if job.status == 'waiting_approval' %}
+                <form class="d-inline" method="post" action="/dispatch-jobs/{{ job.id }}/deploy-staging"><button class="btn btn-sm btn-outline-primary">部署 staging</button></form>
+                <form class="d-inline" method="post" action="/dispatch-jobs/{{ job.id }}/approve-production"><button class="btn btn-sm btn-outline-success">核准 production</button></form>
+                <form class="d-inline" method="post" action="/dispatch-jobs/{{ job.id }}/rollback" onsubmit="return confirm('確定 rollback 這個 AI dispatch job 嗎？')"><button class="btn btn-sm btn-outline-danger">rollback</button></form>
+              {% elif job.status == 'failed' %}
+                <form class="d-inline" method="post" action="/dispatch-jobs/{{ job.id }}/retry" onsubmit="return confirm('確定重新執行這個 AI dispatch job 嗎？原 job 會保留，新建一筆 queued job。')"><button class="btn btn-sm btn-outline-primary">重新執行</button></form>
+                <form class="d-inline" method="post" action="/dispatch-jobs/{{ job.id }}/rollback" onsubmit="return confirm('確定 rollback 這個 AI dispatch job 嗎？')"><button class="btn btn-sm btn-outline-danger">rollback</button></form>
+              {% elif job.status == 'deployed' %}
+                <form class="d-inline" method="post" action="/dispatch-jobs/{{ job.id }}/rollback" onsubmit="return confirm('確定 rollback 這個 AI dispatch job 嗎？')"><button class="btn btn-sm btn-outline-danger">rollback</button></form>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="text-center text-muted">尚無 AI dispatch job</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <script>
   const handoffCommands = {{ copy_commands|tojson }};
+  const heartbeatCommands = {{ heartbeat_commands|tojson }};
   const copyStatus = document.getElementById('copyHandoffStatus');
+  const heartbeatStatus = document.getElementById('copyHeartbeatStatus');
 
   async function copyHandoffCommand(command) {
     if (navigator.clipboard && window.isSecureContext) {
@@ -304,6 +1053,28 @@
         copyStatus.textContent = '複製失敗，請重新點擊或手動選取指令。';
         copyStatus.classList.remove('text-success');
         copyStatus.classList.add('text-danger');
+      }
+    });
+  });
+
+  document.querySelectorAll('.js-copy-heartbeat').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const originalText = button.textContent;
+      const command = heartbeatCommands[button.dataset.commandKey];
+      try {
+        await copyHandoffCommand(command);
+        button.textContent = '已複製';
+        heartbeatStatus.classList.remove('text-danger');
+        heartbeatStatus.classList.add('text-success');
+        heartbeatStatus.textContent = '已複製，請貼到 AI 工具或 PowerShell 定期執行。';
+        setTimeout(() => {
+          button.textContent = originalText;
+          heartbeatStatus.textContent = '';
+        }, 1800);
+      } catch (error) {
+        heartbeatStatus.textContent = '複製失敗，請重新點擊或手動選取指令。';
+        heartbeatStatus.classList.remove('text-success');
+        heartbeatStatus.classList.add('text-danger');
       }
     });
   });

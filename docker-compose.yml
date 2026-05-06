@@ -3,9 +3,23 @@ services:
     build: .
     container_name: devpilot-project-manager
     ports:
-      - "5000:5000"
+      - "5010:5000"
     env_file:
       - .env
+    environment:
+      - TZ=Asia/Taipei
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=safe.directory
+      - GIT_CONFIG_VALUE_0=*
+      - DEVPILOT_CODEX_RUNNER_MODE=external
+      - DEVPILOT_CODEX_RUNNER_COMMAND=/volume1/docker/devpilot/scripts/run_codex_job.sh
     volumes:
       - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./scripts:/volume1/docker/devpilot/scripts:ro
+      - /var/services/homes/chaokun/.ssh:/root/.ssh:ro
+      - /volume1/repos:/volume1/repos
+      - /volume1/worktrees:/volume1/worktrees
+      - /volume1/docker-staging:/volume1/docker-staging
+      - /volume1/backups:/volume1/backups
     restart: unless-stopped

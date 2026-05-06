@@ -13,7 +13,7 @@
     <div class="col-md-6"><label class="form-label">本機路徑</label><input class="form-control" name="local_path" value="{{ project.local_path if project else '' }}"></div>
     <div class="col-md-4"><label class="form-label">部署網址</label><input class="form-control" name="deploy_url" value="{{ project.deploy_url if project else '' }}"></div>
     <div class="col-md-4"><label class="form-label">部署位置</label><input class="form-control" name="deploy_location" value="{{ project.deploy_location if project else '' }}"></div>
-    <div class="col-md-4"><label class="form-label">負責電腦</label><input class="form-control" name="owner_machine" value="{{ project.owner_machine if project else '' }}"></div>
+    <div class="col-md-4"><label class="form-label">負責電腦</label><input class="form-control" name="owner_machine" value="{{ machine_display_name(project.owner_machine) if project else '' }}"></div>
     <div class="col-md-12"><label class="form-label">下一步</label><input class="form-control" name="next_steps" value="{{ project.next_steps if project else '' }}"></div>
     <div class="col-12"><label class="form-label">描述</label><textarea class="form-control" name="description" rows="4">{{ project.description if project else '' }}</textarea></div>
   </div>
