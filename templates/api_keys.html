@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">API Key Center</h1>
+    <div class="text-muted small">Values are encrypted in DB. The list shows masks only. Reveal is owner-only and audited.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/">Dashboard</a>
+</div>
+
+{% if revealed_key and revealed_value %}
+<div class="alert alert-warning d-flex justify-content-between align-items-start gap-3" id="revealedKeyBox">
+  <div class="flex-grow-1">
+    <div class="fw-bold">Revealed for 10 seconds: {{ revealed_key.name }} {{ revealed_key.version }}</div>
+    <code class="d-block text-break mt-2" id="revealedKeyValue">{{ revealed_value }}</code>
+    <div class="small mt-2">This reveal was written to audit log. It will be masked automatically.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" type="button" id="copyRevealedKey">Copy</button>
+    <button class="btn btn-sm btn-outline-dark" type="button" id="hideRevealedKey">Mask now</button>
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Create API Key</div>
+      <div class="card-body">
+        {% if can_manage_api_keys %}
+        <form method="post" action="/api-keys">
+          <label class="form-label">Name</label>
+          <input class="form-control mb-2" name="name" placeholder="OPENAI_API_KEY" required>
+
+          <label class="form-label">Key value</label>
+          <input class="form-control mb-2" name="key_value" type="password" autocomplete="off" required>
+
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Category</label>
+              <select class="form-select mb-2" name="category">
+                {% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Provider</label>
+              <select class="form-select mb-2" name="provider">
+                {% for provider in providers %}<option value="{{ provider }}">{{ provider }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Environment</label>
+              <select class="form-select mb-2" name="environment">
+                {% for environment in environments %}<option value="{{ environment }}">{{ environment }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Rotation days</label>
+              <input class="form-control mb-2" name="rotation_days" type="number" min="1" value="30">
+            </div>
+          </div>
+
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Status</label>
+              <select class="form-select mb-2" name="status">
+                {% for status in statuses %}<option value="{{ status }}">{{ status }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Version</label>
+              <input class="form-control mb-2" name="version" value="v1" placeholder="v1">
+            </div>
+          </div>
+
+          <label class="form-label">Usage limit</label>
+          <input class="form-control mb-2" name="usage_limit" type="number" min="1" placeholder="optional">
+
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="ai_allowed" value="1" id="aiAllowedCreate">
+            <label class="form-check-label" for="aiAllowedCreate">AI allowed (staging only)</label>
+          </div>
+
+          <div class="mb-2">
+            <div class="form-label">Permission tags</div>
+            <div class="d-flex flex-wrap gap-2">
+              {% for permission in permissions %}
+                <label class="form-check border rounded px-2 py-1">
+                  <input class="form-check-input me-1" type="checkbox" name="permissions" value="{{ permission }}">
+                  <span class="form-check-label">{{ permission }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+
+          <label class="form-label">Notes</label>
+          <textarea class="form-control mb-3" name="notes" rows="2"></textarea>
+          <button class="btn btn-primary w-100">Encrypt and save</button>
+        </form>
+        {% else %}
+          <div class="text-muted">Your role can view masked keys but cannot create or rotate keys.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-8">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>Keys</span>
+        <span class="badge text-bg-secondary">7 day usage</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Provider</th>
+              <th>Category</th>
+              <th>Env</th>
+              <th>Version</th>
+              <th>Masked value</th>
+              <th>Permissions</th>
+              <th>Status</th>
+              <th>Rotation</th>
+              <th>Alert</th>
+              <th>AI</th>
+              <th>7d</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for key in keys %}
+              {% set history_key = key.provider ~ '::' ~ key.name %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ key.name }}</div>
+                  <div class="small text-muted">source={{ key.source or 'manual' }}</div>
+                </td>
+                <td>{{ key.provider }}</td>
+                <td>{{ key.category }}</td>
+                <td><span class="badge text-bg-{{ 'danger' if key.environment == 'production' else 'secondary' }}">{{ key.environment or 'staging' }}</span></td>
+                <td>
+                  <span class="badge text-bg-dark">{{ key.version }}</span>
+                  <details class="small mt-1">
+                    <summary>history</summary>
+                    {% for item in histories[history_key] %}
+                      <div>#{{ item.id }} {{ item.version }} <span class="text-muted">{{ item.status }}</span></div>
+                    {% endfor %}
+                  </details>
+                </td>
+                <td><code>{{ key.display_mask }}</code></td>
+                <td>
+                  {% for permission in key.permissions_list %}
+                    <span class="badge text-bg-info">{{ permission }}</span>
+                  {% else %}
+                    <span class="text-muted small">none</span>
+                  {% endfor %}
+                </td>
+                <td>
+                  <span class="badge text-bg-{{ 'success' if key.status == 'active' else ('danger' if key.status == 'revoked' else 'secondary') }}">{{ key.status }}</span>
+                </td>
+                <td class="small">{{ key.rotation_days or 30 }}d<div class="text-muted">{{ key.last_rotated_at or '-' }}</div></td>
+                <td>{% if key.has_alert %}<span class="badge text-bg-danger">alert</span>{% else %}<span class="text-muted small">ok</span>{% endif %}</td>
+                <td>{% if key.ai_allowed %}<span class="badge text-bg-success">yes</span>{% else %}<span class="text-muted small">no</span>{% endif %}</td>
+                <td>{{ key.usage_7d }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-secondary" href="/api-keys/{{ key.id }}">Details</a>
+                  {% if key.status != 'revoked' %}
+                    {% if can_reveal_api_keys %}
+                    <form class="d-inline" method="post" action="/api-keys/{{ key.id }}/reveal">
+                      <button class="btn btn-sm btn-outline-warning">Show</button>
+                    </form>
+                    <form class="d-inline" method="post" action="/api-keys/{{ key.id }}/copy">
+                      <button class="btn btn-sm btn-outline-primary">Copy</button>
+                    </form>
+                    <form class="d-inline" method="post" action="/api-keys/{{ key.id }}/rotate" onsubmit="return confirm('Rotate this key? The new key is shown once.')">
+                      <button class="btn btn-sm btn-outline-success">Rotate</button>
+                    </form>
+                    {% endif %}
+                    {% if can_manage_api_keys %}
+                    <form class="d-inline" method="post" action="/api-keys/{{ key.id }}/ai-allowed">
+                      <input type="hidden" name="ai_allowed" value="{{ 0 if key.ai_allowed else 1 }}">
+                      <button class="btn btn-sm btn-outline-secondary">{{ 'AI off' if key.ai_allowed else 'AI ok' }}</button>
+                    </form>
+                    <form class="d-inline" method="post" action="/api-keys/{{ key.id }}/revoke" onsubmit="return confirm('Revoke this key?')">
+                      <input type="hidden" name="reason" value="manual revoke">
+                      <button class="btn btn-sm btn-outline-danger">revoke</button>
+                    </form>
+                    {% endif %}
+                  {% else %}
+                    <span class="small text-muted">revoked {{ key.revoked_at or '' }}</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="13" class="text-center text-muted py-4">No API keys yet</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Import from .env</div>
+      <div class="card-body">
+        <div class="small text-muted mb-3">Read-only import. DevPilot encrypts matching Key/Token/Secret/Webhook variables and does not modify .env.</div>
+        <div class="table-responsive mb-3">
+          <table class="table table-sm">
+            <thead><tr><th>Name</th><th>Inferred</th><th>Mask</th></tr></thead>
+            <tbody>
+              {% for item in env_preview %}
+                <tr>
+                  <td>{{ item.name }}</td>
+                  <td><span class="badge text-bg-secondary">{{ item.provider }}</span> <span class="badge text-bg-light">{{ item.category }}</span></td>
+                  <td><code>{{ item.mask }}</code></td>
+                </tr>
+              {% else %}
+                <tr><td colspan="3" class="text-muted">No .env key candidates</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if can_manage_api_keys %}
+        <form method="post" action="/api-keys/import-env">
+          <button class="btn btn-outline-primary w-100" {% if not env_preview %}disabled{% endif %}>Import .env keys</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Audit Log</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Time</th><th>Action</th><th>Key</th><th>IP</th><th>User-Agent</th></tr></thead>
+          <tbody>
+            {% for audit in audits %}
+              <tr>
+                <td class="small text-muted">{{ audit.created_at }}</td>
+                <td><span class="badge text-bg-dark">{{ audit.action }}</span></td>
+                <td>{{ audit.key_name or '-' }} <span class="text-muted">{{ audit.version or '' }}</span></td>
+                <td class="small">{{ audit.display_ip or audit.ip_address or '-' }}</td>
+                <td class="small text-truncate" style="max-width: 18rem;">{{ audit.user_agent or '-' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-3">No audit log</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const revealedBox = document.getElementById('revealedKeyBox');
+  const revealedValue = document.getElementById('revealedKeyValue');
+  const hideButton = document.getElementById('hideRevealedKey');
+  const copyButton = document.getElementById('copyRevealedKey');
+  const copyOnlyValue = {{ copy_value|tojson }};
+  let revealedPlaintext = revealedValue ? revealedValue.textContent : '';
+
+  function hideRevealedKey() {
+    if (revealedValue) {
+      revealedValue.textContent = 'masked';
+    }
+    if (revealedBox) {
+      revealedBox.classList.remove('alert-warning');
+      revealedBox.classList.add('alert-secondary');
+    }
+    revealedPlaintext = '';
+  }
+
+  if (copyButton) {
+    copyButton.addEventListener('click', async () => {
+      if (!revealedPlaintext) return;
+      await navigator.clipboard.writeText(revealedPlaintext);
+      copyButton.textContent = 'Copied';
+      setTimeout(() => { copyButton.textContent = 'Copy'; }, 1500);
+    });
+  }
+  if (copyOnlyValue) {
+    navigator.clipboard.writeText(copyOnlyValue).finally(() => {
+      setTimeout(() => {}, 0);
+    });
+  }
+  if (hideButton) {
+    hideButton.addEventListener('click', hideRevealedKey);
+  }
+  if (revealedBox) {
+    setTimeout(hideRevealedKey, 10000);
+  }
+</script>
+{% endblock %}

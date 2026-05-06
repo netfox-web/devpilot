@@ -1,0 +1,311 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">{{ project.name }}</h1>
+    <div class="text-muted">{{ project.client_name or '無客戶名稱' }}｜{{ project.project_type or '未分類' }}｜負責：{{ project.owner_machine or '-' }}</div>
+  </div>
+  <div>
+    <a class="btn btn-outline-primary" href="/projects/{{ project.id }}/edit">編輯專案</a>
+    <form class="d-inline" method="post" action="/projects/{{ project.id }}/delete" onsubmit="return confirm('確定刪除？')"><button class="btn btn-outline-danger">刪除</button></form>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-8">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between"><span class="badge text-bg-secondary">{{ project.status }}</span><span class="fw-bold">{{ project.progress }}%</span></div>
+        <div class="progress my-2" style="height:22px"><div class="progress-bar" style="width: {{ project.progress }}%">{{ project.progress }}%</div></div>
+        <div class="row small text-muted mt-3">
+          <div class="col-md-6">GitHub：{{ project.github_repo or '-' }}</div>
+          <div class="col-md-6">本機路徑：{{ project.local_path or '-' }}</div>
+          <div class="col-md-6">部署網址：{{ project.deploy_url or '-' }}</div>
+          <div class="col-md-6">部署位置：{{ project.deploy_location or '-' }}</div>
+        </div>
+        <hr>
+        <div><b>下一步：</b>{{ project.next_steps or '-' }}</div>
+        <div class="mt-2"><b>描述：</b>{{ project.description or '-' }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">API 快速資訊</div>
+      <div class="card-body small">
+        <div>專案 ID：<code>{{ project.id }}</code></div>
+        <div>查狀態：<code>GET /api/projects/{{ project.id }}/status</code></div>
+        <div>回寫交接：<code>POST /api/projects/{{ project.id }}/handoff</code></div>
+        <div class="text-muted mt-2">Token 請放在 Header：<br><code>Authorization: Bearer YOUR_TOKEN</code></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">一鍵複製 AI 工具回寫指令</div>
+  <div class="card-body">
+    <div class="row g-3 align-items-stretch">
+      <div class="col-xl-3 col-lg-4 col-md-6">
+        <div class="border rounded p-3 h-100 d-flex flex-column">
+          <button type="button" class="btn btn-primary w-100 js-copy-handoff" data-command-key="claude_ps">複製 Claude PowerShell 回寫指令</button>
+          <div class="small text-muted mt-2">Claude Code 完成後貼上執行，使用 UTF-8 bytes 回寫本專案。</div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-lg-4 col-md-6">
+        <div class="border rounded p-3 h-100 d-flex flex-column">
+          <button type="button" class="btn btn-dark w-100 js-copy-handoff" data-command-key="codex_ps">複製 Codex PowerShell 回寫指令</button>
+          <div class="small text-muted mt-2">Codex 完成後貼上執行，source 會自動帶入 codex。</div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-lg-4 col-md-6">
+        <div class="border rounded p-3 h-100 d-flex flex-column">
+          <button type="button" class="btn btn-info text-white w-100 js-copy-handoff" data-command-key="cursor_ps">複製 Cursor PowerShell 回寫指令</button>
+          <div class="small text-muted mt-2">Cursor Debug 完成後執行，source 會自動帶入 cursor。</div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-lg-4 col-md-6">
+        <div class="border rounded p-3 h-100 d-flex flex-column">
+          <button type="button" class="btn btn-success w-100 js-copy-handoff" data-command-key="antigravity_ps">複製 Antigravity PowerShell 回寫指令</button>
+          <div class="small text-muted mt-2">Google Antigravity Agent 完成後執行，source 會自動帶入 antigravity。</div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-lg-4 col-md-6">
+        <div class="border rounded p-3 h-100 d-flex flex-column">
+          <button type="button" class="btn btn-outline-secondary w-100 js-copy-handoff" data-command-key="python">複製 Python 回寫指令</button>
+          <div class="small text-muted mt-2">使用 scripts/report_handoff.py，Token 從 .env 或環境變數讀取。</div>
+        </div>
+      </div>
+    </div>
+    <div id="copyHandoffStatus" class="small text-success mt-3" role="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<ul class="nav nav-tabs" role="tablist">
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#phases">階段</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tasks">任務</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#handoff">AI 交接紀錄</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#deploy">部署</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#acceptance">驗收</button></li>
+</ul>
+
+<div class="tab-content pt-3">
+  <div class="tab-pane fade show active" id="phases">
+    <div class="row g-3">
+      <div class="col-lg-8">
+        <div class="card shadow-sm"><div class="card-header fw-bold">階段進度</div>
+          <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>順序</th><th>階段</th><th>狀態</th><th>到期</th><th>完成</th><th>測試</th></tr></thead><tbody>
+            {% for ph in phases %}<tr><td>{{ ph.phase_order }}</td><td>{{ ph.phase_name }}</td><td><span class="badge text-bg-secondary">{{ ph.status }}</span></td><td>{{ ph.due_date or '-' }}</td><td>{{ ph.completed_at or '-' }}</td><td class="small">{{ ph.test_result or '-' }}</td></tr>{% endfor %}
+          </tbody></table></div>
+        </div>
+      </div>
+      <div class="col-lg-4">
+        <form class="card shadow-sm p-3" method="post" action="/projects/{{ project.id }}/phases">
+          <h5>新增階段</h5>
+          <input class="form-control mb-2" name="phase_name" placeholder="階段名稱" required>
+          <select class="form-select mb-2" name="status">{% for s in phase_statuses %}<option>{{ s }}</option>{% endfor %}</select>
+          <input class="form-control mb-2" type="date" name="due_date">
+          <textarea class="form-control mb-2" name="notes" placeholder="備註"></textarea>
+          <button class="btn btn-primary">新增</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="tasks">
+    <div class="row g-3">
+      <div class="col-lg-8"><div class="card shadow-sm"><div class="card-header fw-bold">任務清單</div><div class="table-responsive"><table class="table mb-0 align-middle"><thead><tr><th>任務</th><th>階段</th><th>狀態</th><th>優先</th><th>負責</th><th>到期</th></tr></thead><tbody>
+        {% for t in tasks %}<tr><td>{{ t.title }}<div class="small text-muted">{{ t.notes or '' }}</div></td><td>{{ t.phase_name or '-' }}</td><td><span class="badge text-bg-secondary">{{ t.status }}</span></td><td>{{ t.priority }}</td><td>{{ t.assignee or '-' }}</td><td>{{ t.due_date or '-' }}</td></tr>{% else %}<tr><td colspan="6" class="text-muted text-center">尚無任務</td></tr>{% endfor %}
+      </tbody></table></div></div></div>
+      <div class="col-lg-4"><form class="card shadow-sm p-3" method="post" action="/projects/{{ project.id }}/tasks"><h5>新增任務</h5>
+        <input class="form-control mb-2" name="title" placeholder="任務名稱" required>
+        <select class="form-select mb-2" name="phase_id"><option value="">不指定階段</option>{% for ph in phases %}<option value="{{ ph.id }}">{{ ph.phase_order }}. {{ ph.phase_name }}</option>{% endfor %}</select>
+        <select class="form-select mb-2" name="status">{% for s in task_statuses %}<option>{{ s }}</option>{% endfor %}</select>
+        <select class="form-select mb-2" name="priority">{% for p in priorities %}<option>{{ p }}</option>{% endfor %}</select>
+        <input class="form-control mb-2" name="assignee" placeholder="負責人 / 工具">
+        <input class="form-control mb-2" type="date" name="due_date">
+        <textarea class="form-control mb-2" name="notes" placeholder="備註"></textarea>
+        <button class="btn btn-primary">新增</button>
+      </form></div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="handoff">
+    <div class="row g-3">
+      <div class="col-lg-7"><div class="card shadow-sm"><div class="card-header fw-bold d-flex justify-content-between align-items-center"><span>交接時間軸</span>{% if show_hidden %}<a class="btn btn-sm btn-outline-secondary" href="/projects/{{ project.id }}">隱藏已隱藏紀錄</a>{% else %}<a class="btn btn-sm btn-outline-secondary" href="/projects/{{ project.id }}?show_hidden=1">顯示已隱藏紀錄</a>{% endif %}</div><div class="list-group list-group-flush">
+        {% for l in logs %}<div class="list-group-item{% if l.is_hidden %} bg-light{% endif %}">
+          <div class="d-flex justify-content-between gap-3">
+            <div>
+              <span class="badge text-bg-dark">{{ l.source }}</span>
+              <span class="badge text-bg-info">{{ l.work_mode }}</span>
+              {% if l.is_hidden %}<span class="badge text-bg-warning">已隱藏</span>{% endif %}
+              <b>{{ l.summary or '無摘要' }}</b>
+              {% if l.is_hidden %}<div class="small text-muted">隱藏時間：{{ l.hidden_at or '-' }}｜原因：{{ l.hidden_reason or '-' }}</div>{% endif %}
+            </div>
+            <div class="text-end">
+              <small class="text-muted d-block">{{ l.created_at }}</small>
+              {% if l.is_hidden %}
+                <form method="post" action="/handoffs/{{ l.id }}/restore" class="mt-2">
+                  <button class="btn btn-sm btn-outline-success">還原</button>
+                </form>
+              {% else %}
+                <form method="post" action="/handoffs/{{ l.id }}/hide" class="mt-2" onsubmit="return confirm('確定要隱藏這筆交接紀錄嗎？')">
+                  <button class="btn btn-sm btn-outline-danger">隱藏</button>
+                </form>
+              {% endif %}
+            </div>
+          </div>
+          <div class="small mt-2">測試：{{ l.test_result or '-' }}</div>
+          <div class="small">Git：{{ l.git_status or '-' }}｜Branch：{{ l.repo_branch or '-' }}｜Commit：{{ l.commit_sha or '-' }}</div>
+          <div class="small">完成階段：{{ parse_json_list(l.completed_phases)|join(', ') }}</div>
+          <div class="small">修改檔案：{{ parse_json_list(l.changed_files)|join(', ') }}</div>
+          <div class="small text-danger">注意：{{ l.warnings or '-' }}</div>
+          <div class="small text-primary">下一步：{{ l.next_steps or '-' }}</div>
+        </div>{% else %}<div class="list-group-item text-muted">尚無交接紀錄</div>{% endfor %}
+      </div></div></div>
+      <div class="col-lg-5"><form class="card shadow-sm p-3" method="post" action="/projects/{{ project.id }}/handoff"><h5>新增交接紀錄</h5>
+        <div class="row g-2">
+          <div class="col-md-6"><select class="form-select" name="source">{% for s in sources %}<option>{{ s }}</option>{% endfor %}</select></div>
+          <div class="col-md-6"><select class="form-select" name="work_mode">{% for m in work_modes %}<option>{{ m }}</option>{% endfor %}</select></div>
+        </div>
+        <input class="form-control mt-2" name="agent_name" placeholder="工具名稱，如 Claude Code / Codex">
+        <input class="form-control mt-2" name="summary" placeholder="摘要">
+        <textarea class="form-control mt-2" name="raw_text" rows="5" placeholder="可直接貼 Claude / Codex 回報文字，系統會嘗試解析第幾階段完成"></textarea>
+        <input class="form-control mt-2" name="changed_files" placeholder="修改檔案，一行一個或 JSON 陣列">
+        <input class="form-control mt-2" name="test_result" placeholder="測試結果">
+        <input class="form-control mt-2" name="git_status" placeholder="git status">
+        <div class="row g-2 mt-1"><div class="col"><input class="form-control" name="repo_branch" placeholder="branch"></div><div class="col"><input class="form-control" name="commit_sha" placeholder="commit sha"></div></div>
+        <input class="form-control mt-2" name="next_steps" placeholder="下一步">
+        <input class="form-control mt-2" name="warnings" placeholder="注意事項">
+        <button class="btn btn-primary mt-2">新增交接</button>
+      </form></div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="deploy">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold">部署位置管理</div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead><tr><th>環境</th><th>部署主機</th><th>類型</th><th>內網網址</th><th>對外網址</th><th>Port</th><th>部署路徑</th><th>Compose</th><th>DB</th><th>狀態</th><th>最後部署</th><th>備註</th><th></th></tr></thead>
+            <tbody>
+            {% for d in project_deployments %}
+              <tr class="{% if not d.is_active %}table-light text-muted{% endif %}">
+                <td>{{ d.environment or '-' }}</td>
+                <td>{{ d.target_name or '未指定' }}</td>
+                <td>{{ d.deploy_type or '-' }}</td>
+                <td>{{ d.internal_url or '-' }}</td>
+                <td>{{ d.public_url or '-' }}</td>
+                <td>{{ d.port or '-' }}</td>
+                <td class="small">{{ d.deploy_path or '-' }}</td>
+                <td class="small">{{ d.compose_path or '-' }}</td>
+                <td class="small">{{ d.db_path or '-' }}</td>
+                <td><span class="badge text-bg-{{ 'success' if d.is_active else 'secondary' }}">{{ d.status or ('啟用' if d.is_active else '停用') }}</span></td>
+                <td>{{ d.last_deployed_at or '-' }}</td>
+                <td class="small">{{ d.notes or '-' }}</td>
+                <td><form method="post" action="/project-deployments/{{ d.id }}/toggle"><button class="btn btn-sm btn-outline-secondary">{{ '停用' if d.is_active else '啟用' }}</button></form></td>
+              </tr>
+              <tr><td colspan="13"><details><summary class="small text-primary">編輯部署位置</summary>
+                <form class="row g-2 mt-2" method="post" action="/project-deployments/{{ d.id }}/edit">
+                  <div class="col-md-2"><input class="form-control form-control-sm" name="environment" value="{{ d.environment or '' }}" placeholder="prod"></div>
+                  <div class="col-md-2"><select class="form-select form-select-sm" name="target_id"><option value="">未指定</option>{% for t in deployment_targets %}<option value="{{ t.id }}" {% if d.target_id == t.id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}</select></div>
+                  <div class="col-md-2"><input class="form-control form-control-sm" name="deploy_type" value="{{ d.deploy_type or '' }}" placeholder="docker"></div>
+                  <div class="col-md-2"><input class="form-control form-control-sm" name="service_name" value="{{ d.service_name or '' }}" placeholder="service"></div>
+                  <div class="col-md-2"><input class="form-control form-control-sm" name="port" value="{{ d.port or '' }}" placeholder="5000"></div>
+                  <div class="col-md-2"><input class="form-control form-control-sm" name="status" value="{{ d.status or '' }}" placeholder="running"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="internal_url" value="{{ d.internal_url or '' }}" placeholder="內網網址"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="public_url" value="{{ d.public_url or '' }}" placeholder="對外網址"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="deploy_path" value="{{ d.deploy_path or '' }}" placeholder="/volume1/docker/devpilot"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="compose_path" value="{{ d.compose_path or '' }}" placeholder="/volume1/docker/devpilot/docker-compose.yml"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="db_path" value="{{ d.db_path or '' }}" placeholder="/volume1/docker/devpilot/data/project_manager.db"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="uploads_path" value="{{ d.uploads_path or '' }}" placeholder="uploads"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="backup_path" value="{{ d.backup_path or '' }}" placeholder="backup"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="log_path" value="{{ d.log_path or '' }}" placeholder="logs"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="last_deployed_at" value="{{ d.last_deployed_at or '' }}" placeholder="最後部署"></div>
+                  <div class="col-md-3"><input class="form-control form-control-sm" name="last_checked_at" value="{{ d.last_checked_at or '' }}" placeholder="最後檢查"></div>
+                  <div class="col-md-9"><input class="form-control form-control-sm" name="notes" value="{{ d.notes or '' }}" placeholder="備註"></div>
+                  <div class="col-md-3"><button class="btn btn-sm btn-primary w-100">儲存部署位置</button></div>
+                </form>
+              </details></td></tr>
+            {% else %}<tr><td colspan="13" class="text-center text-muted">尚未設定部署位置</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <form class="card shadow-sm p-3 mb-3" method="post" action="/projects/{{ project.id }}/project-deployments">
+      <h5>新增部署位置</h5>
+      <div class="row g-2">
+        <div class="col-md-2"><input class="form-control" name="environment" placeholder="prod / staging"></div>
+        <div class="col-md-2"><select class="form-select" name="target_id"><option value="">未指定</option>{% for t in deployment_targets %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select></div>
+        <div class="col-md-2"><input class="form-control" name="deploy_type" value="docker" placeholder="docker"></div>
+        <div class="col-md-2"><input class="form-control" name="service_name" placeholder="service"></div>
+        <div class="col-md-2"><input class="form-control" name="port" placeholder="5000"></div>
+        <div class="col-md-2"><input class="form-control" name="status" placeholder="running"></div>
+        <div class="col-md-3"><input class="form-control" name="internal_url" placeholder="內網網址"></div>
+        <div class="col-md-3"><input class="form-control" name="public_url" placeholder="對外網址"></div>
+        <div class="col-md-3"><input class="form-control" name="deploy_path" placeholder="/volume1/docker/devpilot"></div>
+        <div class="col-md-3"><input class="form-control" name="compose_path" placeholder="/volume1/docker/devpilot/docker-compose.yml"></div>
+        <div class="col-md-4"><input class="form-control" name="db_path" placeholder="/volume1/docker/devpilot/data/project_manager.db"></div>
+        <div class="col-md-4"><input class="form-control" name="uploads_path" placeholder="uploads 路徑"></div>
+        <div class="col-md-4"><input class="form-control" name="backup_path" placeholder="backup 路徑"></div>
+        <div class="col-md-4"><input class="form-control" name="log_path" placeholder="log 路徑"></div>
+        <div class="col-md-4"><input class="form-control" name="last_deployed_at" placeholder="最後部署時間"></div>
+        <div class="col-md-4"><input class="form-control" name="last_checked_at" placeholder="最後檢查時間"></div>
+        <div class="col-md-10"><input class="form-control" name="notes" placeholder="備註"></div>
+        <div class="col-md-2"><button class="btn btn-primary w-100">新增</button></div>
+      </div>
+    </form>
+    <div class="row g-3"><div class="col-lg-8"><div class="card shadow-sm"><div class="card-header fw-bold">部署紀錄</div><table class="table mb-0"><thead><tr><th>環境</th><th>狀態</th><th>版本</th><th>網址</th><th>時間</th></tr></thead><tbody>{% for d in deployments %}<tr><td>{{ d.environment }}</td><td>{{ d.status }}</td><td>{{ d.version }}</td><td>{{ d.deploy_url }}</td><td>{{ d.deployed_at or d.created_at }}</td></tr>{% else %}<tr><td colspan="5" class="text-muted text-center">尚無部署紀錄</td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="col-lg-4"><form class="card shadow-sm p-3" method="post" action="/projects/{{ project.id }}/deployments"><h5>新增部署</h5><input class="form-control mb-2" name="environment" placeholder="dev / staging / prod"><input class="form-control mb-2" name="deploy_url" placeholder="部署網址"><input class="form-control mb-2" name="server_path" placeholder="伺服器路徑"><input class="form-control mb-2" name="version" placeholder="版本 / commit"><input class="form-control mb-2" name="status" placeholder="狀態"><input class="form-control mb-2" name="deployed_at" placeholder="部署時間"><textarea class="form-control mb-2" name="notes" placeholder="備註"></textarea><button class="btn btn-primary">新增</button></form></div></div>
+  </div>
+
+  <div class="tab-pane fade" id="acceptance">
+    <div class="row g-3"><div class="col-lg-8"><div class="card shadow-sm"><div class="card-header fw-bold">驗收清單</div><table class="table mb-0 align-middle"><thead><tr><th>項目</th><th>測試</th><th>驗收</th><th>備註</th><th></th></tr></thead><tbody>{% for a in acceptance %}<tr><td>{{ a.title }}</td><td>{{ '是' if a.tested else '否' }}</td><td><span class="badge text-bg-{{ 'success' if a.accepted else 'secondary' }}">{{ '已驗收' if a.accepted else '未驗收' }}</span></td><td>{{ a.notes or '-' }}</td><td><form method="post" action="/acceptance/{{ a.id }}/toggle"><button class="btn btn-sm btn-outline-primary">切換</button></form></td></tr>{% else %}<tr><td colspan="5" class="text-muted text-center">尚無驗收項目</td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="col-lg-4"><form class="card shadow-sm p-3" method="post" action="/projects/{{ project.id }}/acceptance"><h5>新增驗收項目</h5><input class="form-control mb-2" name="title" placeholder="驗收項目" required><input class="form-control mb-2" name="status" value="未驗收"><div class="form-check"><input class="form-check-input" type="checkbox" name="tested" id="tested"><label class="form-check-label" for="tested">已測試</label></div><div class="form-check"><input class="form-check-input" type="checkbox" name="accepted" id="accepted"><label class="form-check-label" for="accepted">已驗收</label></div><textarea class="form-control my-2" name="notes" placeholder="備註"></textarea><button class="btn btn-primary">新增</button></form></div></div>
+  </div>
+</div>
+<script>
+  const handoffCommands = {{ copy_commands|tojson }};
+  const copyStatus = document.getElementById('copyHandoffStatus');
+
+  async function copyHandoffCommand(command) {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(command);
+      return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = command;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  }
+
+  document.querySelectorAll('.js-copy-handoff').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const originalText = button.textContent;
+      const command = handoffCommands[button.dataset.commandKey];
+      try {
+        await copyHandoffCommand(command);
+        button.textContent = '已複製';
+        copyStatus.classList.remove('text-danger');
+        copyStatus.classList.add('text-success');
+        copyStatus.textContent = '已複製，請貼到 Claude / Codex / Cursor / Antigravity 或 PowerShell 執行。';
+        setTimeout(() => {
+          button.textContent = originalText;
+          copyStatus.textContent = '';
+        }, 1800);
+      } catch (error) {
+        copyStatus.textContent = '複製失敗，請重新點擊或手動選取指令。';
+        copyStatus.classList.remove('text-success');
+        copyStatus.classList.add('text-danger');
+      }
+    });
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">部署主機</h1>
+  <a class="btn btn-outline-primary" href="/deployment-board">部署看板</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">部署主機列表</div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>名稱</th><th>類型</th><th>位置</th><th>IP</th><th>SSH</th><th>部署數</th><th>狀態</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for t in targets %}
+            <tr>
+              <td><b>{{ t.name }}</b><div class="small text-muted">{{ t.notes or '' }}</div></td>
+              <td>{{ t.target_type or '-' }}</td>
+              <td>{{ t.location or '-' }}</td>
+              <td>{{ t.ip_address or '-' }}</td>
+              <td>{{ t.ssh_user or '-' }}@{{ t.ssh_host or t.ip_address or '-' }}:{{ t.ssh_port or '22' }}</td>
+              <td>{{ t.deployment_count }}</td>
+              <td><span class="badge text-bg-{{ 'success' if t.is_active else 'secondary' }}">{{ '啟用' if t.is_active else '停用' }}</span></td>
+              <td>
+                <form method="post" action="/deployment-targets/{{ t.id }}/toggle">
+                  <button class="btn btn-sm btn-outline-secondary">{{ '停用' if t.is_active else '啟用' }}</button>
+                </form>
+              </td>
+            </tr>
+            <tr>
+              <td colspan="8">
+                <details>
+                  <summary class="small text-primary">編輯 {{ t.name }}</summary>
+                  <form class="row g-2 mt-2" method="post" action="/deployment-targets/{{ t.id }}/edit">
+                    <div class="col-md-3"><input class="form-control form-control-sm" name="name" value="{{ t.name }}" required></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" name="target_type" value="{{ t.target_type or '' }}" placeholder="Synology NAS"></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" name="location" value="{{ t.location or '' }}" placeholder="location"></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" name="ip_address" value="{{ t.ip_address or '' }}" placeholder="IP"></div>
+                    <div class="col-md-3"><input class="form-control form-control-sm" name="domain" value="{{ t.domain or '' }}" placeholder="domain"></div>
+                    <div class="col-md-3"><input class="form-control form-control-sm" name="ssh_host" value="{{ t.ssh_host or '' }}" placeholder="ssh host"></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" name="ssh_port" value="{{ t.ssh_port or '' }}" placeholder="22"></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" name="ssh_user" value="{{ t.ssh_user or '' }}" placeholder="user"></div>
+                    <div class="col-md-3"><input class="form-control form-control-sm" name="notes" value="{{ t.notes or '' }}" placeholder="notes"></div>
+                    <div class="col-md-2"><button class="btn btn-sm btn-primary w-100">儲存</button></div>
+                  </form>
+                </details>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8" class="text-center text-muted">尚無部署主機</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <form class="card shadow-sm p-3" method="post" action="/deployment-targets">
+      <h5>新增部署主機</h5>
+      <input class="form-control mb-2" name="name" placeholder="disney NAS" required>
+      <input class="form-control mb-2" name="target_type" placeholder="Synology NAS / VPS / customer">
+      <input class="form-control mb-2" name="location" placeholder="位置">
+      <input class="form-control mb-2" name="ip_address" placeholder="IP">
+      <input class="form-control mb-2" name="domain" placeholder="Domain">
+      <input class="form-control mb-2" name="ssh_host" placeholder="SSH host">
+      <input class="form-control mb-2" name="ssh_port" placeholder="22">
+      <input class="form-control mb-2" name="ssh_user" placeholder="chaokun">
+      <textarea class="form-control mb-2" name="notes" rows="4" placeholder="部署根目錄、安全限制、備份規則"></textarea>
+      <button class="btn btn-primary">新增</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

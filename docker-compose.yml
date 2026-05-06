@@ -1,0 +1,11 @@
+services:
+  devpilot:
+    build: .
+    container_name: devpilot-project-manager
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

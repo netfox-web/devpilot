@@ -1,0 +1,82 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">AI 心跳</h1>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="/ai-heartbeats">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">project_id</label>
+        <input class="form-control" name="project_id" value="{{ request.args.get('project_id', '') }}" placeholder="1">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">來源</label>
+        <select class="form-select" name="source">
+          <option value="">全部</option>
+          {% for source in sources %}
+            <option value="{{ source }}" {% if request.args.get('source') == source %}selected{% endif %}>{{ source }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">狀態</label>
+        <select class="form-select" name="status">
+          <option value="">全部</option>
+          {% for status in statuses %}
+            <option value="{{ status }}" {% if request.args.get('status') == status %}selected{% endif %}>{{ status }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-primary w-100">篩選</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">AI 工具狀態</div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>來源</th>
+          <th>Agent 名稱</th>
+          <th>狀態</th>
+          <th>專案</th>
+          <th>電腦</th>
+          <th>目前任務</th>
+          <th>最後訊息</th>
+          <th>最後回報時間</th>
+          <th>是否離線</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in heartbeats %}
+          <tr>
+            <td><span class="badge text-bg-dark">{{ h.source }}</span></td>
+            <td>{{ h.agent_name or '-' }}</td>
+            <td><span class="badge text-bg-{{ 'danger' if h.is_offline else ('success' if h.display_status in ['running', 'done'] else ('warning' if h.display_status == 'error' else 'secondary')) }}">{{ h.display_status }}</span></td>
+            <td>
+              {% if h.project_id %}
+                <a href="/projects/{{ h.project_id }}">{{ h.project_name or ('#' ~ h.project_id) }}</a>
+              {% else %}
+                {{ h.project_name or '-' }}
+              {% endif %}
+            </td>
+            <td>{{ h.machine_name or '-' }}</td>
+            <td class="small">{{ h.current_task or '-' }}</td>
+            <td class="small">{{ h.last_message or '-' }}</td>
+            <td class="small text-muted">{{ h.last_seen_at or '-' }}</td>
+            <td>{% if h.is_offline %}<span class="badge text-bg-danger">offline</span>{% else %}<span class="badge text-bg-success">online</span>{% endif %}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="9" class="text-center text-muted">尚無 AI 心跳資料</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

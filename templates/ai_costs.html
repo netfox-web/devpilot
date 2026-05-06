@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Cost Control</h1>
+    <div class="text-muted small">Estimated token cost only. API keys and prompt bodies are never shown here.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/">Dashboard</a>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Today</div>
+        <div class="fs-3 fw-bold">${{ "%.6f"|format(overview.today_cost) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">This month</div>
+        <div class="fs-3 fw-bold">${{ "%.6f"|format(overview.month_cost) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Providers</div>
+        <div class="fs-3 fw-bold">{{ overview.providers|length }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Recent errors</div>
+        <div class="fs-3 fw-bold {% if overview.recent_errors %}text-danger{% endif %}">{{ overview.recent_errors|length }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Provider Status</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Status</th>
+          <th>Priority</th>
+          <th>Model</th>
+          <th>Cost / 1k</th>
+          <th>Budget</th>
+          <th>Month cost</th>
+          <th>Warning</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for provider in overview.providers %}
+        <tr class="{% if provider.budget_warning or provider.recent_error %}table-warning{% endif %}">
+          <td class="fw-semibold">{{ provider.provider_name }}</td>
+          <td><span class="badge text-bg-{% if provider.status == 'active' %}success{% elif provider.status == 'error' %}danger{% else %}secondary{% endif %}">{{ provider.status }}</span></td>
+          <td>{{ provider.priority }}</td>
+          <td>{{ provider.default_model or "-" }}</td>
+          <td>${{ "%.6f"|format(provider.cost_input_per_1k or 0) }} / ${{ "%.6f"|format(provider.cost_output_per_1k or 0) }}</td>
+          <td class="small">
+            <div>daily: {{ provider.daily_budget or "-" }}{% if provider.daily_budget_percent is not none %} ({{ provider.daily_budget_percent }}%){% endif %}</div>
+            <div>monthly: {{ provider.monthly_budget or "-" }}{% if provider.monthly_budget_percent is not none %} ({{ provider.monthly_budget_percent }}%){% endif %}</div>
+          </td>
+          <td>${{ "%.6f"|format(provider.monthly_cost or 0) }}</td>
+          <td>
+            {% if provider.budget_warning %}<span class="badge text-bg-danger">budget</span>{% endif %}
+            {% if provider.recent_error %}<span class="badge text-bg-danger">recent error</span>{% endif %}
+            {% if not provider.budget_warning and not provider.recent_error %}<span class="text-muted small">ok</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">By Provider</div>
+      <div class="list-group list-group-flush">
+        {% for item in overview.by_provider %}
+          <div class="list-group-item d-flex justify-content-between"><span>{{ item.label or "-" }}</span><span>${{ "%.6f"|format(item.cost or 0) }}</span></div>
+        {% else %}
+          <div class="list-group-item text-muted">No usage yet</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">By Model</div>
+      <div class="list-group list-group-flush">
+        {% for item in overview.by_model %}
+          <div class="list-group-item d-flex justify-content-between"><span>{{ item.label or "-" }}</span><span>${{ "%.6f"|format(item.cost or 0) }}</span></div>
+        {% else %}
+          <div class="list-group-item text-muted">No usage yet</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">By Project</div>
+      <div class="list-group list-group-flush">
+        {% for item in overview.by_project %}
+          <div class="list-group-item d-flex justify-content-between"><span>{{ item.label or "-" }}</span><span>${{ "%.6f"|format(item.cost or 0) }}</span></div>
+        {% else %}
+          <div class="list-group-item text-muted">No usage yet</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Fallback Rules</div>
+      <div class="list-group list-group-flush">
+        {% for rule in overview.fallback_rules %}
+          <div class="list-group-item">
+            <div><span class="fw-semibold">{{ rule.task_role }}</span>: {{ rule.primary_provider }} -> {{ rule.fallback_provider }}</div>
+            <div class="small text-muted">enabled={{ rule.enabled }} created={{ rule.created_at }}</div>
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No rules configured</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Recent AI Usage</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Provider</th>
+              <th>Model</th>
+              <th>Role</th>
+              <th>Project</th>
+              <th>Tokens</th>
+              <th>Cost</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for log in overview.recent_usage %}
+            <tr class="{% if log.status == 'failed' %}table-danger{% endif %}">
+              <td class="small">{{ log.created_at }}</td>
+              <td>{{ log.provider }}{% if log.fallback_used %}<span class="badge text-bg-info ms-1">fallback</span>{% endif %}</td>
+              <td>{{ log.model or "-" }}</td>
+              <td>{{ log.task_role or "-" }}</td>
+              <td>{{ log.project_name or "-" }}</td>
+              <td class="small">{{ log.input_tokens or 0 }} / {{ log.output_tokens or 0 }}</td>
+              <td>${{ "%.6f"|format(log.estimated_cost or 0) }}</td>
+              <td><span class="badge text-bg-{% if log.status == 'success' %}success{% else %}danger{% endif %}">{{ log.status }}</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="text-muted">No usage logs yet</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

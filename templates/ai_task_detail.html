@@ -1,0 +1,191 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Task #{{ task.id }}</h1>
+    <div class="text-muted">
+      {% if project %}
+        <a href="/projects/{{ project.id }}">{{ project.name }}</a>
+      {% else %}
+        Global task
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if project %}<a class="btn btn-outline-secondary" href="/projects/{{ project.id }}">回專案</a>{% endif %}
+    <a class="btn btn-outline-primary" href="/ai-console">AI Console</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Title</div>
+        <div class="fw-bold">{{ task.title or '-' }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Status</div>
+        <span class="badge text-bg-{{ 'success' if task.status == 'done' else ('danger' if task.status == 'failed' else ('warning' if task.status == 'running' else ('dark' if task.status == 'blocked' else ('secondary' if task.status == 'canceled' else 'primary')))) }}">{{ task.status or 'queued' }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Provider / Type</div>
+        <div>{{ task.provider or '-' }}</div>
+        <code class="small">{{ task.task_type or 'general' }}</code>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Retry / Priority</div>
+        <div>{{ task.retry_count or 0 }} / {{ task.max_retries if task.max_retries is not none else 3 }}</div>
+        <span class="badge text-bg-{{ 'danger' if task.priority == 'urgent' else ('warning' if task.priority == 'high' else ('info' if task.priority == 'medium' else 'secondary')) }}">{{ task.priority or 'medium' }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Execution Timeline</div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-3">
+        <div class="text-muted small">Created</div>
+        <div>{{ task.created_at or '-' }}</div>
+      </div>
+      <div class="col-md-3">
+        <div class="text-muted small">Started</div>
+        <div>{{ task.started_at or '-' }}</div>
+      </div>
+      <div class="col-md-3">
+        <div class="text-muted small">Finished</div>
+        <div>{{ task.finished_at or '-' }}</div>
+      </div>
+      <div class="col-md-3">
+        <div class="text-muted small">Updated</div>
+        <div>{{ task.updated_at or '-' }}</div>
+      </div>
+      <div class="col-md-3">
+        <div class="text-muted small">Auto Next</div>
+        <span class="badge text-bg-{{ 'success' if task.auto_run_next else 'secondary' }}">{{ 'on' if task.auto_run_next else 'off' }}</span>
+        <div class="small text-muted">{{ task.last_auto_run_at or '-' }}</div>
+      </div>
+      <div class="col-md-3">
+        <div class="text-muted small">Approval</div>
+        <span class="badge text-bg-{{ 'warning' if task.requires_approval and task.approval_status == 'pending' else ('success' if task.approval_status == 'approved' else ('danger' if task.approval_status == 'rejected' else 'secondary')) }}">{{ task.approval_status or 'none' }}</span>
+        {% if task.requires_approval %}<div class="small text-muted">requires approval</div>{% endif %}
+      </div>
+      <div class="col-md-3">
+        <div class="text-muted small">Approved By</div>
+        <div>{{ task.approved_by or '-' }}</div>
+      </div>
+      <div class="col-md-3">
+        <div class="text-muted small">Approved At</div>
+        <div>{{ task.approved_at or '-' }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Prompt</div>
+      <div class="card-body">
+        <pre class="small bg-light border rounded p-3 mb-0 text-wrap">{{ task.prompt or '-' }}</pre>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Result / Error</div>
+      <div class="card-body">
+        {% if task.error_message %}
+          <div class="alert alert-danger small">{{ task.error_message }}</div>
+        {% endif %}
+        <pre class="small bg-light border rounded p-3 mb-0 text-wrap">{{ task.result or '-' }}</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Task Relationship</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <div class="text-muted small">Parent Task</div>
+          {% if parent_task %}
+            <a href="/ai-tasks/{{ parent_task.id }}">#{{ parent_task.id }} {{ parent_task.title }}</a>
+          {% else %}
+            <span class="text-muted">none</span>
+          {% endif %}
+        </div>
+        <div class="text-muted small">Child Tasks</div>
+        <div class="list-group list-group-flush">
+          {% for child in child_tasks %}
+            <a class="list-group-item list-group-item-action px-0" href="/ai-tasks/{{ child.id }}">
+              <span class="fw-semibold">#{{ child.id }} {{ child.title }}</span>
+              <span class="badge text-bg-secondary ms-2">{{ child.status or 'queued' }}</span>
+            </a>
+          {% else %}
+            <div class="text-muted">none</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Related Flow Runs</div>
+      <div class="list-group list-group-flush">
+        {% for run in flow_runs %}
+          <a class="list-group-item list-group-item-action" href="/flow-runs/{{ run.id }}">
+            <div class="d-flex justify-content-between">
+              <span>#{{ run.id }} {{ run.mode }} / {{ run.status }}</span>
+              <span class="small text-muted">{{ run.started_at }}</span>
+            </div>
+            <div class="small text-muted">{{ run.stopped_reason or '-' }}</div>
+          </a>
+        {% else %}
+          <div class="list-group-item text-muted">No related flow runs.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">AI Messages For This Task</div>
+  <div class="list-group list-group-flush">
+    {% for message in ai_messages %}
+      <div class="list-group-item">
+        <div class="d-flex justify-content-between gap-2">
+          <div>
+            <span class="badge text-bg-dark">{{ message.provider }}</span>
+            <span class="badge text-bg-{{ 'success' if message.status == 'done' else ('danger' if message.status == 'failed' else 'warning') }}">{{ message.status }}</span>
+            <span class="small text-muted">{{ message.model or '-' }} / {{ message.task_role or '-' }}</span>
+          </div>
+          <span class="small text-muted text-nowrap">{{ message.created_at }}</span>
+        </div>
+        <div class="small text-muted mt-2">{{ message.prompt_summary or '-' }}</div>
+        {% if message.response_text or message.error_message %}
+          <pre class="small bg-light border rounded p-2 mt-2 mb-0 text-wrap">{{ message.response_text or message.error_message }}</pre>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="list-group-item text-muted">No AI messages found for this task.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

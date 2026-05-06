@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">部署看板</h1>
+  <a class="btn btn-outline-primary" href="/deployment-targets">部署主機</a>
+</div>
+
+<div class="row g-3 flex-nowrap overflow-auto pb-2">
+  {% for col in board_columns %}
+    <div class="col-12 col-md-6 col-xl-3" style="min-width: 320px;">
+      <div class="card shadow-sm h-100">
+        <div class="card-header fw-bold d-flex justify-content-between">
+          <span>{{ col.name }}</span>
+          <span class="badge text-bg-secondary">{{ col.deployments|length }}</span>
+        </div>
+        <div class="card-body">
+          {% for d in col.deployments %}
+            <div class="border rounded p-3 mb-2 bg-white">
+              <div class="d-flex justify-content-between gap-2">
+                <b>{{ d.project_name }}</b>
+                <span class="badge text-bg-info">{{ d.environment or '-' }}</span>
+              </div>
+              <div class="small text-muted">{{ d.service_name or d.deploy_type or 'service' }}</div>
+              <div class="small">Port: {{ d.port or '-' }}｜狀態: {{ d.status or '-' }}</div>
+              <div class="small text-primary">{{ d.public_url or d.internal_url or '-' }}</div>
+              <div class="small text-muted text-break">{{ d.deploy_path or '-' }}</div>
+            </div>
+          {% else %}
+            <div class="text-muted small">尚無部署紀錄</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,393 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Console</h1>
+    <div class="text-muted small">Provider health, AI task dispatch, ai_messages results.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/ai-costs">AI Costs</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>AI Providers</span>
+    <button type="button" class="btn btn-sm btn-outline-primary" id="btnConsoleProviderHealth">Retest</button>
+  </div>
+  <div class="card-body">
+    <div class="row row-cols-1 row-cols-md-3 g-3">
+      <div class="col">
+        <div class="border rounded p-3 h-100">
+          <div class="d-flex justify-content-between"><span class="fw-semibold">GPT</span><span class="badge text-bg-secondary" data-provider-status="openai">Not tested</span></div>
+          <div class="small text-muted mt-2" data-provider-detail="openai">OpenAI GPT health check</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="border rounded p-3 h-100">
+          <div class="d-flex justify-content-between"><span class="fw-semibold">Gemini</span><span class="badge text-bg-secondary" data-provider-status="gemini">Not tested</span></div>
+          <div class="small text-muted mt-2" data-provider-detail="gemini">Gemini health check</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="border rounded p-3 h-100">
+          <div class="d-flex justify-content-between"><span class="fw-semibold">Claude</span><span class="badge text-bg-warning" data-provider-status="claude">Pending</span></div>
+          <div class="small text-muted mt-2" data-provider-detail="claude">Claude field is reserved for now.</div>
+        </div>
+      </div>
+    </div>
+    <div class="small text-muted mt-3" id="consoleProviderHealthUpdated">API keys are never displayed here.</div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Task Templates</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Provider</th>
+          <th>Priority</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for template in task_templates %}
+          <tr>
+            <td>{{ template.sort_order }}</td>
+            <td>{{ template.name }}</td>
+            <td>{{ template.task_type }}</td>
+            <td>{{ template.provider }}</td>
+            <td><span class="badge text-bg-secondary">{{ template.priority }}</span></td>
+            <td><span class="badge text-bg-{{ 'success' if template.is_active else 'secondary' }}">{{ 'active' if template.is_active else 'inactive' }}</span></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="text-center text-muted">No task templates yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-5">
+    <form class="card shadow-sm h-100" method="post" action="/ai-console/tasks">
+      <div class="card-header fw-bold">New AI Task</div>
+      <div class="card-body">
+        <label class="form-label">Title</label>
+        <input class="form-control mb-3" name="title" placeholder="Review staging API result" required>
+
+        <label class="form-label">Provider</label>
+        <select class="form-select mb-3" name="provider">
+          <option value="openai">OpenAI GPT</option>
+          <option value="gemini">Gemini</option>
+          <option value="claude">Claude</option>
+        </select>
+
+        <label class="form-label">Project</label>
+        <select class="form-select mb-3" name="project_id">
+          <option value="">Global task</option>
+          {% for project in projects %}
+            <option value="{{ project.id }}">#{{ project.id }} {{ project.name }}</option>
+          {% endfor %}
+        </select>
+
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label">Task Type</label>
+            <select class="form-select mb-3" name="task_type">
+              <option value="general">General</option>
+              <option value="planning">Planning</option>
+              <option value="review">Review</option>
+              <option value="test">Test</option>
+              <option value="deploy-check">Deploy Check</option>
+              <option value="content">Content</option>
+              <option value="automation">Automation</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Priority</label>
+            <select class="form-select mb-3" name="priority">
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label">Max Retries</label>
+            <input class="form-control mb-3" type="number" min="0" max="20" name="max_retries" value="3">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Parent Task ID</label>
+            <input class="form-control mb-3" type="number" min="1" name="parent_task_id" placeholder="Optional">
+          </div>
+        </div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" name="auto_run_next" value="1" id="consoleTaskAutoNext">
+          <label class="form-check-label" for="consoleTaskAutoNext">Auto-run next queued child when this task is done</label>
+        </div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" name="requires_approval" value="1" id="consoleTaskApproval">
+          <label class="form-check-label" for="consoleTaskApproval">Requires approval before auto-running the next child</label>
+        </div>
+
+        <label class="form-label">Prompt</label>
+        <textarea class="form-control mb-3" name="prompt" rows="7" placeholder="Describe the AI task to run" required></textarea>
+        <button class="btn btn-primary">Create Task</button>
+      </div>
+    </form>
+  </div>
+  <div class="col-lg-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">AI Tasks</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Title</th>
+              <th>Project</th>
+              <th>Type</th>
+              <th>Priority</th>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>Retries</th>
+              <th>Auto Next</th>
+              <th>Last Auto</th>
+              <th>Approval</th>
+              <th>Timing</th>
+              <th>Result</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for task in tasks %}
+            <tr>
+              <td><a href="/ai-tasks/{{ task.id }}">#{{ task.id }}</a></td>
+              <td>
+                <div class="fw-semibold"><a href="/ai-tasks/{{ task.id }}">{{ task.title }}</a></div>
+                <div class="small text-muted">{{ task.updated_at }}</div>
+              </td>
+              <td class="small">
+                {% if task.project_id %}
+                  <a href="/projects/{{ task.project_id }}">#{{ task.project_id }} {{ task.project_name or '' }}</a>
+                {% else %}
+                  <span class="text-muted">Global</span>
+                {% endif %}
+              </td>
+              <td>{{ task.task_type or 'general' }}</td>
+              <td>
+                {% set priority_class = 'danger' if task.priority == 'urgent' else ('warning' if task.priority == 'high' else ('info' if task.priority == 'medium' else 'secondary')) %}
+                <span class="badge text-bg-{{ priority_class }}">{{ task.priority or 'medium' }}</span>
+              </td>
+              <td>{{ task.provider }}</td>
+              <td>
+                {% set status_class = 'success' if task.status == 'done' else ('danger' if task.status == 'failed' else ('warning' if task.status == 'running' else ('dark' if task.status == 'blocked' else ('secondary' if task.status == 'canceled' else 'primary')))) %}
+                <span class="badge text-bg-{{ status_class }}">{{ task.status or 'queued' }}</span>
+              </td>
+              <td class="small">{{ task.retry_count or 0 }} / {{ task.max_retries if task.max_retries is not none else 3 }}</td>
+              <td><span class="badge text-bg-{{ 'success' if task.auto_run_next else 'secondary' }}">{{ 'on' if task.auto_run_next else 'off' }}</span></td>
+              <td class="small text-muted">{{ task.last_auto_run_at or '-' }}</td>
+              <td class="small">
+                <span class="badge text-bg-{{ 'warning' if task.requires_approval and task.approval_status == 'pending' else ('success' if task.approval_status == 'approved' else ('danger' if task.approval_status == 'rejected' else 'secondary')) }}">
+                  {{ task.approval_status or 'none' }}
+                </span>
+                {% if task.requires_approval %}
+                  <div class="text-muted">requires approval</div>
+                {% endif %}
+                {% if task.approved_at %}
+                  <div class="text-muted">{{ task.approved_by or 'local_admin' }} / {{ task.approved_at }}</div>
+                {% endif %}
+              </td>
+              <td class="small text-muted" style="min-width: 160px;">
+                <div>start: {{ task.started_at or '-' }}</div>
+                <div>finish: {{ task.finished_at or '-' }}</div>
+              </td>
+              <td class="small" style="min-width: 260px;">
+                <div>{{ task.result or task.error_message or task.prompt }}</div>
+              </td>
+              <td>
+                <div class="d-flex flex-wrap gap-1 justify-content-end">
+                  {% if task.status == 'queued' or not task.status %}
+                    <form method="post" action="/ai-console/tasks/{{ task.id }}/run">
+                      <button class="btn btn-sm btn-outline-primary">Run</button>
+                    </form>
+                    <form method="post" action="/ai-console/tasks/{{ task.id }}/run-flow">
+                      <button class="btn btn-sm btn-outline-success">Run Flow</button>
+                    </form>
+                    <form method="post" action="/ai-console/tasks/{{ task.id }}/cancel">
+                      <button class="btn btn-sm btn-outline-secondary">Cancel</button>
+                    </form>
+                  {% elif task.status == 'running' %}
+                    <button class="btn btn-sm btn-outline-warning" disabled>Running</button>
+                    <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                  {% elif task.status == 'failed' %}
+                    <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                    <form method="post" action="/ai-console/tasks/{{ task.id }}/retry">
+                      <button class="btn btn-sm btn-outline-primary">Retry</button>
+                    </form>
+                    <form method="post" action="/ai-console/tasks/{{ task.id }}/cancel">
+                      <button class="btn btn-sm btn-outline-secondary">Cancel</button>
+                    </form>
+                  {% elif task.status == 'blocked' %}
+                    <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                    <form method="post" action="/ai-console/tasks/{{ task.id }}/unblock">
+                      <button class="btn btn-sm btn-outline-primary">Unblock</button>
+                    </form>
+                    <form method="post" action="/ai-console/tasks/{{ task.id }}/cancel">
+                      <button class="btn btn-sm btn-outline-secondary">Cancel</button>
+                    </form>
+                  {% elif task.status == 'done' %}
+                    <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                    {% if task.requires_approval and task.approval_status == 'pending' %}
+                      <form method="post" action="/ai-console/tasks/{{ task.id }}/approve">
+                        <button class="btn btn-sm btn-success">Approve</button>
+                      </form>
+                      <form method="post" action="/ai-console/tasks/{{ task.id }}/reject">
+                        <button class="btn btn-sm btn-outline-danger">Reject</button>
+                      </form>
+                    {% endif %}
+                    <span class="small text-muted">Done</span>
+                  {% elif task.status == 'canceled' %}
+                    <button class="btn btn-sm btn-outline-success" disabled>Run Flow</button>
+                    <span class="small text-muted">Canceled</span>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="14" class="text-muted text-center">No AI tasks yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Global Flow Runs</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Project</th>
+          <th>Mode</th>
+          <th>Status</th>
+          <th>Started</th>
+          <th>Finished</th>
+          <th>Done / Failed</th>
+          <th>Stopped Reason</th>
+          <th>Summary</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in flow_runs %}
+          <tr>
+            <td><a href="/flow-runs/{{ run.id }}">#{{ run.id }}</a></td>
+            <td>{{ run.project_name or run.project_id or '-' }}</td>
+            <td><span class="badge text-bg-dark">{{ run.mode }}</span></td>
+            <td><span class="badge text-bg-{{ 'success' if run.status == 'completed' else ('warning' if run.status == 'approval_required' else ('danger' if run.status == 'failed' else 'secondary')) }}">{{ run.status }}</span></td>
+            <td class="small text-muted">{{ run.started_at or '-' }}</td>
+            <td class="small text-muted">{{ run.finished_at or '-' }}</td>
+            <td>{{ run.done_tasks or 0 }} / {{ run.failed_tasks or 0 }}</td>
+            <td><code class="small">{{ run.stopped_reason or '-' }}</code></td>
+            <td style="min-width: 24rem;"><pre class="small bg-light border rounded p-2 mb-0 text-wrap">{{ run.summary or '-' }}</pre></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="9" class="text-center text-muted">No flow runs yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Flow Mode Results</div>
+  <div class="list-group list-group-flush">
+    {% for message in flow_messages %}
+      <div class="list-group-item">
+        <div class="d-flex justify-content-between gap-2">
+          <div>
+            <span class="badge text-bg-dark">system</span>
+            <span class="fw-semibold">{{ message.prompt_summary }}</span>
+            {% if message.project_name %}<span class="small text-muted">/ {{ message.project_name }}</span>{% endif %}
+          </div>
+          <div class="small text-muted text-nowrap">{{ message.created_at }}</div>
+        </div>
+        <div class="small text-muted mt-2">{{ message.response_text or message.raw_response }}</div>
+      </div>
+    {% else %}
+      <div class="list-group-item text-muted">No flow mode results yet.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">ai_messages</div>
+  <div class="list-group list-group-flush">
+    {% for message in messages %}
+      <div class="list-group-item">
+        <div class="d-flex justify-content-between gap-2">
+          <div>
+            <span class="badge text-bg-dark">{{ message.provider }}</span>
+            <span class="badge text-bg-{{ 'success' if message.status == 'done' else ('danger' if message.status == 'failed' else 'warning') }}">{{ message.status }}</span>
+            <span class="small text-muted">{{ message.model or '-' }} / {{ message.task_role or '-' }}</span>
+          </div>
+          <div class="small text-muted text-nowrap">{{ message.created_at }}</div>
+        </div>
+        <div class="small text-muted mt-2">{{ message.project_name or 'No project' }}</div>
+        <div class="mt-2">{{ message.response_text or message.error_message or message.prompt_summary }}</div>
+      </div>
+    {% else %}
+      <div class="list-group-item text-muted">No ai_messages yet.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+  (function () {
+    const btn = document.getElementById('btnConsoleProviderHealth');
+    if (!btn) return;
+    const statusText = { online: 'Online', not_configured: 'Not configured', configured: 'Pending', error: 'Error' };
+    const statusClass = { online: 'text-bg-success', not_configured: 'text-bg-secondary', configured: 'text-bg-warning', error: 'text-bg-danger' };
+    function setProvider(name, result) {
+      const badge = document.querySelector(`[data-provider-status="${name}"]`);
+      const detail = document.querySelector(`[data-provider-detail="${name}"]`);
+      if (!badge || !detail) return;
+      const status = result.status || 'error';
+      badge.className = `badge ${statusClass[status] || 'text-bg-danger'}`;
+      badge.textContent = statusText[status] || status;
+      const countText = typeof result.modelCount === 'number' ? `models: ${result.modelCount}` : '';
+      detail.textContent = result.error || countText || status;
+    }
+    async function checkProviders() {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Testing...';
+      try {
+        const resp = await fetch('/api/ai/providers/health', { headers: { 'Authorization': 'Bearer {{ api_token }}' } });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        setProvider('openai', data.openai || {});
+        setProvider('gemini', data.gemini || {});
+        setProvider('claude', data.claude || {});
+        document.getElementById('consoleProviderHealthUpdated').textContent = 'Last test: ' + new Date().toLocaleString();
+      } catch (err) {
+        document.getElementById('consoleProviderHealthUpdated').textContent = 'Health check failed: ' + err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    }
+    btn.addEventListener('click', checkProviders);
+    checkProviders();
+  })();
+</script>
+{% endblock %}

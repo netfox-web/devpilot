@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1 class="h3 mb-3">{{ '編輯專案' if project else '新增專案' }}</h1>
+<form method="post" class="card shadow-sm p-4">
+  <div class="row g-3">
+    <div class="col-md-6"><label class="form-label">專案名稱 *</label><input class="form-control" name="name" required value="{{ project.name if project else '' }}"></div>
+    <div class="col-md-3"><label class="form-label">客戶名稱</label><input class="form-control" name="client_name" value="{{ project.client_name if project else '' }}"></div>
+    <div class="col-md-3"><label class="form-label">專案類型</label><input class="form-control" name="project_type" value="{{ project.project_type if project else '' }}"></div>
+    <div class="col-md-3"><label class="form-label">狀態</label><select class="form-select" name="status">{% for s in statuses %}<option value="{{ s }}" {% if project and project.status==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label">優先度</label><select class="form-select" name="priority">{% for p in priorities %}<option value="{{ p }}" {% if project and project.priority==p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select></div>
+    {% if not project %}<div class="col-md-6"><label class="form-label">專案模板</label><select class="form-select" name="template_id"><option value="">不套用模板</option>{% for t in templates %}<option value="{{ t.id }}">{{ t.name }}｜{{ t.description }}</option>{% endfor %}</select></div>{% endif %}
+    <div class="col-md-6"><label class="form-label">GitHub Repo</label><input class="form-control" name="github_repo" value="{{ project.github_repo if project else '' }}"></div>
+    <div class="col-md-6"><label class="form-label">本機路徑</label><input class="form-control" name="local_path" value="{{ project.local_path if project else '' }}"></div>
+    <div class="col-md-4"><label class="form-label">部署網址</label><input class="form-control" name="deploy_url" value="{{ project.deploy_url if project else '' }}"></div>
+    <div class="col-md-4"><label class="form-label">部署位置</label><input class="form-control" name="deploy_location" value="{{ project.deploy_location if project else '' }}"></div>
+    <div class="col-md-4"><label class="form-label">負責電腦</label><input class="form-control" name="owner_machine" value="{{ project.owner_machine if project else '' }}"></div>
+    <div class="col-md-12"><label class="form-label">下一步</label><input class="form-control" name="next_steps" value="{{ project.next_steps if project else '' }}"></div>
+    <div class="col-12"><label class="form-label">描述</label><textarea class="form-control" name="description" rows="4">{{ project.description if project else '' }}</textarea></div>
+  </div>
+  <div class="mt-4"><button class="btn btn-primary">儲存</button> <a class="btn btn-outline-secondary" href="/projects">返回</a></div>
+</form>
+{% endblock %}

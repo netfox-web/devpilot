@@ -1,0 +1,6 @@
+body { background: #f6f7fb; }
+.card { border: 0; border-radius: 14px; }
+.nav-tabs .nav-link { color: #333; }
+.table td, .table th { vertical-align: middle; }
+code { background: #f1f3f5; padding: 2px 5px; border-radius: 5px; }
+.progress { background: #e9ecef; }

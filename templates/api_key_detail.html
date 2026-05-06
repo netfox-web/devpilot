@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">{{ key.name }}</h1>
+    <div class="text-muted small">{{ key.provider }} / {{ key.category }} / {{ key.version }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/api-keys">Back to API Keys</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Key Details</div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Value</dt>
+          <dd class="col-sm-8"><code>************</code></dd>
+          <dt class="col-sm-4">List mask</dt>
+          <dd class="col-sm-8"><code>{{ key.display_mask }}</code></dd>
+          <dt class="col-sm-4">Status</dt>
+          <dd class="col-sm-8"><span class="badge text-bg-{{ 'success' if key.status == 'active' else 'danger' }}">{{ key.status }}</span></dd>
+          <dt class="col-sm-4">Environment</dt>
+          <dd class="col-sm-8"><span class="badge text-bg-{{ 'danger' if key.environment == 'production' else 'secondary' }}">{{ key.environment or 'staging' }}</span></dd>
+          <dt class="col-sm-4">Rotation</dt>
+          <dd class="col-sm-8">{{ key.rotation_days or 30 }} days, last {{ key.last_rotated_at or '-' }}</dd>
+          <dt class="col-sm-4">AI allowed</dt>
+          <dd class="col-sm-8">{{ 'yes' if key.ai_allowed else 'no' }}</dd>
+          <dt class="col-sm-4">Permissions</dt>
+          <dd class="col-sm-8">
+            {% for permission in key.permissions_list %}
+              <span class="badge text-bg-info">{{ permission }}</span>
+            {% else %}
+              <span class="text-muted">none</span>
+            {% endfor %}
+          </dd>
+          <dt class="col-sm-4">Last used</dt>
+          <dd class="col-sm-8">{{ key.last_used_at or '-' }}</dd>
+          <dt class="col-sm-4">Created</dt>
+          <dd class="col-sm-8">{{ key.created_at or '-' }}</dd>
+        </dl>
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          {% if key.status != 'revoked' and can_reveal_api_keys %}
+          <form method="post" action="/api-keys/{{ key.id }}/reveal">
+            <button class="btn btn-outline-warning">Show</button>
+          </form>
+          <form method="post" action="/api-keys/{{ key.id }}/copy">
+            <button class="btn btn-outline-primary">Copy</button>
+          </form>
+          <form method="post" action="/api-keys/{{ key.id }}/rotate" onsubmit="return confirm('Rotate this key?')">
+            <button class="btn btn-outline-success">Rotate</button>
+          </form>
+          {% endif %}
+          {% if key.status != 'revoked' and can_manage_api_keys %}
+          <form method="post" action="/api-keys/{{ key.id }}/revoke" onsubmit="return confirm('Revoke this key?')">
+            <input type="hidden" name="reason" value="manual revoke">
+            <button class="btn btn-outline-danger">Revoke</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold">Alerts</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Time</th><th>Type</th><th>Message</th></tr></thead>
+          <tbody>
+            {% for alert in alerts %}
+              <tr><td>{{ alert.created_at }}</td><td><span class="badge text-bg-danger">{{ alert.type }}</span></td><td>{{ alert.message }}</td></tr>
+            {% else %}
+              <tr><td colspan="3" class="text-muted">No alerts</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold">Version History</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>ID</th><th>Version</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>
+            {% for version in versions %}
+              <tr><td>#{{ version.id }}</td><td>{{ version.version }}</td><td>{{ version.status }}</td><td>{{ version.created_at }}</td></tr>
+            {% else %}
+              <tr><td colspan="4" class="text-muted">No versions</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold">Recent Usage</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Time</th><th>Source</th><th>Path</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for item in usage %}
+              <tr><td>{{ item.used_at }}</td><td>{{ item.source }}</td><td>{{ item.path }}</td><td>{{ item.status_code }}</td></tr>
+            {% else %}
+              <tr><td colspan="4" class="text-muted">No usage</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Audit Log</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Time</th><th>Action</th><th>User</th><th>IP</th></tr></thead>
+          <tbody>
+            {% for audit in audits %}
+              <tr><td>{{ audit.created_at }}</td><td>{{ audit.action }}</td><td>{{ audit.user_id or '-' }}</td><td>{{ audit.display_ip or '-' }}</td></tr>
+            {% else %}
+              <tr><td colspan="4" class="text-muted">No audit log</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

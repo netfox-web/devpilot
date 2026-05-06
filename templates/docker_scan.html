@@ -1,0 +1,166 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">NAS Docker 掃描匯入</h1>
+    <p class="text-muted small mb-0">Docker 掃描只透過 SSH 執行 read-only 指令；網址探測只對掃出的對外 port 執行有限 HEAD / GET，不登入、不爆破、不壓測。</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="/">回儀表板</a>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-bold">部署主機</div>
+  <div class="card-body">
+    <div class="row g-3">
+      {% for t in targets %}
+      <div class="col-lg-6">
+        <div class="border rounded p-3 h-100">
+          <div class="fw-bold">{{ t.name }}</div>
+          <div class="small text-muted">SSH {{ t.ssh_user }}@{{ t.ssh_host or t.ip_address }}:{{ t.ssh_port or '22' }}</div>
+          <div class="small mt-2">{{ t.notes or '' }}</div>
+          <form class="mt-3" method="post" action="/docker-scan/target/{{ t.id }}/scan">
+            <label class="form-label small">docker_root</label>
+            <div class="input-group input-group-sm">
+              <input class="form-control" name="docker_root" value="{{ default_docker_root }}" placeholder="/volume1/docker">
+              <button type="submit" class="btn btn-primary">掃描 Docker</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <div class="col-12 text-muted">尚未建立部署主機。</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-bold">最近掃描紀錄</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>時間</th><th>主機</th><th>根目錄</th><th>狀態</th><th>摘要</th></tr></thead>
+      <tbody>
+        {% for r in recent_scans %}
+        <tr>
+          <td class="small text-nowrap">{{ r.created_at }}</td>
+          <td>{{ r.target_name or '-' }}</td>
+          <td class="small"><code>{{ r.docker_root or '-' }}</code></td>
+          <td><span class="badge text-bg-{{ 'success' if r.status=='ok' else 'danger' }}">{{ r.status }}</span></td>
+          <td class="small">{{ r.summary or '-' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted">尚無掃描紀錄</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span>Docker 服務清單</span>
+    <span class="small text-muted">未綁定服務可用「建立專案 + Repo」；每個服務的「掃描網址」只探測固定候選路徑。</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>主機</th>
+          <th>專案</th>
+          <th>Container</th>
+          <th>Compose 路徑</th>
+          <th>Image</th>
+          <th>狀態</th>
+          <th>Ports</th>
+          <th>Volumes</th>
+          <th>last_seen_at</th>
+          <th>網址探測</th>
+          <th>綁定專案</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in services %}
+        {% set endpoints = endpoints_by_service.get(s.id, []) %}
+        <tr>
+          <td>{{ s.target_name }}</td>
+          <td>
+            {% if s.project_id %}
+              <span class="badge text-bg-success"><a href="/projects/{{ s.project_id }}" class="text-white text-decoration-none">已建立（{{ s.project_name }}）</a></span>
+            {% else %}
+              <form method="post" action="/docker-scan/service/{{ s.id }}/bootstrap-project" class="mt-2">
+                <button type="submit" class="btn btn-sm btn-outline-success">建立專案 + Repo</button>
+              </form>
+              <span class="badge text-bg-warning">未綁定專案</span>
+            {% endif %}
+          </td>
+          <td><code class="small">{{ s.container_name }}</code></td>
+          <td class="small">{{ s.compose_path or '-' }}</td>
+          <td class="small">{{ s.image or '-' }}</td>
+          <td><span class="badge text-bg-secondary">{{ s.status }}</span></td>
+          <td class="small text-break" style="max-width:10rem">{{ s.ports or '-' }}</td>
+          <td class="small text-break" style="max-width:10rem">{{ s.volumes or '-' }}</td>
+          <td class="small">{{ s.last_seen_at or '-' }}</td>
+          <td style="min-width:24rem">
+            <form method="post" action="/docker-scan/service/{{ s.id }}/scan-endpoints" class="mb-2">
+              <button type="submit" class="btn btn-sm btn-outline-primary">掃描網址</button>
+            </form>
+            {% if endpoints %}
+              <div class="vstack gap-2">
+                {% for e in endpoints %}
+                  <div class="border rounded p-2 {% if e.is_ignored %}bg-light text-muted{% endif %}">
+                    <div class="d-flex justify-content-between gap-2 flex-wrap">
+                      <div>
+                        <span class="badge text-bg-{{ 'success' if e.endpoint_type == 'frontend' else ('primary' if e.endpoint_type == 'admin' else ('dark' if e.endpoint_type == 'api' else ('info' if e.endpoint_type == 'health' else 'secondary'))) }}">{{ e.endpoint_type }}</span>
+                        {% if e.is_confirmed %}<span class="badge text-bg-success">已確認</span>{% endif %}
+                        {% if e.is_ignored %}<span class="badge text-bg-secondary">已忽略</span>{% endif %}
+                        <span class="badge text-bg-{{ 'success' if e.status_code == 200 else ('warning' if e.status_code and e.status_code < 500 else 'danger') }}">{{ e.status_code if e.status_code is not none else 'ERR' }}</span>
+                      </div>
+                      <div class="small text-muted">{{ e.last_checked_at or '-' }}</div>
+                    </div>
+                    <div class="small text-break mt-1"><a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.url }}</a></div>
+                    <div class="small">{{ e.title or e.notes or '-' }}</div>
+                    <div class="mt-2 d-flex flex-wrap gap-1">
+                      <form method="post" action="/service-endpoints/{{ e.id }}/classify"><input type="hidden" name="action" value="frontend"><button class="btn btn-sm btn-outline-success">設為前台</button></form>
+                      <form method="post" action="/service-endpoints/{{ e.id }}/classify"><input type="hidden" name="action" value="admin"><button class="btn btn-sm btn-outline-primary">設為後台</button></form>
+                      <form method="post" action="/service-endpoints/{{ e.id }}/classify"><input type="hidden" name="action" value="api"><button class="btn btn-sm btn-outline-dark">設為 API</button></form>
+                      <form method="post" action="/service-endpoints/{{ e.id }}/classify"><input type="hidden" name="action" value="ignore"><button class="btn btn-sm btn-outline-secondary">忽略</button></form>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="small text-muted">尚未掃描服務網址。</div>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/docker-scan/bind" class="d-flex flex-column gap-1" style="min-width:11rem">
+              <input type="hidden" name="service_id" value="{{ s.id }}">
+              <select class="form-select form-select-sm" name="project_id" required>
+                <option value="">選擇專案</option>
+                {% for p in projects_dd %}
+                <option value="{{ p.id }}" {% if s.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+              </select>
+              <input class="form-control form-control-sm" name="environment" value="production" placeholder="環境">
+              <button type="submit" class="btn btn-sm btn-outline-primary">綁定</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" class="text-center text-muted py-4">尚未掃描到 Docker 服務。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header fw-bold">API（需 Bearer Token）</div>
+  <div class="card-body small font-monospace">
+    <div>POST <code>/api/deployment-targets/{target_id}/scan-docker</code></div>
+    <div>POST <code>/api/docker-services/{service_id}/scan-endpoints</code></div>
+    <div>POST <code>/api/docker-services/scan-endpoints-all</code></div>
+    <div>PATCH <code>/api/docker-services/{service_id}/bind-project</code></div>
+  </div>
+</div>
+{% endblock %}

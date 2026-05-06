@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">專案列表</h1>
+  <a href="/projects/new" class="btn btn-primary">新增專案</a>
+</div>
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>專案名稱</th><th>客戶</th><th>類型</th><th>狀態</th><th>優先</th><th>進度</th><th>指定電腦</th><th>部署位置</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for p in projects %}
+        <tr>
+          <td><a href="/projects/{{ p.id }}" class="fw-bold">{{ p.name }}</a><div class="small text-muted">{{ p.github_repo or '' }}</div></td>
+          <td>{{ p.client_name or '-' }}</td>
+          <td>{{ p.project_type or '-' }}</td>
+          <td><span class="badge text-bg-secondary">{{ p.status }}</span></td>
+          <td>{{ p.priority }}</td>
+          <td style="min-width:150px"><div class="progress"><div class="progress-bar" style="width: {{ p.progress }}%">{{ p.progress }}%</div></div></td>
+          <td>{{ p.development_computer_name or '未指定' }}</td>
+          <td>{% if p.deployment_target_name %}{{ p.deployment_environment or '部署' }}：{{ p.deployment_target_name }}{% if p.deployment_port %} :{{ p.deployment_port }}{% endif %}{% else %}未設定{% endif %}</td>
+          <td><a class="btn btn-sm btn-outline-primary" href="/projects/{{ p.id }}">查看</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="text-center text-muted py-4">尚無專案</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
