@@ -1,0 +1,17 @@
+services:
+  devpilot:
+    build: .
+    container_name: devpilot-project-manager
+    ports:
+      - "5010:5000"
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Taipei
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      # Optional: mount a read-only SSH key directory if Docker scan needs SSH access.
+      # Replace the left side with your NAS user's SSH directory.
+      # - /path/to/nas-user/.ssh:/root/.ssh:ro
+    restart: unless-stopped
