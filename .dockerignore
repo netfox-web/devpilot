@@ -1,0 +1,11 @@
+.env
+.git
+.venv
+venv
+__pycache__
+*.pyc
+data
+uploads
+output
+backup
+backups
