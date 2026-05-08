@@ -3340,6 +3340,13 @@ APPROVAL_REQUEST_STATUSES = ["pending", "approved", "rejected", "expired", "canc
 APPROVAL_ALLOWED_ROLES = ["owner", "admin"]
 APPROVAL_CALLBACK_PREFIX = "apv"
 APPROVAL_DEFAULT_EXPIRES_HOURS = 24
+DNS_PREVIEW_EXECUTION_STATES = {
+    "pending": "waiting_approval",
+    "approved": "approved_ready_for_manual_dns_plan",
+    "rejected": "rejected_no_action",
+    "expired": "expired_no_action",
+    "canceled": "canceled_no_action",
+}
 
 
 def cloudflare_api_keys():
@@ -3673,7 +3680,40 @@ def approval_request_public(row):
     except Exception:
         item["payload"] = {}
     item["payload_json"] = json.dumps(item["payload"], ensure_ascii=False)
+    item.update(approval_request_execution_summary(item))
     return item
+
+
+def approval_request_execution_summary(item):
+    request_type = str((item or {}).get("request_type") or "").strip()
+    status = str((item or {}).get("status") or "").strip()
+    if request_type == "dns_preview_create":
+        execution_state = DNS_PREVIEW_EXECUTION_STATES.get(status, "waiting_approval")
+        return {
+            "execution_state": execution_state,
+            "plan_only": True,
+            "dns_write_enabled": False,
+            "requires_manual_execution": True,
+            "manual_execution_available": status == "approved",
+            "execution_note": "Approval never writes Cloudflare DNS or deploys automatically.",
+        }
+    if request_type == "mock_approval_test":
+        return {
+            "execution_state": f"mock_{status or 'unknown'}_no_action",
+            "plan_only": True,
+            "dns_write_enabled": False,
+            "requires_manual_execution": False,
+            "manual_execution_available": False,
+            "execution_note": "Mock request only tests approval state transitions.",
+        }
+    return {
+        "execution_state": "unknown_no_action",
+        "plan_only": True,
+        "dns_write_enabled": False,
+        "requires_manual_execution": False,
+        "manual_execution_available": False,
+        "execution_note": "No automatic execution is configured for this approval request.",
+    }
 
 
 def approval_request_rows(status=None, project_id=None, request_type=None, limit=100):

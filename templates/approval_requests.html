@@ -57,6 +57,7 @@
           <th>Project</th>
           <th>Title</th>
           <th>Status</th>
+          <th>Execution</th>
           <th>Summary</th>
           <th>Payload</th>
           <th>Telegram Mock</th>
@@ -83,6 +84,12 @@
             <td>
               {% set status_class = 'success' if item.status == 'approved' else ('danger' if item.status == 'rejected' else ('warning' if item.status == 'pending' else 'secondary')) %}
               <span class="badge text-bg-{{ status_class }}">{{ item.status or '-' }}</span>
+            </td>
+            <td class="small" style="min-width: 15rem;">
+              <div><code>{{ item.execution_state or '-' }}</code></div>
+              <div class="text-muted">plan_only={{ item.plan_only | lower }}</div>
+              <div class="text-muted">dns_write_enabled={{ item.dns_write_enabled | lower }}</div>
+              <div class="text-muted">requires_manual_execution={{ item.requires_manual_execution | lower }}</div>
             </td>
             <td class="small" style="min-width: 16rem;">{{ item.summary or '-' }}</td>
             <td class="small" style="min-width: 20rem;">
@@ -116,7 +123,7 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="11" class="text-center text-muted py-4">No approval requests.</td></tr>
+          <tr><td colspan="12" class="text-center text-muted py-4">No approval requests.</td></tr>
         {% endfor %}
       </tbody>
     </table>
