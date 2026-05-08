@@ -8220,6 +8220,16 @@ def api_telegram_webhook():
         }:
             return jsonify({"ok": True, "ignored": True, "reason": "invalid_callback_data"})
         return jsonify({"ok": False, "error": str(exc)}), 400
+    if isinstance(result, dict) and result.get("error") in {
+        "approval_request_already_processed",
+        "approval_request_expired",
+    }:
+        return jsonify({
+            "ok": True,
+            "ignored": True,
+            "reason": result.get("error"),
+            "status": result.get("status"),
+        })
     return jsonify(result), status_code
 
 
