@@ -94,6 +94,45 @@
 </div>
 
 <div class="row g-3 mt-1">
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Cloudflare DNS Write Gate</div>
+      <div class="card-body">
+        <div class="row g-3 align-items-center">
+          <div class="col-md-3">
+            <div class="small text-muted">Feature flag</div>
+            <code>{{ dns_write_flag.feature_flag }}</code>
+          </div>
+          <div class="col-md-2">
+            <div class="small text-muted">Effective</div>
+            <span class="badge text-bg-{{ 'danger' if dns_write_flag.effective_enabled else 'secondary' }}">
+              {{ 'Enabled' if dns_write_flag.effective_enabled else 'Disabled' }}
+            </span>
+          </div>
+          <div class="col-md-2">
+            <div class="small text-muted">DNS write</div>
+            <span class="badge text-bg-secondary">Disabled</span>
+          </div>
+          <div class="col-md-2">
+            <div class="small text-muted">UI toggle</div>
+            <span class="badge text-bg-secondary">Not available</span>
+          </div>
+          <div class="col-md-3">
+            <div class="small text-muted">Execute endpoint</div>
+            <span class="badge text-bg-warning">Feature-flag gated</span>
+          </div>
+        </div>
+        <div class="small text-muted mt-3">
+          Source: {{ dns_write_flag.source }};
+          raw value: {{ dns_write_flag.raw_value_masked or 'not set' }};
+          Cloudflare API write: disabled.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
   <div class="col-xl-7">
     <div class="card shadow-sm h-100">
       <div class="card-header fw-bold">Zones</div>

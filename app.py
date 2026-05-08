@@ -3892,6 +3892,39 @@ def cloudflare_dns_write_feature_enabled():
     return value in ("1", "true", "yes", "on", "enabled")
 
 
+def mask_feature_flag_value(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) <= 2:
+        return "*" * len(text)
+    return f"{text[:1]}****{text[-1:]}"
+
+
+def cloudflare_dns_write_flag_status():
+    raw_value = os.getenv(CLOUDFLARE_DNS_WRITE_FEATURE_FLAG)
+    normalized = str(raw_value or "").strip().lower()
+    effective_enabled = cloudflare_dns_write_feature_enabled()
+    return {
+        "ok": True,
+        "feature_flag": CLOUDFLARE_DNS_WRITE_FEATURE_FLAG,
+        "effective_enabled": effective_enabled,
+        "raw_value_present": bool(normalized),
+        "raw_value_masked": mask_feature_flag_value(raw_value),
+        "source": "environment",
+        "write_execute_implemented": False,
+        "execute_endpoint_exists": True,
+        "feature_flag_allows_execute": effective_enabled,
+        "dns_write_enabled": False,
+        "cloudflare_api_call_enabled": False,
+        "actual_dns_write_still_disabled": True,
+        "execution_interlock_required": True,
+        "can_toggle_here": False,
+        "requires_manual_deployment_change": True,
+        "next_step": "read_only_visibility_only",
+    }
+
+
 def record_dns_execution_attempt(request_id, confirmation, result, http_status, error_message=""):
     user = current_user() or {}
     actor = user.get("username") or user.get("email") or current_role() or "unknown"
@@ -8288,6 +8321,7 @@ def cloudflare_settings():
         tokens=cloudflare_api_keys(),
         environments=API_KEY_ENVIRONMENTS,
         dns_types=CLOUDFLARE_DNS_TYPES,
+        dns_write_flag=cloudflare_dns_write_flag_status(),
     )
 
 
@@ -8360,6 +8394,12 @@ def api_cloudflare_test_connection():
         },
         "message": "Cloudflare token verified",
     })
+
+
+@app.route("/api/cloudflare/dns-write-flag", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_cloudflare_dns_write_flag():
+    return jsonify(cloudflare_dns_write_flag_status())
 
 
 @app.route("/api/cloudflare/zones", methods=["GET"])
