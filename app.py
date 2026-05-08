@@ -3374,6 +3374,7 @@ APPROVAL_CALLBACK_PREFIX = "apv"
 APPROVAL_DEFAULT_EXPIRES_HOURS = 24
 DNS_PLAN_CONFIRM_PHRASE = "CONFIRM_DNS_PLAN_ONLY"
 CLOUDFLARE_DNS_WRITE_FEATURE_FLAG = "CLOUDFLARE_DNS_WRITE_ENABLED"
+MOCK_DNS_EXECUTION_FEATURE_FLAG = "MOCK_DNS_EXECUTION_ENABLED"
 DNS_PREVIEW_EXECUTION_STATES = {
     "pending": "waiting_approval",
     "approved": "approved_ready_for_manual_dns_plan",
@@ -4358,6 +4359,11 @@ def cloudflare_dns_write_feature_enabled():
     return value in ("1", "true", "yes", "on", "enabled")
 
 
+def mock_dns_execution_feature_enabled():
+    value = os.getenv(MOCK_DNS_EXECUTION_FEATURE_FLAG, "").strip().lower()
+    return value in ("1", "true", "yes", "on", "enabled")
+
+
 def mask_feature_flag_value(value):
     text = str(value or "").strip()
     if not text:
@@ -4391,7 +4397,17 @@ def cloudflare_dns_write_flag_status():
     }
 
 
-def record_dns_execution_attempt(request_id, confirmation, result, http_status, error_message=""):
+def record_dns_execution_attempt(
+    request_id,
+    confirmation,
+    result,
+    http_status,
+    error_message="",
+    attempted_action="cloudflare_dns_execute",
+    feature_flag=None,
+    feature_flag_state=None,
+    request_snapshot_extra=None,
+):
     user = current_user() or {}
     actor = user.get("username") or user.get("email") or current_role() or "unknown"
     row = approval_request_public(approval_request_row(request_id)) or {}
@@ -4404,6 +4420,14 @@ def record_dns_execution_attempt(request_id, confirmation, result, http_status, 
         "summary": row.get("summary"),
         "execution_state": row.get("execution_state"),
     }
+    if isinstance(request_snapshot_extra, dict):
+        request_snapshot.update(request_snapshot_extra)
+    feature_flag = feature_flag or CLOUDFLARE_DNS_WRITE_FEATURE_FLAG
+    if feature_flag_state is None:
+        if feature_flag == MOCK_DNS_EXECUTION_FEATURE_FLAG:
+            feature_flag_state = "enabled" if mock_dns_execution_feature_enabled() else "disabled"
+        else:
+            feature_flag_state = "enabled" if cloudflare_dns_write_feature_enabled() else "disabled"
     cur = execute(
         """INSERT INTO dns_execution_attempts
            (approval_request_id, actor, attempted_action, feature_flag, feature_flag_state,
@@ -4412,9 +4436,9 @@ def record_dns_execution_attempt(request_id, confirmation, result, http_status, 
         (
             request_id,
             actor,
-            "cloudflare_dns_execute",
-            CLOUDFLARE_DNS_WRITE_FEATURE_FLAG,
-            "disabled" if not cloudflare_dns_write_feature_enabled() else "enabled",
+            attempted_action,
+            feature_flag,
+            feature_flag_state,
             result,
             int(http_status),
             json.dumps(confirmation.get("planned_action") or {}, ensure_ascii=False),
@@ -4426,10 +4450,102 @@ def record_dns_execution_attempt(request_id, confirmation, result, http_status, 
     return cur.lastrowid
 
 
+def dns_mock_execution_result(preflight):
+    planned_action = preflight.get("planned_action") or {}
+    rollback_snapshot = preflight.get("rollback_snapshot") or {}
+    return {
+        "decision": preflight.get("decision"),
+        "provider": "cloudflare",
+        "simulated_action": planned_action.get("action"),
+        "record": {
+            "type": planned_action.get("record_type"),
+            "name": planned_action.get("name"),
+            "target": planned_action.get("target"),
+            "proxied": planned_action.get("proxied"),
+            "ttl": planned_action.get("ttl"),
+        },
+        "rollback_strategy": rollback_snapshot.get("strategy"),
+        "no_real_write": True,
+        "cloudflare_write_call_enabled": False,
+        "dns_write_performed": False,
+        "deployment_job_created": False,
+    }
+
+
 def build_approval_dns_plan_execute_disabled(request_id, payload=None):
+    source = payload if isinstance(payload, dict) else {}
     confirmation, status_code = build_approval_dns_plan_confirmation(request_id, payload)
     if status_code != 200:
         return confirmation, status_code
+
+    if str(source.get("mode") or "").strip().lower() == "mock":
+        if not mock_dns_execution_feature_enabled():
+            return {
+                "ok": False,
+                "status": "mock_dns_execution_disabled",
+                "error": "mock_dns_execution_disabled",
+                "mode": "mock_execute_disabled",
+                "request_id": request_id,
+                "request_type": confirmation.get("request_type"),
+                "approval_status": confirmation.get("approval_status"),
+                "execution_state": confirmation.get("execution_state"),
+                "dns_write_enabled": False,
+                "execution_enabled": False,
+                "cloudflare_write_call_enabled": False,
+                "dns_write_performed": False,
+                "disabled_by_feature_flag": True,
+                "feature_flag": MOCK_DNS_EXECUTION_FEATURE_FLAG,
+                "attempt_logged": False,
+                "attempt_result": None,
+                "planned_action": confirmation.get("planned_action"),
+                "next_step": "mock_dns_execution_feature_flag_disabled",
+                "message": "Mock DNS execution is disabled. No DNS record was created or updated.",
+            }, 409
+
+        preflight, preflight_status = build_approval_dns_plan_preflight(request_id)
+        if preflight_status != 200:
+            return preflight, preflight_status
+
+        mock_result = dns_mock_execution_result(preflight)
+        attempt_id = record_dns_execution_attempt(
+            request_id,
+            preflight,
+            result="mock_executed",
+            http_status=200,
+            error_message="Mock DNS execution only. No real DNS write.",
+            attempted_action="cloudflare_dns_execute_mock",
+            feature_flag=MOCK_DNS_EXECUTION_FEATURE_FLAG,
+            feature_flag_state="enabled",
+            request_snapshot_extra={
+                "mock_result": "mock_executed",
+                "no_real_write": True,
+                "decision": preflight.get("decision"),
+            },
+        )
+        return {
+            "ok": True,
+            "mode": "mock_execute",
+            "result": "mock_executed",
+            "request_id": request_id,
+            "request_type": confirmation.get("request_type"),
+            "approval_status": confirmation.get("approval_status"),
+            "execution_state": confirmation.get("execution_state"),
+            "no_real_write": True,
+            "cloudflare_write_call_enabled": False,
+            "dns_write_performed": False,
+            "deployment_job_created": False,
+            "dns_write_enabled": False,
+            "execution_enabled": False,
+            "decision": preflight.get("decision"),
+            "mock_execution_result": mock_result,
+            "attempt_logged": True,
+            "attempt_result": "mock_executed",
+            "attempt_id": attempt_id,
+            "planned_action": preflight.get("planned_action"),
+            "rollback_snapshot": preflight.get("rollback_snapshot"),
+            "next_step": "real_cloudflare_write_still_not_enabled",
+            "message": "Mock DNS execution completed. No Cloudflare DNS record was created or updated.",
+        }, 200
 
     if not cloudflare_dns_write_feature_enabled():
         attempt_id = record_dns_execution_attempt(
