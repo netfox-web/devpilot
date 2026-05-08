@@ -3716,6 +3716,97 @@ def approval_request_execution_summary(item):
     }
 
 
+def dns_plan_zone_name(record_name):
+    hostname = normalize_domain_name(record_name)
+    candidates = sorted(set(PREVIEW_DOMAIN_BASE_DOMAINS.values()), key=len, reverse=True)
+    for base_domain in candidates:
+        base_domain = normalize_domain_name(base_domain)
+        if hostname == base_domain or hostname.endswith(f".{base_domain}"):
+            return base_domain
+    parts = hostname.split(".")
+    if len(parts) >= 3 and len(parts[-1]) == 2:
+        return ".".join(parts[-3:])
+    if len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return hostname
+
+
+def build_approval_dns_plan_prepare(request_id):
+    row = approval_request_row(request_id)
+    if not row:
+        return {"ok": False, "error": "approval_request_not_found"}, 404
+
+    public = approval_request_public(row)
+    request_type = public.get("request_type")
+    if request_type != "dns_preview_create":
+        return {
+            "ok": False,
+            "error": "unsupported_request_type",
+            "request_id": request_id,
+            "request_type": request_type,
+            "plan_only": True,
+            "dns_write_enabled": False,
+        }, 400
+
+    execution = approval_request_execution_summary(public)
+    status = public.get("status")
+    execution_state = execution.get("execution_state")
+    if status != "approved" or execution_state != "approved_ready_for_manual_dns_plan":
+        return {
+            "ok": False,
+            "error": execution_state or "approval_not_ready",
+            "request_id": request_id,
+            "request_type": request_type,
+            "approval_status": status,
+            "execution_state": execution_state,
+            "plan_only": True,
+            "dns_write_enabled": False,
+            "requires_manual_execution": True,
+        }, 409
+
+    try:
+        payload = json.loads(row.get("payload_json") or "{}")
+        approval_payload = sanitize_approval_payload("dns_preview_create", payload)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {
+            "ok": False,
+            "error": "invalid_dns_preview_payload",
+            "message": str(exc),
+            "request_id": request_id,
+            "plan_only": True,
+            "dns_write_enabled": False,
+        }, 400
+
+    dns_record = approval_payload["dns_record"]
+    zone_name = dns_plan_zone_name(dns_record["name"])
+    planned_action = {
+        "provider": "cloudflare",
+        "action": "create_or_update_dns_record",
+        "record_type": dns_record["type"],
+        "name": dns_record["name"],
+        "zone_name": zone_name,
+        "target": dns_record["content"],
+        "proxied": bool(dns_record.get("proxied")),
+        "ttl": coerce_int(dns_record.get("ttl"), 1),
+    }
+    return {
+        "ok": True,
+        "mode": "dry_run",
+        "plan_only": True,
+        "dns_write_enabled": False,
+        "requires_second_confirmation": True,
+        "requires_manual_execution": True,
+        "manual_execution_available": True,
+        "request_id": request_id,
+        "request_type": request_type,
+        "approval_status": status,
+        "execution_state": execution_state,
+        "planned_action": planned_action,
+        "next_step": "manual_second_confirmation_required",
+        "message": "Dry-run only. No Cloudflare DNS record was created or updated.",
+    }, 200
+
+
 def approval_request_rows(status=None, project_id=None, request_type=None, limit=100):
     where = ["1=1"]
     params = []
@@ -8261,6 +8352,13 @@ def api_approval_requests_mock():
         "approval_request": item,
         "message": "Mock approval request created. No Telegram, DNS, or deployment action was executed.",
     }), 201
+
+
+@app.route("/api/approval-requests/<int:request_id>/dns-plan/prepare", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_approval_request_dns_plan_prepare(request_id):
+    result, status_code = build_approval_dns_plan_prepare(request_id)
+    return jsonify(result), status_code
 
 
 @app.route("/api/approval-requests/<int:request_id>/send-telegram", methods=["POST"])
