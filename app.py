@@ -906,6 +906,21 @@ def init_db():
                 FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS dns_execution_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                approval_request_id INTEGER NOT NULL,
+                actor TEXT,
+                attempted_action TEXT NOT NULL,
+                feature_flag TEXT,
+                feature_flag_state TEXT,
+                result TEXT NOT NULL,
+                http_status INTEGER,
+                planned_action_json TEXT,
+                request_snapshot_json TEXT,
+                error_message TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS telegram_allowed_users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_user_id_hash TEXT,
@@ -1385,6 +1400,22 @@ def migrate_db():
             rejected_at TEXT,
             notes TEXT,
             FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+        )"""
+    )
+    execute(
+        """CREATE TABLE IF NOT EXISTS dns_execution_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            approval_request_id INTEGER NOT NULL,
+            actor TEXT,
+            attempted_action TEXT NOT NULL,
+            feature_flag TEXT,
+            feature_flag_state TEXT,
+            result TEXT NOT NULL,
+            http_status INTEGER,
+            planned_action_json TEXT,
+            request_snapshot_json TEXT,
+            error_message TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )"""
     )
     execute(
@@ -3861,12 +3892,54 @@ def cloudflare_dns_write_feature_enabled():
     return value in ("1", "true", "yes", "on", "enabled")
 
 
+def record_dns_execution_attempt(request_id, confirmation, result, http_status, error_message=""):
+    user = current_user() or {}
+    actor = user.get("username") or user.get("email") or current_role() or "unknown"
+    row = approval_request_public(approval_request_row(request_id)) or {}
+    request_snapshot = {
+        "request_id": request_id,
+        "request_type": row.get("request_type"),
+        "status": row.get("status"),
+        "project_id": row.get("project_id"),
+        "title": row.get("title"),
+        "summary": row.get("summary"),
+        "execution_state": row.get("execution_state"),
+    }
+    cur = execute(
+        """INSERT INTO dns_execution_attempts
+           (approval_request_id, actor, attempted_action, feature_flag, feature_flag_state,
+            result, http_status, planned_action_json, request_snapshot_json, error_message, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            request_id,
+            actor,
+            "cloudflare_dns_execute",
+            CLOUDFLARE_DNS_WRITE_FEATURE_FLAG,
+            "disabled" if not cloudflare_dns_write_feature_enabled() else "enabled",
+            result,
+            int(http_status),
+            json.dumps(confirmation.get("planned_action") or {}, ensure_ascii=False),
+            json.dumps(request_snapshot, ensure_ascii=False),
+            str(error_message or "")[:500],
+            now_str(),
+        ),
+    )
+    return cur.lastrowid
+
+
 def build_approval_dns_plan_execute_disabled(request_id, payload=None):
     confirmation, status_code = build_approval_dns_plan_confirmation(request_id, payload)
     if status_code != 200:
         return confirmation, status_code
 
     if not cloudflare_dns_write_feature_enabled():
+        attempt_id = record_dns_execution_attempt(
+            request_id,
+            confirmation,
+            result="blocked_disabled",
+            http_status=409,
+            error_message="Cloudflare DNS write is disabled by feature flag.",
+        )
         return {
             "ok": False,
             "status": "cloudflare_dns_write_disabled",
@@ -3880,6 +3953,9 @@ def build_approval_dns_plan_execute_disabled(request_id, payload=None):
             "execution_enabled": False,
             "disabled_by_feature_flag": True,
             "feature_flag": CLOUDFLARE_DNS_WRITE_FEATURE_FLAG,
+            "attempt_logged": True,
+            "attempt_result": "blocked_disabled",
+            "attempt_id": attempt_id,
             "planned_action": confirmation.get("planned_action"),
             "next_step": "cloudflare_write_feature_flag_disabled",
             "message": "Cloudflare DNS write is disabled. No DNS record was created or updated.",
