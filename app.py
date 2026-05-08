@@ -3340,6 +3340,7 @@ APPROVAL_REQUEST_STATUSES = ["pending", "approved", "rejected", "expired", "canc
 APPROVAL_ALLOWED_ROLES = ["owner", "admin"]
 APPROVAL_CALLBACK_PREFIX = "apv"
 APPROVAL_DEFAULT_EXPIRES_HOURS = 24
+DNS_PLAN_CONFIRM_PHRASE = "CONFIRM_DNS_PLAN_ONLY"
 DNS_PREVIEW_EXECUTION_STATES = {
     "pending": "waiting_approval",
     "approved": "approved_ready_for_manual_dns_plan",
@@ -3804,6 +3805,53 @@ def build_approval_dns_plan_prepare(request_id):
         "planned_action": planned_action,
         "next_step": "manual_second_confirmation_required",
         "message": "Dry-run only. No Cloudflare DNS record was created or updated.",
+    }, 200
+
+
+def build_approval_dns_plan_confirmation(request_id, payload=None):
+    plan, status_code = build_approval_dns_plan_prepare(request_id)
+    if status_code != 200:
+        return plan, status_code
+
+    source = payload if isinstance(payload, dict) else {}
+    confirm_phrase = str(source.get("confirm_phrase") or "").strip()
+    if not confirm_phrase:
+        return {
+            "ok": False,
+            "error": "missing_confirm_phrase",
+            "request_id": request_id,
+            "mode": "confirmation_dry_run",
+            "dns_write_enabled": False,
+            "execution_enabled": False,
+            "requires_final_execute_phase": True,
+            "execution_state": plan.get("execution_state"),
+        }, 400
+    if confirm_phrase != DNS_PLAN_CONFIRM_PHRASE:
+        return {
+            "ok": False,
+            "error": "invalid_confirm_phrase",
+            "request_id": request_id,
+            "mode": "confirmation_dry_run",
+            "dns_write_enabled": False,
+            "execution_enabled": False,
+            "requires_final_execute_phase": True,
+            "execution_state": plan.get("execution_state"),
+        }, 400
+
+    return {
+        "ok": True,
+        "mode": "confirmation_dry_run",
+        "request_id": request_id,
+        "request_type": plan.get("request_type"),
+        "approval_status": plan.get("approval_status"),
+        "execution_state": plan.get("execution_state"),
+        "confirmation_accepted": True,
+        "dns_write_enabled": False,
+        "execution_enabled": False,
+        "requires_final_execute_phase": True,
+        "planned_action": plan.get("planned_action"),
+        "next_step": "cloudflare_write_execute_not_implemented",
+        "message": "Confirmation accepted for dry-run only. Cloudflare DNS write is still disabled.",
     }, 200
 
 
@@ -8358,6 +8406,14 @@ def api_approval_requests_mock():
 @require_api_roles("owner", "admin")
 def api_approval_request_dns_plan_prepare(request_id):
     result, status_code = build_approval_dns_plan_prepare(request_id)
+    return jsonify(result), status_code
+
+
+@app.route("/api/approval-requests/<int:request_id>/dns-plan/confirm", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_approval_request_dns_plan_confirm(request_id):
+    payload = request.get_json(silent=True) or {}
+    result, status_code = build_approval_dns_plan_confirmation(request_id, payload)
     return jsonify(result), status_code
 
 
