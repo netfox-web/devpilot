@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import html as html_lib
+import ipaddress
 import json
 import re
 import secrets
@@ -3520,6 +3521,34 @@ def normalize_domain_name(value):
     return text
 
 
+def dns_hostname_is_valid(value):
+    name = normalize_domain_name(value)
+    if not name or len(name) > 253 or "." not in name:
+        return False
+    for label in name.split("."):
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label):
+            return False
+    return True
+
+
+def dns_a_target_is_valid(value):
+    try:
+        return ipaddress.ip_address(str(value or "").strip()).version == 4
+    except ValueError:
+        return False
+
+
+def dns_cname_target_is_valid(value):
+    target = normalize_domain_name(value)
+    if not dns_hostname_is_valid(target):
+        return False
+    try:
+        ipaddress.ip_address(target)
+        return False
+    except ValueError:
+        return True
+
+
 def dns_label_slug(value, max_length=54):
     text = str(value or "").strip().lower()
     text = re.sub(r"[^a-z0-9]+", "-", text)
@@ -3669,19 +3698,27 @@ def sanitize_approval_payload(request_type, payload):
         raise ValueError("unsupported approval request type")
     source = payload if isinstance(payload, dict) else {}
     record = source.get("dns_record") if isinstance(source.get("dns_record"), dict) else source
+    record_type = str(record.get("type") or "").strip().upper()
+    target = str(record.get("content") or "").strip()
+    if record_type == "CNAME":
+        target = normalize_domain_name(target)
     dns_record = {
-        "type": str(record.get("type") or "").strip().upper(),
+        "type": record_type,
         "name": normalize_domain_name(record.get("name")),
-        "content": str(record.get("content") or "").strip(),
+        "content": target,
         "proxied": bool(record.get("proxied")),
         "ttl": coerce_int(record.get("ttl"), 1),
     }
-    if dns_record["type"] != "A":
-        raise ValueError("only A record approval is supported in this MVP")
-    if not dns_record["name"] or "." not in dns_record["name"]:
-        raise ValueError("dns_record.name is required")
-    if not dns_record["content"]:
-        raise ValueError("dns_record.content is required")
+    if dns_record["type"] not in ("A", "CNAME"):
+        raise ValueError("unsupported_record_type")
+    if not dns_hostname_is_valid(dns_record["name"]):
+        raise ValueError("invalid_record_name")
+    if dns_record["type"] == "A" and not dns_a_target_is_valid(dns_record["content"]):
+        raise ValueError("invalid_record_target")
+    if dns_record["type"] == "CNAME" and not dns_cname_target_is_valid(dns_record["content"]):
+        raise ValueError("invalid_record_target")
+    if dns_record["type"] == "CNAME" and dns_record["content"] == dns_record["name"]:
+        raise ValueError("invalid_record_target")
     if dns_record["name"].split(".", 1)[0] in ("", "www"):
         raise ValueError("root and www records are not supported by this approval MVP")
     sanitized = {"dns_record": dns_record}
@@ -3955,6 +3992,317 @@ def build_approval_dns_plan_interlock(request_id):
         "final_phrase_required": DNS_PLAN_CONFIRM_PHRASE,
         "next_step": "execute_endpoint_disabled_until_future_phase",
         "message": "Read-only interlock. No Cloudflare DNS record was created or updated.",
+    }, 200
+
+
+def dns_plan_payload_error(exc):
+    message = str(exc or "") or "invalid_dns_plan_payload"
+    known_errors = {
+        "unsupported_record_type",
+        "invalid_record_name",
+        "invalid_record_target",
+    }
+    return message if message in known_errors else "invalid_dns_plan_payload"
+
+
+def dns_preflight_record_snapshot(record):
+    public = cloudflare_dns_record_public(record)
+    return {
+        "id_masked": mask_identifier(public.get("id")),
+        "type": public.get("type"),
+        "name": public.get("name"),
+        "content": mask_dns_record_content(public),
+        "ttl": public.get("ttl"),
+        "proxied": public.get("proxied"),
+        "created_on": public.get("created_on"),
+        "modified_on": public.get("modified_on"),
+    }
+
+
+def dns_preflight_error_response(error, request_id, status_code=400, **extra):
+    body = {
+        "ok": False,
+        "error": error,
+        "request_id": request_id,
+        "mode": "read_only_preflight",
+        "dns_write_enabled": False,
+        "cloudflare_write_call_enabled": False,
+        "deployment_job_will_be_created": False,
+    }
+    body.update(extra)
+    return body, status_code
+
+
+def fetch_dns_preflight_cloudflare_snapshot(planned_action):
+    key_info = get_active_cloudflare_api_key()
+    if not key_info.get("ok"):
+        return {"ok": False, "error": "cloudflare_read_credentials_unavailable"}
+
+    token = key_info["token"]
+    zone_name = planned_action.get("zone_name")
+    zones_result = cloudflare_request(
+        "GET",
+        "/zones",
+        token,
+        query={"name": zone_name, "page": 1, "per_page": 50},
+    )
+    if not zones_result.get("ok"):
+        return {
+            "ok": False,
+            "error": zones_result.get("error") or "cloudflare_read_error",
+            "status_code": zones_result.get("status_code"),
+        }
+
+    zones = ((zones_result.get("data") or {}).get("result") or [])
+    zone = None
+    for item in zones:
+        if str(item.get("name") or "").casefold() == str(zone_name or "").casefold():
+            zone = item
+            break
+    if not zone:
+        return {"ok": False, "error": "zone_not_found", "zones_checked": len(zones)}
+
+    zone_id = str(zone.get("id") or "")
+    records_result = cloudflare_request(
+        "GET",
+        f"/zones/{urllib.parse.quote(zone_id, safe='')}/dns_records",
+        token,
+        query={
+            "name": planned_action.get("name"),
+            "page": 1,
+            "per_page": 100,
+        },
+    )
+    if not records_result.get("ok"):
+        return {
+            "ok": False,
+            "error": records_result.get("error") or "cloudflare_read_error",
+            "status_code": records_result.get("status_code"),
+        }
+
+    return {
+        "ok": True,
+        "zone": zone,
+        "records": ((records_result.get("data") or {}).get("result") or []),
+    }
+
+
+def dns_preflight_rollback_snapshot(decision, planned_action, existing_record=None):
+    if decision == "update" and existing_record:
+        return {
+            "available": True,
+            "strategy": "restore_previous_record",
+            "existing_record": dns_preflight_record_snapshot(existing_record),
+            "steps": [
+                "Capture the existing DNS record before any write.",
+                "If execution must be rolled back, restore the previous content, proxied state, and TTL.",
+                "Verify the restored record in Cloudflare and through DNS resolution.",
+            ],
+        }
+    return {
+        "available": True,
+        "strategy": "delete_created_record",
+        "planned_record": {
+            "type": planned_action.get("record_type"),
+            "name": planned_action.get("name"),
+            "target": planned_action.get("target"),
+            "proxied": planned_action.get("proxied"),
+            "ttl": planned_action.get("ttl"),
+        },
+        "steps": [
+            "Capture the no-existing-record state before any write.",
+            "If execution must be rolled back, delete the newly created DNS record.",
+            "Verify the record no longer exists in Cloudflare and through DNS resolution.",
+        ],
+    }
+
+
+def dns_preflight_readiness_checklist(public, planned_action, zone_check, record_check, rollback_snapshot):
+    return [
+        {
+            "key": "approval_approved",
+            "label": "Approval request is approved",
+            "passed": (public or {}).get("status") == "approved",
+        },
+        {
+            "key": "zone_found",
+            "label": "Cloudflare zone exists",
+            "passed": bool((zone_check or {}).get("found")),
+        },
+        {
+            "key": "record_name_in_zone",
+            "label": "Record name belongs to the selected zone",
+            "passed": bool((zone_check or {}).get("record_name_belongs_to_zone")),
+        },
+        {
+            "key": "record_type_supported",
+            "label": "Record type is supported for preflight",
+            "passed": planned_action.get("record_type") in ("A", "CNAME"),
+        },
+        {
+            "key": "record_target_valid",
+            "label": "Record target format is valid",
+            "passed": True,
+        },
+        {
+            "key": "existing_record_checked",
+            "label": "Existing DNS records were checked read-only",
+            "passed": bool((record_check or {}).get("checked")),
+        },
+        {
+            "key": "no_conflicting_record_type",
+            "label": "No conflicting same-name record type was found",
+            "passed": not bool((record_check or {}).get("conflicting_record_types")),
+        },
+        {
+            "key": "dns_write_disabled",
+            "label": "DNS write remains disabled",
+            "passed": True,
+        },
+        {
+            "key": "no_auto_deploy",
+            "label": "No deployment job will be created",
+            "passed": True,
+        },
+        {
+            "key": "rollback_snapshot_ready",
+            "label": "Rollback snapshot is available",
+            "passed": bool((rollback_snapshot or {}).get("available")),
+        },
+    ]
+
+
+def build_approval_dns_plan_preflight(request_id):
+    row = approval_request_row(request_id)
+    if not row:
+        return dns_preflight_error_response("approval_request_not_found", request_id, 404)
+
+    public = approval_request_public(row)
+    request_type = public.get("request_type")
+    if request_type != "dns_preview_create":
+        return dns_preflight_error_response(
+            "unsupported_request_type",
+            request_id,
+            400,
+            request_type=request_type,
+        )
+
+    execution_state = public.get("execution_state")
+    status = public.get("status")
+    if status != "approved" or execution_state != "approved_ready_for_manual_dns_plan":
+        return dns_preflight_error_response(
+            execution_state or "approval_not_ready",
+            request_id,
+            409,
+            request_type=request_type,
+            approval_status=status,
+            execution_state=execution_state,
+        )
+
+    try:
+        payload = json.loads(row.get("payload_json") or "{}")
+        planned_action = dns_preview_planned_action_from_payload(payload)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        error = dns_plan_payload_error(exc)
+        return dns_preflight_error_response(error, request_id, 400)
+
+    record_type = planned_action.get("record_type")
+    record_name = planned_action.get("name")
+    record_target = planned_action.get("target")
+    zone_name = planned_action.get("zone_name")
+
+    if record_type not in ("A", "CNAME"):
+        return dns_preflight_error_response("unsupported_record_type", request_id, 400)
+    if not dns_hostname_is_valid(record_name) or not str(record_name).endswith(f".{zone_name}"):
+        return dns_preflight_error_response("invalid_record_name", request_id, 400)
+    if record_type == "A" and not dns_a_target_is_valid(record_target):
+        return dns_preflight_error_response("invalid_record_target", request_id, 400)
+    if record_type == "CNAME" and (not dns_cname_target_is_valid(record_target) or record_target == record_name):
+        return dns_preflight_error_response("invalid_record_target", request_id, 400)
+
+    snapshot = fetch_dns_preflight_cloudflare_snapshot(planned_action)
+    if not snapshot.get("ok"):
+        error = snapshot.get("error") or "cloudflare_read_error"
+        if error == "zone_not_found":
+            return dns_preflight_error_response(
+                "zone_not_found",
+                request_id,
+                409,
+                zone_check={
+                    "requested_zone": zone_name,
+                    "found": False,
+                    "zones_checked": snapshot.get("zones_checked", 0),
+                },
+                planned_action=planned_action,
+            )
+        return dns_preflight_error_response(
+            "cloudflare_read_error",
+            request_id,
+            502,
+            cloudflare_status_code=snapshot.get("status_code"),
+            message=cloudflare_sanitized_error(error),
+        )
+
+    zone_public = cloudflare_zone_public(snapshot.get("zone") or {})
+    zone_check = {
+        "requested_zone": zone_name,
+        "found": True,
+        "record_name_belongs_to_zone": record_name == zone_name or str(record_name).endswith(f".{zone_name}"),
+        "zone": {
+            "name": zone_public.get("name"),
+            "id_masked": mask_identifier(zone_public.get("id")),
+            "status": zone_public.get("status"),
+            "paused": zone_public.get("paused"),
+        },
+    }
+    existing_records = snapshot.get("records") or []
+    same_name_records = [
+        item for item in existing_records
+        if str(item.get("name") or "").casefold() == str(record_name or "").casefold()
+    ]
+    same_type_records = [
+        item for item in same_name_records
+        if str(item.get("type") or "").upper() == str(record_type or "").upper()
+    ]
+    conflicting_record_types = sorted({
+        str(item.get("type") or "").upper()
+        for item in same_name_records
+        if str(item.get("type") or "").upper() != str(record_type or "").upper()
+    })
+    decision = "update" if same_type_records else "create"
+    rollback_snapshot = dns_preflight_rollback_snapshot(decision, planned_action, same_type_records[0] if same_type_records else None)
+    record_check = {
+        "checked": True,
+        "record_name": record_name,
+        "record_type": record_type,
+        "existing_same_name_count": len(same_name_records),
+        "existing_same_type_count": len(same_type_records),
+        "conflicting_record_types": conflicting_record_types,
+        "existing_records": [dns_preflight_record_snapshot(item) for item in same_name_records],
+    }
+    readiness_checklist = dns_preflight_readiness_checklist(public, planned_action, zone_check, record_check, rollback_snapshot)
+    preflight_passed = all(bool(item.get("passed")) for item in readiness_checklist)
+
+    return {
+        "ok": True,
+        "mode": "read_only_preflight",
+        "request_id": request_id,
+        "request_type": request_type,
+        "approval_status": status,
+        "execution_state": execution_state,
+        "plan_only": True,
+        "dns_write_enabled": False,
+        "cloudflare_write_call_enabled": False,
+        "deployment_job_will_be_created": False,
+        "preflight_passed": preflight_passed,
+        "decision": decision,
+        "zone_check": zone_check,
+        "record_check": record_check,
+        "planned_action": planned_action,
+        "rollback_snapshot": rollback_snapshot,
+        "readiness_checklist": readiness_checklist,
+        "next_step": "review_preflight_before_execute_phase",
+        "message": "Read-only preflight completed. No Cloudflare DNS record was created or updated.",
     }, 200
 
 
@@ -8696,6 +9044,13 @@ def api_approval_request_dns_plan_prepare(request_id):
 @require_api_roles("owner", "admin")
 def api_approval_request_dns_plan_interlock(request_id):
     result, status_code = build_approval_dns_plan_interlock(request_id)
+    return jsonify(result), status_code
+
+
+@app.route("/api/approval-requests/<int:request_id>/dns-plan/preflight", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_approval_request_dns_plan_preflight(request_id):
+    result, status_code = build_approval_dns_plan_preflight(request_id)
     return jsonify(result), status_code
 
 
