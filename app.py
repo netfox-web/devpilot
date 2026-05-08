@@ -3764,6 +3764,22 @@ def dns_plan_zone_name(record_name):
     return hostname
 
 
+def dns_preview_planned_action_from_payload(payload):
+    approval_payload = sanitize_approval_payload("dns_preview_create", payload)
+    dns_record = approval_payload["dns_record"]
+    zone_name = dns_plan_zone_name(dns_record["name"])
+    return {
+        "provider": "cloudflare",
+        "action": "create_or_update_dns_record",
+        "record_type": dns_record["type"],
+        "name": dns_record["name"],
+        "zone_name": zone_name,
+        "target": dns_record["content"],
+        "proxied": bool(dns_record.get("proxied")),
+        "ttl": coerce_int(dns_record.get("ttl"), 1),
+    }
+
+
 def build_approval_dns_plan_prepare(request_id):
     row = approval_request_row(request_id)
     if not row:
@@ -3799,7 +3815,7 @@ def build_approval_dns_plan_prepare(request_id):
 
     try:
         payload = json.loads(row.get("payload_json") or "{}")
-        approval_payload = sanitize_approval_payload("dns_preview_create", payload)
+        planned_action = dns_preview_planned_action_from_payload(payload)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         return {
             "ok": False,
@@ -3810,18 +3826,6 @@ def build_approval_dns_plan_prepare(request_id):
             "dns_write_enabled": False,
         }, 400
 
-    dns_record = approval_payload["dns_record"]
-    zone_name = dns_plan_zone_name(dns_record["name"])
-    planned_action = {
-        "provider": "cloudflare",
-        "action": "create_or_update_dns_record",
-        "record_type": dns_record["type"],
-        "name": dns_record["name"],
-        "zone_name": zone_name,
-        "target": dns_record["content"],
-        "proxied": bool(dns_record.get("proxied")),
-        "ttl": coerce_int(dns_record.get("ttl"), 1),
-    }
     return {
         "ok": True,
         "mode": "dry_run",
@@ -3837,6 +3841,120 @@ def build_approval_dns_plan_prepare(request_id):
         "planned_action": planned_action,
         "next_step": "manual_second_confirmation_required",
         "message": "Dry-run only. No Cloudflare DNS record was created or updated.",
+    }, 200
+
+
+def dns_rollback_plan_draft(planned_action):
+    action = planned_action or {}
+    record_name = action.get("name") or "the planned DNS record"
+    return {
+        "available": True,
+        "strategy": "manual_revert_or_delete_record",
+        "record_name": record_name,
+        "steps": [
+            "Before executing, capture existing DNS record state.",
+            "If this creates a new record, rollback by deleting that record.",
+            "If this updates an existing record, rollback by restoring previous content, proxied state, and TTL.",
+            "Verify DNS propagation after rollback.",
+        ],
+    }
+
+
+def dns_interlock_risk_checklist(public, planned_action):
+    status = (public or {}).get("status")
+    return [
+        {
+            "key": "approval_required",
+            "label": "Approval request must be approved",
+            "passed": status == "approved",
+        },
+        {
+            "key": "dry_run_required",
+            "label": "Dry-run plan must be reviewed",
+            "passed": bool(planned_action),
+        },
+        {
+            "key": "second_confirmation_required",
+            "label": "Second confirmation phrase is required",
+            "passed": True,
+        },
+        {
+            "key": "feature_flag_disabled",
+            "label": "DNS write feature flag is disabled",
+            "passed": not cloudflare_dns_write_feature_enabled(),
+        },
+        {
+            "key": "no_auto_deploy",
+            "label": "No deploy job will be created",
+            "passed": True,
+        },
+    ]
+
+
+def build_approval_dns_plan_interlock(request_id):
+    row = approval_request_row(request_id)
+    if not row:
+        return {"ok": False, "error": "approval_request_not_found"}, 404
+
+    public = approval_request_public(row)
+    request_type = public.get("request_type")
+    if request_type != "dns_preview_create":
+        return {
+            "ok": False,
+            "error": "unsupported_request_type",
+            "request_id": request_id,
+            "request_type": request_type,
+            "dns_write_enabled": False,
+            "cloudflare_api_call_enabled": False,
+        }, 400
+
+    try:
+        payload = json.loads(row.get("payload_json") or "{}")
+        planned_action = dns_preview_planned_action_from_payload(payload)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {
+            "ok": False,
+            "error": "invalid_dns_plan_payload",
+            "message": str(exc),
+            "request_id": request_id,
+            "dns_write_enabled": False,
+            "cloudflare_api_call_enabled": False,
+        }, 400
+
+    execution_state = public.get("execution_state")
+    feature_flag = cloudflare_dns_write_flag_status()
+    return {
+        "ok": True,
+        "mode": "read_only_interlock",
+        "request": {
+            "id": public.get("id"),
+            "request_type": request_type,
+            "status": public.get("status"),
+            "project_id": public.get("project_id"),
+            "title": public.get("title"),
+            "summary": public.get("summary"),
+        },
+        "request_id": request_id,
+        "request_type": request_type,
+        "status": public.get("status"),
+        "approval_status": public.get("status"),
+        "execution_state": execution_state,
+        "can_execute_now": False,
+        "execute_disabled": True,
+        "dns_write_enabled": False,
+        "cloudflare_api_call_enabled": False,
+        "deployment_job_will_be_created": False,
+        "feature_flag": {
+            "name": CLOUDFLARE_DNS_WRITE_FEATURE_FLAG,
+            "effective_enabled": feature_flag.get("effective_enabled"),
+            "can_toggle_here": False,
+        },
+        "planned_action": planned_action,
+        "rollback_plan_draft": dns_rollback_plan_draft(planned_action),
+        "risk_checklist": dns_interlock_risk_checklist(public, planned_action),
+        "final_phrase_required": DNS_PLAN_CONFIRM_PHRASE,
+        "next_step": "execute_endpoint_disabled_until_future_phase",
+        "message": "Read-only interlock. No Cloudflare DNS record was created or updated.",
     }, 200
 
 
@@ -8571,6 +8689,13 @@ def api_approval_requests_mock():
 @require_api_roles("owner", "admin")
 def api_approval_request_dns_plan_prepare(request_id):
     result, status_code = build_approval_dns_plan_prepare(request_id)
+    return jsonify(result), status_code
+
+
+@app.route("/api/approval-requests/<int:request_id>/dns-plan/interlock", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_approval_request_dns_plan_interlock(request_id):
+    result, status_code = build_approval_dns_plan_interlock(request_id)
     return jsonify(result), status_code
 
 

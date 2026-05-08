@@ -90,6 +90,14 @@
               <div class="text-muted">plan_only={{ item.plan_only | lower }}</div>
               <div class="text-muted">dns_write_enabled={{ item.dns_write_enabled | lower }}</div>
               <div class="text-muted">requires_manual_execution={{ item.requires_manual_execution | lower }}</div>
+              {% if item.request_type == 'dns_preview_create' %}
+                <div class="mt-2">
+                  <span class="badge text-bg-{{ 'warning' if item.status == 'approved' else 'secondary' }}">Interlock {{ 'available' if item.status == 'approved' else 'not ready' }}</span>
+                  <span class="badge text-bg-secondary">Execute disabled</span>
+                </div>
+                <div class="small text-muted">Rollback draft: available</div>
+                <div class="small text-muted">Final phrase required</div>
+              {% endif %}
             </td>
             <td class="small" style="min-width: 16rem;">{{ item.summary or '-' }}</td>
             <td class="small" style="min-width: 20rem;">
