@@ -3341,6 +3341,7 @@ APPROVAL_ALLOWED_ROLES = ["owner", "admin"]
 APPROVAL_CALLBACK_PREFIX = "apv"
 APPROVAL_DEFAULT_EXPIRES_HOURS = 24
 DNS_PLAN_CONFIRM_PHRASE = "CONFIRM_DNS_PLAN_ONLY"
+CLOUDFLARE_DNS_WRITE_FEATURE_FLAG = "CLOUDFLARE_DNS_WRITE_ENABLED"
 DNS_PREVIEW_EXECUTION_STATES = {
     "pending": "waiting_approval",
     "approved": "approved_ready_for_manual_dns_plan",
@@ -3853,6 +3854,54 @@ def build_approval_dns_plan_confirmation(request_id, payload=None):
         "next_step": "cloudflare_write_execute_not_implemented",
         "message": "Confirmation accepted for dry-run only. Cloudflare DNS write is still disabled.",
     }, 200
+
+
+def cloudflare_dns_write_feature_enabled():
+    value = os.getenv(CLOUDFLARE_DNS_WRITE_FEATURE_FLAG, "").strip().lower()
+    return value in ("1", "true", "yes", "on", "enabled")
+
+
+def build_approval_dns_plan_execute_disabled(request_id, payload=None):
+    confirmation, status_code = build_approval_dns_plan_confirmation(request_id, payload)
+    if status_code != 200:
+        return confirmation, status_code
+
+    if not cloudflare_dns_write_feature_enabled():
+        return {
+            "ok": False,
+            "status": "cloudflare_dns_write_disabled",
+            "error": "cloudflare_dns_write_disabled",
+            "mode": "execute_disabled",
+            "request_id": request_id,
+            "request_type": confirmation.get("request_type"),
+            "approval_status": confirmation.get("approval_status"),
+            "execution_state": confirmation.get("execution_state"),
+            "dns_write_enabled": False,
+            "execution_enabled": False,
+            "disabled_by_feature_flag": True,
+            "feature_flag": CLOUDFLARE_DNS_WRITE_FEATURE_FLAG,
+            "planned_action": confirmation.get("planned_action"),
+            "next_step": "cloudflare_write_feature_flag_disabled",
+            "message": "Cloudflare DNS write is disabled. No DNS record was created or updated.",
+        }, 409
+
+    return {
+        "ok": False,
+        "status": "cloudflare_dns_execute_not_implemented",
+        "error": "cloudflare_dns_execute_not_implemented",
+        "mode": "execute_disabled",
+        "request_id": request_id,
+        "request_type": confirmation.get("request_type"),
+        "approval_status": confirmation.get("approval_status"),
+        "execution_state": confirmation.get("execution_state"),
+        "dns_write_enabled": False,
+        "execution_enabled": False,
+        "disabled_by_feature_flag": False,
+        "feature_flag": CLOUDFLARE_DNS_WRITE_FEATURE_FLAG,
+        "planned_action": confirmation.get("planned_action"),
+        "next_step": "cloudflare_write_execute_not_implemented",
+        "message": "Cloudflare DNS execute endpoint is not implemented in this phase.",
+    }, 409
 
 
 def approval_request_rows(status=None, project_id=None, request_type=None, limit=100):
@@ -8414,6 +8463,14 @@ def api_approval_request_dns_plan_prepare(request_id):
 def api_approval_request_dns_plan_confirm(request_id):
     payload = request.get_json(silent=True) or {}
     result, status_code = build_approval_dns_plan_confirmation(request_id, payload)
+    return jsonify(result), status_code
+
+
+@app.route("/api/approval-requests/<int:request_id>/dns-plan/execute", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_approval_request_dns_plan_execute(request_id):
+    payload = request.get_json(silent=True) or {}
+    result, status_code = build_approval_dns_plan_execute_disabled(request_id, payload)
     return jsonify(result), status_code
 
 
