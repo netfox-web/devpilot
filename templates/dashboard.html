@@ -288,13 +288,15 @@
     const statusText = {
       online: '✅ Online',
       not_configured: '⚠ Not configured',
-      configured: '⚠ Pending',
+      configured: '✅ Configured',
+      skipped: '⚪ 未啟用',
       error: '❌ Error'
     };
     const statusClass = {
       online: 'text-bg-success',
       not_configured: 'text-bg-secondary',
-      configured: 'text-bg-warning',
+      configured: 'text-bg-success',
+      skipped: 'text-bg-secondary',
       error: 'text-bg-danger'
     };
     function setProvider(name, result) {

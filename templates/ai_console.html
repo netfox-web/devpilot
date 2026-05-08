@@ -355,8 +355,8 @@
   (function () {
     const btn = document.getElementById('btnConsoleProviderHealth');
     if (!btn) return;
-    const statusText = { online: 'Online', not_configured: 'Not configured', configured: 'Pending', error: 'Error' };
-    const statusClass = { online: 'text-bg-success', not_configured: 'text-bg-secondary', configured: 'text-bg-warning', error: 'text-bg-danger' };
+    const statusText = { online: 'Online', not_configured: 'Not configured', configured: 'Configured', skipped: 'Skipped', error: 'Error' };
+    const statusClass = { online: 'text-bg-success', not_configured: 'text-bg-secondary', configured: 'text-bg-success', skipped: 'text-bg-secondary', error: 'text-bg-danger' };
     function setProvider(name, result) {
       const badge = document.querySelector(`[data-provider-status="${name}"]`);
       const detail = document.querySelector(`[data-provider-detail="${name}"]`);

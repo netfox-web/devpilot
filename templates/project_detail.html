@@ -46,6 +46,183 @@
 
 <div class="card shadow-sm mb-3">
   <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>Domain / Preview</span>
+    <a class="btn btn-sm btn-outline-secondary" href="/domains">Domain Center</a>
+  </div>
+  <div class="card-body border-bottom">
+    <form id="project-preview-domain-plan-form" class="row g-2 align-items-end">
+      <input type="hidden" name="project_id" value="{{ project.id }}">
+      <div class="col-md-3">
+        <label class="form-label small">Purpose</label>
+        <select class="form-select" name="project_type" id="project-preview-domain-purpose">
+          <option value="website" data-domain="webai.net.tw" selected>website</option>
+          <option value="ai_chat" data-domain="aichat.net.tw">ai_chat</option>
+          <option value="api_service" data-domain="aiserver.com.tw">api_service</option>
+          <option value="console" data-domain="aicenter.com.tw">console</option>
+          <option value="landing" data-domain="webai.tw">landing</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Base domain</label>
+        <input class="form-control" name="base_domain" id="project-preview-domain-base-domain" value="webai.net.tw" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">Environment</label>
+        <select class="form-select" name="environment">
+          <option value="preview">preview</option>
+          <option value="staging">staging</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-outline-primary w-100" type="submit">Generate Preview DNS Plan</button>
+      </div>
+      <div class="col-md-1 small text-muted">Plan only.</div>
+    </form>
+    <div id="project-preview-domain-plan-result" class="mt-2 small text-muted"></div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Domain</th>
+          <th>Type</th>
+          <th>Environment</th>
+          <th>Preview URL</th>
+          <th>Status</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for domain in project_domains %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ domain.record_name }}</div>
+              <div class="small text-muted">{{ domain.zone_name or '-' }}</div>
+            </td>
+            <td>{{ domain.record_type or '-' }}</td>
+            <td><span class="badge text-bg-secondary">{{ domain.environment or '-' }}</span></td>
+            <td>
+              {% if domain.preview_url %}
+                <a href="{{ domain.preview_url }}" target="_blank" rel="noreferrer">{{ domain.preview_url }}</a>
+              {% else %}
+                <span class="text-muted">-</span>
+              {% endif %}
+            </td>
+            <td><span class="badge text-bg-{{ 'success' if domain.status == 'active' else 'secondary' }}">{{ domain.status or '-' }}</span></td>
+            <td class="small">{{ domain.notes or '-' }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-3">No domain mappings yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+(() => {
+  const form = document.getElementById("project-preview-domain-plan-form");
+  const resultBox = document.getElementById("project-preview-domain-plan-result");
+  const purposeSelect = document.getElementById("project-preview-domain-purpose");
+  const baseDomainInput = document.getElementById("project-preview-domain-base-domain");
+  if (!form || !resultBox) return;
+  let latestPreviewPlan = null;
+
+  const escapeHtml = (value) => String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+  const syncBaseDomain = () => {
+    if (!purposeSelect || !baseDomainInput) return;
+    const selected = purposeSelect.options[purposeSelect.selectedIndex];
+    const domain = selected ? selected.dataset.domain : "";
+    if (domain) baseDomainInput.value = domain;
+  };
+  if (purposeSelect) {
+    purposeSelect.addEventListener("change", syncBaseDomain);
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    resultBox.innerHTML = '<div class="alert alert-info py-2 mb-0">Generating read-only DNS plan...</div>';
+    try {
+      const response = await fetch("/api/domain-preview/plan", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          project_id: data.get("project_id"),
+          project_type: data.get("project_type"),
+          base_domain: data.get("base_domain"),
+          environment: data.get("environment")
+        })
+      });
+      const payload = await response.json();
+      if (!payload.ok) {
+        latestPreviewPlan = null;
+        resultBox.innerHTML = `<div class="alert alert-warning py-2 mb-0">${escapeHtml(payload.error || "preview plan failed")}</div>`;
+        return;
+      }
+      latestPreviewPlan = payload;
+      const record = payload.dns_record || {};
+      resultBox.innerHTML = `
+        <div class="alert alert-light border py-2 mb-0">
+          <div><b>Planned record:</b> ${escapeHtml(record.type)} <code>${escapeHtml(record.name)}</code> -> <code>${escapeHtml(record.content)}</code></div>
+          <div>requires_approval=${payload.requires_approval ? "true" : "false"} / record_exists=${payload.record_exists ? "true" : "false"}</div>
+          <div class="d-flex gap-2 align-items-center mt-2">
+            <button class="btn btn-sm btn-outline-primary" type="button" data-create-project-approval-request>Request Telegram Approval</button>
+            <span class="text-muted">No Cloudflare DNS write was performed.</span>
+          </div>
+        </div>`;
+    } catch (error) {
+      latestPreviewPlan = null;
+      resultBox.innerHTML = '<div class="alert alert-danger py-2 mb-0">Preview plan request failed.</div>';
+    }
+  });
+
+  resultBox.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-create-project-approval-request]");
+    if (!button || !latestPreviewPlan) return;
+    const record = latestPreviewPlan.dns_record || {};
+    button.disabled = true;
+    button.textContent = "Creating...";
+    try {
+      const response = await fetch("/api/approval-requests", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          request_type: "dns_preview_create",
+          project_id: latestPreviewPlan.project && latestPreviewPlan.project.id,
+          title: `Approve preview DNS: ${record.name || ""}`,
+          summary: `${record.type || "A"} ${record.name || ""} -> ${record.content || ""} (plan only)`,
+          payload: {dns_record: record},
+          notes: "Created from project detail preview DNS plan"
+        })
+      });
+      const payload = await response.json();
+      if (!payload.ok) {
+        button.textContent = payload.error || "Create failed";
+        button.classList.remove("btn-outline-primary");
+        button.classList.add("btn-outline-danger");
+        return;
+      }
+      const item = payload.approval_request || {};
+      button.textContent = `Approval #${item.id || ""} created`;
+      button.classList.remove("btn-outline-primary");
+      button.classList.add("btn-outline-success");
+    } catch (error) {
+      button.textContent = "Create failed";
+      button.classList.remove("btn-outline-primary");
+      button.classList.add("btn-outline-danger");
+    }
+  });
+})();
+</script>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
     <span>AI Tasks</span>
     <span class="badge text-bg-light">project task flow</span>
   </div>

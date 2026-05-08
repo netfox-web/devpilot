@@ -95,10 +95,11 @@ HEARTBEAT_SOURCES = ["codex", "claude", "cursor", "antigravity", "ai-fleet-conso
 HEARTBEAT_STATUSES = ["idle", "running", "online", "error", "offline", "done"]
 HEARTBEAT_OFFLINE_SECONDS = 300
 API_KEY_CATEGORIES = ["ai", "deploy", "webhook", "database", "devpilot", "third-party", "other"]
-API_KEY_PROVIDERS = ["openai", "anthropic", "google", "cursor", "github", "gitea", "telegram", "devpilot", "nas", "other"]
+API_KEY_PROVIDERS = ["openai", "anthropic", "google", "cursor", "github", "gitea", "telegram", "cloudflare", "devpilot", "nas", "other"]
 API_KEY_STATUSES = ["active", "inactive", "revoked", "rotating"]
 API_KEY_PERMISSIONS = ["read", "write", "deploy", "ai", "webhook"]
 API_KEY_ENVIRONMENTS = ["staging", "production"]
+DOMAIN_MAPPING_ENVIRONMENTS = ["production", "staging", "preview", "api", "admin"]
 API_KEY_ROTATION_INTERVAL_SECONDS = int(os.getenv("API_KEY_ROTATION_INTERVAL_SECONDS", "600"))
 API_KEY_ROTATION_ENABLED = os.getenv("API_KEY_ROTATION_ENABLED", "1").lower() not in ("0", "false", "no", "off")
 _API_KEY_ROTATION_THREAD_STARTED = False
@@ -494,6 +495,79 @@ def decrypt_secret_value(encrypted_value):
         raise ValueError("API key encryption key mismatch") from exc
 
 
+def get_active_ai_health_key(provider):
+    provider_map = {
+        "openai": "openai",
+        "gemini": "google",
+        "claude": "anthropic",
+    }
+    db_provider = provider_map.get(str(provider or "").strip().lower())
+    if not db_provider:
+        return {"ok": False, "status": "skipped", "source": "none"}
+    row = row_to_dict(query_one(
+        """SELECT id, provider, encrypted_value, masked_value, key_mask
+           FROM api_keys
+           WHERE lower(COALESCE(category, ''))='ai'
+             AND lower(COALESCE(environment, ''))='staging'
+             AND lower(COALESCE(status, ''))='active'
+             AND COALESCE(ai_allowed, 0)=1
+             AND lower(COALESCE(provider, ''))=?
+           ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, id DESC
+           LIMIT 1""",
+        (db_provider,),
+    ))
+    if not row:
+        return {"ok": False, "status": "not_configured", "source": "none"}
+    masked = row.get("masked_value") or row.get("key_mask") or "************"
+    try:
+        value = decrypt_secret_value(row.get("encrypted_value"))
+    except Exception:
+        return {"ok": False, "status": "error", "source": "db", "masked": masked}
+    if not str(value or "").strip():
+        return {"ok": False, "status": "not_configured", "source": "db", "masked": masked}
+    return {"ok": True, "status": "configured", "source": "db", "masked": masked}
+
+
+def get_active_ai_console_key(provider):
+    provider_map = {
+        "openai": "openai",
+        "gemini": "google",
+    }
+    canonical = str(provider or "").strip().lower()
+    db_provider = provider_map.get(canonical)
+    if not db_provider:
+        return {"ok": False, "status": "skipped", "source": "none", "provider": canonical}
+    row = row_to_dict(query_one(
+        """SELECT id, provider, encrypted_value, masked_value, key_mask
+           FROM api_keys
+           WHERE lower(COALESCE(category, ''))='ai'
+             AND lower(COALESCE(environment, ''))='staging'
+             AND lower(COALESCE(status, ''))='active'
+             AND COALESCE(ai_allowed, 0)=1
+             AND lower(COALESCE(provider, ''))=?
+           ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, id DESC
+           LIMIT 1""",
+        (db_provider,),
+    ))
+    if not row:
+        return {"ok": False, "status": "not_configured", "source": "none", "provider": canonical}
+    masked = row.get("masked_value") or row.get("key_mask") or "************"
+    try:
+        value = decrypt_secret_value(row.get("encrypted_value"))
+    except Exception:
+        return {"ok": False, "status": "error", "source": "db", "provider": canonical, "masked": masked}
+    if not str(value or "").strip():
+        return {"ok": False, "status": "not_configured", "source": "db", "provider": canonical, "masked": masked}
+    return {
+        "ok": True,
+        "status": "configured",
+        "source": "db",
+        "provider": canonical,
+        "masked": masked,
+        "key": str(value).strip(),
+    }
+
+
 def secret_fingerprint(value):
     return hmac.new(
         hashlib.sha256(encryption_material()).digest(),
@@ -790,6 +864,59 @@ def init_db():
                 updated_at TEXT,
                 FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
                 FOREIGN KEY(target_id) REFERENCES deployment_targets(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS domain_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                zone_name TEXT,
+                zone_id_masked TEXT,
+                record_name TEXT NOT NULL,
+                record_type TEXT,
+                record_content TEXT,
+                project_id INTEGER,
+                environment TEXT,
+                preview_url TEXT,
+                status TEXT DEFAULT 'active',
+                notes TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS approval_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_type TEXT,
+                project_id INTEGER,
+                title TEXT,
+                summary TEXT,
+                payload_json TEXT,
+                status TEXT DEFAULT 'pending',
+                requested_by TEXT,
+                approved_by TEXT,
+                approved_via TEXT,
+                telegram_chat_id_masked TEXT,
+                telegram_message_id TEXT,
+                callback_nonce_hash TEXT,
+                expires_at TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                approved_at TEXT,
+                rejected_at TEXT,
+                notes TEXT,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS telegram_allowed_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id_hash TEXT,
+                telegram_username TEXT,
+                display_name TEXT,
+                role TEXT,
+                is_active INTEGER DEFAULT 1,
+                encrypted_chat_id TEXT,
+                chat_id_masked TEXT,
+                created_at TEXT,
+                updated_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS deployment_jobs (
@@ -1218,6 +1345,69 @@ def migrate_db():
             FOREIGN KEY(target_id) REFERENCES deployment_targets(id) ON DELETE SET NULL
         )"""
     )
+    execute(
+        """CREATE TABLE IF NOT EXISTS domain_mappings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            zone_name TEXT,
+            zone_id_masked TEXT,
+            record_name TEXT NOT NULL,
+            record_type TEXT,
+            record_content TEXT,
+            project_id INTEGER,
+            environment TEXT,
+            preview_url TEXT,
+            status TEXT DEFAULT 'active',
+            notes TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+        )"""
+    )
+    execute(
+        """CREATE TABLE IF NOT EXISTS approval_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_type TEXT,
+            project_id INTEGER,
+            title TEXT,
+            summary TEXT,
+            payload_json TEXT,
+            status TEXT DEFAULT 'pending',
+            requested_by TEXT,
+            approved_by TEXT,
+            approved_via TEXT,
+            telegram_chat_id_masked TEXT,
+            telegram_message_id TEXT,
+            callback_nonce_hash TEXT,
+            expires_at TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            approved_at TEXT,
+            rejected_at TEXT,
+            notes TEXT,
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+        )"""
+    )
+    execute(
+        """CREATE TABLE IF NOT EXISTS telegram_allowed_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_user_id_hash TEXT,
+            telegram_username TEXT,
+            display_name TEXT,
+            role TEXT,
+            is_active INTEGER DEFAULT 1,
+            encrypted_chat_id TEXT,
+            chat_id_masked TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )"""
+    )
+    telegram_allowed_user_migrations = [
+        ("encrypted_chat_id", "ALTER TABLE telegram_allowed_users ADD COLUMN encrypted_chat_id TEXT"),
+        ("chat_id_masked", "ALTER TABLE telegram_allowed_users ADD COLUMN chat_id_masked TEXT"),
+    ]
+    for column_name, sql in telegram_allowed_user_migrations:
+        if not column_exists("telegram_allowed_users", column_name):
+            execute(sql)
     execute(
         """CREATE TABLE IF NOT EXISTS deployment_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2827,6 +3017,8 @@ def infer_api_key_provider(name):
         return "gitea"
     if "TELEGRAM" in upper:
         return "telegram"
+    if "CLOUDFLARE" in upper or upper.startswith("CF_"):
+        return "cloudflare"
     if "DEV_PILOT" in upper or upper == "API_TOKEN":
         return "devpilot"
     if "NAS" in upper or "SSH" in upper:
@@ -2840,6 +3032,8 @@ def infer_api_key_category(name, provider):
         return "ai"
     if provider == "telegram" or "WEBHOOK" in upper:
         return "webhook"
+    if provider == "cloudflare":
+        return "third-party"
     if provider in ("github", "gitea", "nas") or "DEPLOY" in upper or "SSH" in upper:
         return "deploy"
     if "DB" in upper or "DATABASE" in upper:
@@ -2856,6 +3050,8 @@ def infer_api_key_permissions(name, provider):
         permissions.append("ai")
     if provider == "telegram" or "WEBHOOK" in upper:
         permissions.append("webhook")
+    if provider == "cloudflare":
+        permissions.extend(["read", "write", "deploy"])
     if provider in ("github", "gitea", "nas") or "DEPLOY" in upper or "SSH" in upper:
         permissions.extend(["read", "write", "deploy"])
     if provider == "devpilot":
@@ -3124,6 +3320,1078 @@ def api_key_environment_allowed(row, path, role=None):
     if environment == "production":
         return ("production" in path_text) or ("prod" in path_text) or ("formal" in path_text)
     return False
+
+
+CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4"
+CLOUDFLARE_DNS_TYPES = ["A", "AAAA", "CNAME", "TXT", "MX", "SRV", "CAA", "NS"]
+DOMAIN_CENTER_NAS_IP = NAS_SSH_HOST
+PREVIEW_DOMAIN_ENVIRONMENTS = ["preview", "staging"]
+PREVIEW_DOMAIN_PURPOSES = ["website", "ai_chat", "api_service", "console", "landing"]
+PREVIEW_DOMAIN_DEFAULT_PURPOSE = "website"
+PREVIEW_DOMAIN_BASE_DOMAINS = {
+    "website": "webai.net.tw",
+    "ai_chat": "aichat.net.tw",
+    "api_service": "aiserver.com.tw",
+    "console": "aicenter.com.tw",
+    "landing": "webai.tw",
+}
+APPROVAL_REQUEST_TYPES = ["dns_preview_create"]
+APPROVAL_REQUEST_STATUSES = ["pending", "approved", "rejected", "expired", "canceled"]
+APPROVAL_ALLOWED_ROLES = ["owner", "admin"]
+APPROVAL_CALLBACK_PREFIX = "apv"
+APPROVAL_DEFAULT_EXPIRES_HOURS = 24
+
+
+def cloudflare_api_keys():
+    rows = query_all(
+        """SELECT id, name, category, provider, environment, status, version,
+                  masked_value, key_mask, permissions, notes, created_at, updated_at, last_used_at
+           FROM api_keys
+           WHERE lower(COALESCE(provider, ''))='cloudflare'
+           ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END, datetime(COALESCE(updated_at, created_at)) DESC, id DESC"""
+    )
+    items = []
+    for row in rows:
+        item = row_to_dict(row)
+        item["display_mask"] = item.get("masked_value") or item.get("key_mask") or "************"
+        item["permissions_list"] = parse_json_list(item.get("permissions"))
+        items.append(item)
+    return items
+
+
+def get_active_cloudflare_api_key(api_key_id=None):
+    params = []
+    where = [
+        "lower(COALESCE(provider, ''))='cloudflare'",
+        "lower(COALESCE(category, ''))='third-party'",
+        "lower(COALESCE(environment, ''))='staging'",
+        "lower(COALESCE(status, ''))='active'",
+    ]
+    if api_key_id:
+        where.append("id=?")
+        params.append(int(api_key_id))
+    row = row_to_dict(query_one(
+        f"""SELECT id, name, provider, category, environment, status, encrypted_value, masked_value, key_mask, updated_at, created_at
+            FROM api_keys
+            WHERE {' AND '.join(where)}
+            ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, id DESC
+            LIMIT 1""",
+        params,
+    ))
+    if not row:
+        return {"ok": False, "error": "cloudflare_token_not_configured"}
+    masked = row.get("masked_value") or row.get("key_mask") or "************"
+    token_meta = {"name": row.get("name"), "environment": row.get("environment"), "masked": masked}
+    try:
+        token = decrypt_secret_value(row.get("encrypted_value"))
+    except Exception:
+        return {"ok": False, "error": "cloudflare_token_decrypt_failed", "api_key": token_meta}
+    if not str(token or "").strip():
+        return {"ok": False, "error": "cloudflare_token_empty", "api_key": token_meta}
+    return {"ok": True, "token": str(token).strip(), "api_key": token_meta}
+
+
+def cloudflare_sanitized_error(error):
+    text = str(error or "")
+    text = re.sub(r"Bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]", text, flags=re.IGNORECASE)
+    text = re.sub(r"(Authorization:\s*)[^\s]+", r"\1[redacted]", text, flags=re.IGNORECASE)
+    return text[:500]
+
+
+def cloudflare_request(method, path, token, payload=None, query=None, timeout=30):
+    url = CLOUDFLARE_API_BASE + path
+    if query:
+        safe_query = {key: value for key, value in query.items() if value not in (None, "")}
+        if safe_query:
+            url = f"{url}?{urllib.parse.urlencode(safe_query)}"
+    data = None
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(body) if body else {}
+            return {"ok": bool(data.get("success", True)), "status_code": resp.status, "data": data}
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            error_data = json.loads(body)
+            errors = error_data.get("errors") or []
+            message = "; ".join(str(item.get("message") or item) for item in errors) or f"Cloudflare HTTP {exc.code}"
+        except Exception:
+            message = f"Cloudflare HTTP {exc.code}"
+        return {"ok": False, "status_code": exc.code, "error": cloudflare_sanitized_error(message)}
+    except Exception as exc:
+        return {"ok": False, "status_code": None, "error": cloudflare_sanitized_error(type(exc).__name__)}
+
+
+def cloudflare_zone_public(item):
+    account = item.get("account") or {}
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "status": item.get("status"),
+        "paused": item.get("paused"),
+        "type": item.get("type"),
+        "account_name": account.get("name"),
+    }
+
+
+def cloudflare_dns_record_public(item):
+    return {
+        "id": item.get("id"),
+        "type": item.get("type"),
+        "name": item.get("name"),
+        "content": item.get("content"),
+        "ttl": item.get("ttl"),
+        "proxied": item.get("proxied"),
+        "comment": item.get("comment"),
+        "created_on": item.get("created_on"),
+        "modified_on": item.get("modified_on"),
+    }
+
+
+def mask_identifier(value, prefix=6, suffix=4):
+    text = str(value or "")
+    if not text:
+        return ""
+    if len(text) <= prefix + suffix + 4:
+        return f"{text[:2]}****{text[-2:]}" if len(text) > 4 else "****"
+    return f"{text[:prefix]}****{text[-suffix:]}"
+
+
+def mask_dns_record_content(record):
+    record_type = str(record.get("type") or "").upper()
+    content = str(record.get("content") or "")
+    if record_type == "TXT":
+        return f"[masked TXT length={len(content)}]"
+    return content
+
+
+def normalize_domain_name(value):
+    text = str(value or "").strip().lower()
+    text = re.sub(r"^https?://", "", text)
+    text = text.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    text = text.split(":", 1)[0]
+    text = re.sub(r"[^a-z0-9.-]", "", text)
+    text = re.sub(r"\.+", ".", text).strip(".")
+    return text
+
+
+def dns_label_slug(value, max_length=54):
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    text = re.sub(r"-+", "-", text).strip("-")
+    text = text[:max_length].strip("-")
+    return text
+
+
+def preview_domain_label(project):
+    project_id = int(project["id"])
+    slug = dns_label_slug(project["name"], max_length=54)
+    source = "project_slug"
+    if not slug:
+        slug = f"project{project_id}"
+        source = "project_id"
+    label = f"{slug}-preview"
+    if len(label) > 63:
+        slug = slug[:54].strip("-") or f"project{project_id}"
+        label = f"{slug}-preview"
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label):
+        label = f"project{project_id}-preview"
+        source = "project_id"
+    return label, source
+
+
+def normalize_preview_domain_purpose(value):
+    return normalize_choice(value, PREVIEW_DOMAIN_PURPOSES, PREVIEW_DOMAIN_DEFAULT_PURPOSE)
+
+
+def preview_base_domain_for_purpose(purpose):
+    return PREVIEW_DOMAIN_BASE_DOMAINS.get(normalize_preview_domain_purpose(purpose), PREVIEW_DOMAIN_BASE_DOMAINS[PREVIEW_DOMAIN_DEFAULT_PURPOSE])
+
+
+def build_preview_domain_plan(project_id, base_domain=None, environment="preview", project_type=None):
+    project = query_one("SELECT id, name FROM projects WHERE id=?", (int(project_id),))
+    if not project:
+        return {"ok": False, "error": "project_not_found"}, 404
+
+    purpose = normalize_preview_domain_purpose(project_type)
+    explicit_base_domain = bool(str(base_domain or "").strip())
+    base_domain = normalize_domain_name(base_domain or preview_base_domain_for_purpose(purpose))
+    if not base_domain or "." not in base_domain:
+        return {"ok": False, "error": "invalid_base_domain"}, 400
+
+    environment = normalize_choice(environment, DOMAIN_MAPPING_ENVIRONMENTS, "preview")
+    if environment not in PREVIEW_DOMAIN_ENVIRONMENTS:
+        return {"ok": False, "error": "environment_not_allowed_for_preview_plan"}, 400
+
+    label, label_source = preview_domain_label(project)
+    record_name = f"{label}.{base_domain}"
+    blocked_names = {base_domain, f"www.{base_domain}"}
+    if record_name.lower() in blocked_names:
+        return {"ok": False, "error": "blocked_dns_name"}, 400
+
+    domain_data = fetch_domain_center_zones()
+    if not domain_data.get("ok"):
+        return {"ok": False, "error": domain_data.get("error") or "domain_center_unavailable"}, 502
+
+    zone = None
+    for item in domain_data.get("zones") or []:
+        if str(item.get("name") or "").casefold() == base_domain.casefold():
+            zone = item
+            break
+    if not zone:
+        return {"ok": False, "error": "base_domain_not_found", "base_domain": base_domain}, 404
+
+    existing_records = []
+    for record in zone.get("records") or []:
+        if str(record.get("name") or "").casefold() == record_name.casefold():
+            existing_records.append({
+                "type": record.get("type"),
+                "name": record.get("name"),
+                "content": record.get("content"),
+                "proxied": record.get("proxied"),
+                "ttl": record.get("ttl"),
+            })
+
+    warnings = []
+    if existing_records:
+        warnings.append("DNS record already exists. No write action was taken.")
+
+    return {
+        "ok": True,
+        "action": "plan_only",
+        "requires_approval": True,
+        "record_exists": bool(existing_records),
+        "project": {
+            "id": project["id"],
+            "name": project["name"],
+        },
+        "base_domain": base_domain,
+        "base_domain_source": "request" if explicit_base_domain else "project_type",
+        "project_type": purpose,
+        "purpose": purpose,
+        "environment": environment,
+        "zone": {
+            "name": zone.get("name"),
+            "id_masked": zone.get("id_masked"),
+        },
+        "candidate_source": label_source,
+        "dns_record": {
+            "type": "A",
+            "name": record_name,
+            "content": DOMAIN_CENTER_NAS_IP,
+            "proxied": True,
+            "ttl": 1,
+        },
+        "existing_records": existing_records,
+        "warnings": warnings,
+    }, 200
+
+
+def secure_hash_text(value, purpose="approval"):
+    text = str(value or "")
+    key = hashlib.sha256(encryption_material()).digest()
+    return hmac.new(key, f"{purpose}:{text}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def approval_nonce_hash(nonce):
+    return secure_hash_text(nonce, "approval_nonce")
+
+
+def telegram_user_id_hash(user_id):
+    return secure_hash_text(user_id, "telegram_user_id")
+
+
+def approval_payload_contains_secret(value):
+    text = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value or "")
+    lowered = text.lower()
+    blocked_terms = [
+        "authorization",
+        "bearer ",
+        "encrypted_value",
+        "value_fingerprint",
+        "api_key_id",
+        "telegram token",
+        "cloudflare token",
+        "api key",
+        "x-api-key",
+    ]
+    return any(term in lowered for term in blocked_terms)
+
+
+def sanitize_approval_payload(request_type, payload):
+    request_type = normalize_choice(request_type, APPROVAL_REQUEST_TYPES, "")
+    if request_type != "dns_preview_create":
+        raise ValueError("unsupported approval request type")
+    source = payload if isinstance(payload, dict) else {}
+    record = source.get("dns_record") if isinstance(source.get("dns_record"), dict) else source
+    dns_record = {
+        "type": str(record.get("type") or "").strip().upper(),
+        "name": normalize_domain_name(record.get("name")),
+        "content": str(record.get("content") or "").strip(),
+        "proxied": bool(record.get("proxied")),
+        "ttl": coerce_int(record.get("ttl"), 1),
+    }
+    if dns_record["type"] != "A":
+        raise ValueError("only A record approval is supported in this MVP")
+    if not dns_record["name"] or "." not in dns_record["name"]:
+        raise ValueError("dns_record.name is required")
+    if not dns_record["content"]:
+        raise ValueError("dns_record.content is required")
+    if dns_record["name"].split(".", 1)[0] in ("", "www"):
+        raise ValueError("root and www records are not supported by this approval MVP")
+    sanitized = {"dns_record": dns_record}
+    if approval_payload_contains_secret(sanitized):
+        raise ValueError("approval payload contains blocked secret-like fields")
+    return sanitized
+
+
+def approval_request_row(request_id):
+    return row_to_dict(
+        query_one(
+            """SELECT ar.*, p.name AS project_name
+               FROM approval_requests ar
+               LEFT JOIN projects p ON p.id=ar.project_id
+               WHERE ar.id=?""",
+            (request_id,),
+        )
+    )
+
+
+def approval_request_public(row):
+    if not row:
+        return None
+    item = row_to_dict(row)
+    item.pop("callback_nonce_hash", None)
+    raw_payload = item.get("payload_json") or "{}"
+    try:
+        item["payload"] = json.loads(raw_payload)
+    except Exception:
+        item["payload"] = {}
+    item["payload_json"] = json.dumps(item["payload"], ensure_ascii=False)
+    return item
+
+
+def approval_request_rows(status=None, project_id=None, request_type=None, limit=100):
+    where = ["1=1"]
+    params = []
+    if status:
+        where.append("ar.status=?")
+        params.append(str(status).strip())
+    if project_id not in (None, ""):
+        where.append("ar.project_id=?")
+        params.append(int(project_id))
+    if request_type:
+        where.append("ar.request_type=?")
+        params.append(str(request_type).strip())
+    params.append(max(1, min(coerce_int(limit, 100), 200)))
+    rows = query_all(
+        f"""SELECT ar.*, p.name AS project_name
+            FROM approval_requests ar
+            LEFT JOIN projects p ON p.id=ar.project_id
+            WHERE {' AND '.join(where)}
+            ORDER BY ar.created_at DESC, ar.id DESC
+            LIMIT ?""",
+        tuple(params),
+    )
+    return [approval_request_public(row) for row in rows]
+
+
+def approval_request_title(request_type, payload, project_id=None):
+    if request_type == "dns_preview_create":
+        record = (payload or {}).get("dns_record") or {}
+        return f"Approve preview DNS: {record.get('name') or 'unknown'}"
+    return f"Approval request for project {project_id or '-'}"
+
+
+def create_approval_request(payload):
+    request_type = normalize_choice(payload.get("request_type"), APPROVAL_REQUEST_TYPES, "")
+    if request_type != "dns_preview_create":
+        raise ValueError("unsupported approval request type")
+    project_id = int(payload.get("project_id") or 0)
+    if not project_id or not query_one("SELECT id FROM projects WHERE id=?", (project_id,)):
+        raise ValueError("project_id is required")
+    approval_payload = sanitize_approval_payload(request_type, payload.get("payload") or payload)
+    if approval_payload_contains_secret(payload.get("summary")) or approval_payload_contains_secret(payload.get("notes")):
+        raise ValueError("approval text contains blocked secret-like fields")
+    now = now_str()
+    expires_at = (now_dt() + timedelta(hours=APPROVAL_DEFAULT_EXPIRES_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+    user = current_user() or {}
+    title = (payload.get("title") or approval_request_title(request_type, approval_payload, project_id)).strip()
+    summary = (payload.get("summary") or "").strip()
+    if not summary:
+        record = approval_payload["dns_record"]
+        summary = f"{record['type']} {record['name']} -> {record['content']} (plan only)"
+    cur = execute(
+        """INSERT INTO approval_requests
+           (request_type, project_id, title, summary, payload_json, status, requested_by,
+            approved_by, approved_via, telegram_chat_id_masked, telegram_message_id,
+            callback_nonce_hash, expires_at, created_at, updated_at, approved_at, rejected_at, notes)
+           VALUES (?, ?, ?, ?, ?, 'pending', ?, '', '', '', '', '', ?, ?, ?, '', '', ?)""",
+        (
+            request_type,
+            project_id,
+            title[:255],
+            summary[:1000],
+            json.dumps(approval_payload, ensure_ascii=False),
+            user.get("username") or current_role() or "local_admin",
+            expires_at,
+            now,
+            now,
+            str(payload.get("notes") or "")[:1000],
+        ),
+    )
+    request_id = cur.lastrowid
+    audit_log("approval-request-create", "approval_request", request_id, {"request_type": request_type, "project_id": project_id})
+    return approval_request_public(approval_request_row(request_id))
+
+
+def mask_chat_id(value):
+    return mask_identifier(value, prefix=3, suffix=3)
+
+
+def mock_send_telegram_approval(request_id, payload=None):
+    row = approval_request_row(request_id)
+    if not row:
+        raise LookupError("approval request not found")
+    if row.get("status") != "pending":
+        raise ValueError("approval request is not pending")
+    nonce = secrets.token_urlsafe(18)
+    message_id = f"mock-{request_id}-{int(time.time())}"
+    chat_id = str((payload or {}).get("telegram_chat_id") or "mock-chat")
+    now = now_str()
+    execute(
+        """UPDATE approval_requests
+           SET callback_nonce_hash=?, telegram_chat_id_masked=?, telegram_message_id=?, updated_at=?
+           WHERE id=?""",
+        (approval_nonce_hash(nonce), mask_chat_id(chat_id), message_id, now, request_id),
+    )
+    audit_log("approval-request-send-telegram-mock", "approval_request", request_id, {"message_id": message_id})
+    return {
+        "ok": True,
+        "approval_request": approval_request_public(approval_request_row(request_id)),
+        "telegram": {
+            "mock": True,
+            "message_id": message_id,
+            "chat_id_masked": mask_chat_id(chat_id),
+        },
+        "message": "Telegram send mocked. No Telegram Bot API call was made.",
+    }
+
+
+def telegram_allowed_notification_targets():
+    rows = query_all(
+        """SELECT *
+           FROM telegram_allowed_users
+           WHERE COALESCE(is_active, 1)=1
+             AND role IN ('owner', 'admin')
+             AND COALESCE(encrypted_chat_id, '')<>''
+           ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, id ASC"""
+    )
+    targets = []
+    for row in rows:
+        item = row_to_dict(row)
+        try:
+            chat_id = decrypt_telegram_chat_id(item)
+        except Exception:
+            continue
+        if not chat_id:
+            continue
+        item["chat_id"] = chat_id
+        item["chat_id_masked"] = item.get("chat_id_masked") or mask_chat_id(chat_id)
+        targets.append(item)
+    return targets
+
+
+def approval_request_telegram_message(row):
+    public = approval_request_public(row)
+    payload = public.get("payload") or {}
+    record = payload.get("dns_record") or {}
+    project_label = f"#{public.get('project_id')}" if public.get("project_id") else "-"
+    if public.get("project_name"):
+        project_label = f"{project_label} {public.get('project_name')}"
+    return "\n".join([
+        "DevPilot Approval Request",
+        "",
+        f"Type: {public.get('request_type') or '-'}",
+        f"Project: {project_label}",
+        f"Title: {public.get('title') or '-'}",
+        f"Status: {public.get('status') or '-'}",
+        "",
+        "DNS Plan:",
+        f"{record.get('type') or '-'} {record.get('name') or '-'} -> {record.get('content') or '-'}",
+        f"proxied={str(record.get('proxied')).lower()} ttl={record.get('ttl') or '-'}",
+        "",
+        "This is a notification only.",
+        "No DNS record was created.",
+        "No deployment was triggered.",
+        "Approve/reject must be handled in DevPilot.",
+    ])
+
+
+def send_telegram_approval_notification(request_id, with_buttons=False):
+    row = approval_request_row(request_id)
+    if not row:
+        raise LookupError("approval request not found")
+    if row.get("status") != "pending":
+        raise ValueError("approval request is not pending")
+    targets = telegram_allowed_notification_targets()
+    if not targets:
+        return {
+            "ok": False,
+            "error": "telegram_notification_target_not_configured",
+            "message": "No active owner/admin Telegram target with encrypted chat_id was found.",
+            "status": row.get("status"),
+        }, 400
+    target = targets[0]
+    nonce = secrets.token_urlsafe(18)
+    message = approval_request_telegram_message(row)
+    reply_markup = None
+    if with_buttons:
+        reply_markup = {
+            "inline_keyboard": [[
+                {"text": "Approve", "callback_data": f"{APPROVAL_CALLBACK_PREFIX}:{request_id}:approve:{nonce}"},
+                {"text": "Reject", "callback_data": f"{APPROVAL_CALLBACK_PREFIX}:{request_id}:reject:{nonce}"},
+            ]]
+        }
+    result = telegram_send_message(target["chat_id"], message, reply_markup=reply_markup)
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "error": result.get("error") or "telegram_send_failed",
+            "status_code": result.get("status_code"),
+            "message": result.get("message") or "Telegram send failed.",
+            "chat_id_masked": result.get("chat_id_masked") or target.get("chat_id_masked"),
+            "status": row.get("status"),
+        }, 502
+    message_id = str(result.get("telegram_message_id") or "")
+    now = now_str()
+    execute(
+        """UPDATE approval_requests
+           SET callback_nonce_hash=?, telegram_chat_id_masked=?, telegram_message_id=?, updated_at=?
+           WHERE id=?""",
+        (approval_nonce_hash(nonce), result.get("chat_id_masked") or target.get("chat_id_masked"), message_id, now, request_id),
+    )
+    audit_log("approval-request-send-telegram", "approval_request", request_id, {"message_id": message_id})
+    return {
+        "ok": True,
+        "mock": False,
+        "with_buttons": bool(with_buttons),
+        "telegram_message_id": message_id,
+        "chat_id_masked": result.get("chat_id_masked") or target.get("chat_id_masked"),
+        "message": "Telegram approval notification sent.",
+        "status": "pending",
+        "approval_request": approval_request_public(approval_request_row(request_id)),
+    }, 200
+
+
+def parse_telegram_callback_payload(payload):
+    data = payload.get("callback_data") or payload.get("data") or ""
+    user_id = payload.get("telegram_user_id") or payload.get("user_id")
+    username = payload.get("telegram_username") or payload.get("username") or ""
+    callback_query = payload.get("callback_query")
+    if isinstance(callback_query, dict):
+        data = data or callback_query.get("data") or ""
+        sender = callback_query.get("from") or {}
+        user_id = user_id or sender.get("id")
+        username = username or sender.get("username") or ""
+    parts = str(data or "").split(":")
+    if len(parts) != 4 or parts[0] != APPROVAL_CALLBACK_PREFIX:
+        raise ValueError("invalid callback_data")
+    try:
+        request_id = int(parts[1])
+    except (TypeError, ValueError):
+        raise ValueError("invalid approval request id")
+    action = parts[2]
+    if action not in ("approve", "reject"):
+        raise ValueError("invalid approval action")
+    nonce = parts[3]
+    if not nonce:
+        raise ValueError("missing nonce")
+    if user_id in (None, ""):
+        raise ValueError("missing telegram user")
+    return request_id, action, nonce, str(user_id), str(username or "")
+
+
+def telegram_allowed_user(user_id):
+    user_hash = telegram_user_id_hash(user_id)
+    return row_to_dict(
+        query_one(
+            """SELECT *
+               FROM telegram_allowed_users
+               WHERE telegram_user_id_hash=? AND COALESCE(is_active, 1)=1
+               ORDER BY id DESC LIMIT 1""",
+            (user_hash,),
+        )
+    )
+
+
+def get_active_telegram_bot_token():
+    row = row_to_dict(query_one(
+        """SELECT name, encrypted_value, masked_value, key_mask
+           FROM api_keys
+           WHERE lower(COALESCE(provider, ''))='telegram'
+             AND lower(COALESCE(category, ''))='third-party'
+             AND lower(COALESCE(environment, ''))='staging'
+             AND lower(COALESCE(status, ''))='active'
+           ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, id DESC
+           LIMIT 1"""
+    ))
+    if not row:
+        return {"ok": False, "error": "telegram_token_not_configured", "api_key": {"source": "none"}}
+    masked = row.get("masked_value") or row.get("key_mask") or "************"
+    api_key = {"source": "db", "name": row.get("name"), "masked": masked}
+    try:
+        token = decrypt_secret_value(row.get("encrypted_value"))
+    except Exception:
+        return {"ok": False, "error": "telegram_token_decrypt_failed", "api_key": api_key}
+    if not str(token or "").strip():
+        return {"ok": False, "error": "telegram_token_empty", "api_key": api_key}
+    return {"ok": True, "token": str(token).strip(), "api_key": api_key}
+
+
+def encrypt_telegram_chat_id(chat_id):
+    value = str(chat_id or "").strip()
+    if not value:
+        raise ValueError("telegram chat_id is required")
+    return encrypt_secret_value(value)
+
+
+def decrypt_telegram_chat_id(row):
+    data = row_to_dict(row) if row and not isinstance(row, dict) else (row or {})
+    encrypted = data.get("encrypted_chat_id")
+    if not encrypted:
+        return ""
+    return decrypt_secret_value(encrypted)
+
+
+def telegram_sanitized_error(message):
+    text = str(message or "")
+    text = re.sub(r"https://api\.telegram\.org/bot[^/\s]+", "https://api.telegram.org/bot[redacted]", text)
+    text = re.sub(r"(Authorization:\s*)[^\s]+", r"\1[redacted]", text, flags=re.IGNORECASE)
+    text = re.sub(r"bot\d+:[A-Za-z0-9_-]+", "bot[redacted]", text)
+    return text[:300]
+
+
+def telegram_send_message(chat_id, text, reply_markup=None):
+    chat_id_text = str(chat_id or "").strip()
+    chat_id_masked = mask_chat_id(chat_id_text)
+    if not chat_id_text:
+        return {
+            "ok": False,
+            "error": "telegram_chat_id_missing",
+            "message": "Telegram chat_id is not configured.",
+            "chat_id_masked": chat_id_masked,
+        }
+    token_info = get_active_telegram_bot_token()
+    if not token_info.get("ok"):
+        return {
+            "ok": False,
+            "error": token_info.get("error") or "telegram_token_not_configured",
+            "message": "Telegram Bot token is not configured or cannot be decrypted.",
+            "chat_id_masked": chat_id_masked,
+        }
+    payload = {
+        "chat_id": chat_id_text,
+        "text": str(text or ""),
+        "disable_web_page_preview": True,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    url = f"https://api.telegram.org/bot{token_info['token']}/sendMessage"
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw_body = resp.read().decode("utf-8", errors="replace")
+            payload = json.loads(raw_body) if raw_body else {}
+            result = payload.get("result") or {}
+            return {
+                "ok": bool(payload.get("ok", True)),
+                "status_code": resp.status,
+                "chat_id_masked": chat_id_masked,
+                "telegram_message_id": result.get("message_id"),
+            }
+    except urllib.error.HTTPError as exc:
+        # Telegram error bodies should stay internal; callers only need the HTTP status.
+        try:
+            exc.read()
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "error": "telegram_send_failed",
+            "status_code": exc.code,
+            "message": f"Telegram HTTP {exc.code}",
+            "chat_id_masked": chat_id_masked,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "telegram_send_failed",
+            "status_code": None,
+            "message": telegram_sanitized_error(type(exc).__name__),
+            "chat_id_masked": chat_id_masked,
+        }
+
+
+def process_telegram_approval_callback(payload):
+    request_id, action, nonce, user_id, username = parse_telegram_callback_payload(payload)
+    row = approval_request_row(request_id)
+    if not row:
+        return {"ok": False, "error": "approval_request_not_found"}, 404
+    if row.get("status") != "pending":
+        return {"ok": False, "error": "approval_request_already_processed", "status": row.get("status")}, 409
+    expires_at = parse_time(row.get("expires_at"))
+    if expires_at and now_dt() > expires_at:
+        execute("UPDATE approval_requests SET status='expired', updated_at=? WHERE id=?", (now_str(), request_id))
+        audit_log("approval-request-expired", "approval_request", request_id, {"via": "telegram_mock"})
+        return {"ok": False, "error": "approval_request_expired"}, 410
+    if not row.get("callback_nonce_hash"):
+        return {"ok": False, "error": "approval_request_not_sent"}, 400
+    expected = row.get("callback_nonce_hash")
+    provided = approval_nonce_hash(nonce)
+    if not hmac.compare_digest(str(expected or ""), str(provided or "")):
+        return {"ok": False, "error": "invalid_nonce"}, 403
+    allowed = telegram_allowed_user(user_id)
+    if not allowed or allowed.get("role") not in APPROVAL_ALLOWED_ROLES:
+        return {"ok": False, "error": "telegram_user_not_allowed"}, 403
+    now = now_str()
+    actor = allowed.get("display_name") or allowed.get("telegram_username") or username or "telegram_user"
+    if action == "approve":
+        execute(
+            """UPDATE approval_requests
+               SET status='approved', approved_by=?, approved_via='telegram', approved_at=?, updated_at=?
+               WHERE id=?""",
+            (actor, now, now, request_id),
+        )
+        audit_log("approval-request-approved", "approval_request", request_id, {"via": "telegram_mock", "role": allowed.get("role")})
+    else:
+        execute(
+            """UPDATE approval_requests
+               SET status='rejected', approved_by=?, approved_via='telegram', rejected_at=?, updated_at=?
+               WHERE id=?""",
+            (actor, now, now, request_id),
+        )
+        audit_log("approval-request-rejected", "approval_request", request_id, {"via": "telegram_mock", "role": allowed.get("role")})
+    return {
+        "ok": True,
+        "action": action,
+        "approval_request": approval_request_public(approval_request_row(request_id)),
+        "message": "Approval status updated only. No DNS or deployment action was executed.",
+    }, 200
+
+
+def dns_record_points_to_nas(record, nas_ip=DOMAIN_CENTER_NAS_IP):
+    record_type = str(record.get("type") or "").upper()
+    return record_type in ("A", "AAAA") and str(record.get("content") or "").strip() == str(nas_ip)
+
+
+def project_select_options():
+    return [row_to_dict(row) for row in query_all("SELECT id, name FROM projects ORDER BY name COLLATE NOCASE")]
+
+
+def domain_mapping_rows(project_id=None):
+    params = []
+    where = []
+    if project_id not in (None, ""):
+        where.append("dm.project_id=?")
+        params.append(int(project_id))
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = query_all(
+        f"""SELECT dm.*, p.name AS project_name
+            FROM domain_mappings dm
+            LEFT JOIN projects p ON p.id=dm.project_id
+            {where_sql}
+            ORDER BY dm.updated_at DESC, dm.id DESC""",
+        params,
+    )
+    return [row_to_dict(row) for row in rows]
+
+
+def domain_mapping_lookup():
+    lookup = {}
+    for item in domain_mapping_rows():
+        key = (
+            str(item.get("zone_name") or "").casefold(),
+            str(item.get("record_name") or "").casefold(),
+            str(item.get("record_type") or "").upper(),
+        )
+        lookup.setdefault(key, []).append(item)
+    return lookup
+
+
+def domain_mapping_key(zone_name, record_name, record_type):
+    return (
+        str(zone_name or "").casefold(),
+        str(record_name or "").casefold(),
+        str(record_type or "").upper(),
+    )
+
+
+def upsert_domain_mapping(payload):
+    project_id = int(payload.get("project_id") or 0)
+    if not project_id or not query_one("SELECT id FROM projects WHERE id=?", (project_id,)):
+        raise ValueError("project_id is required")
+    record_name = str(payload.get("record_name") or "").strip()
+    record_type = str(payload.get("record_type") or "").strip().upper()
+    if not record_name or not record_type:
+        raise ValueError("record_name and record_type are required")
+    zone_name = str(payload.get("zone_name") or "").strip()
+    if not zone_name:
+        parts = record_name.split(".", 1)
+        zone_name = parts[1] if len(parts) > 1 else record_name
+    environment = normalize_choice(payload.get("environment"), DOMAIN_MAPPING_ENVIRONMENTS, "staging")
+    status = normalize_choice(payload.get("status"), ["active", "inactive"], "active")
+    zone_id_masked = str(payload.get("zone_id_masked") or "").strip()
+    record_content = str(payload.get("record_content") or "").strip()
+    preview_url = str(payload.get("preview_url") or "").strip()
+    notes = str(payload.get("notes") or "").strip()
+    now = now_str()
+    existing = query_one(
+        """SELECT id FROM domain_mappings
+           WHERE lower(COALESCE(zone_name, ''))=lower(?)
+             AND lower(record_name)=lower(?)
+             AND upper(COALESCE(record_type, ''))=upper(?)""",
+        (zone_name, record_name, record_type),
+    )
+    if existing:
+        execute(
+            """UPDATE domain_mappings
+               SET project_id=?, zone_id_masked=?, record_content=?, environment=?,
+                   preview_url=?, status=?, notes=?, updated_at=?
+               WHERE id=?""",
+            (project_id, zone_id_masked, record_content, environment, preview_url, status, notes, now, existing["id"]),
+        )
+        mapping_id = existing["id"]
+    else:
+        cur = execute(
+            """INSERT INTO domain_mappings
+               (zone_name, zone_id_masked, record_name, record_type, record_content, project_id,
+                environment, preview_url, status, notes, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (zone_name, zone_id_masked, record_name, record_type, record_content, project_id,
+             environment, preview_url, status, notes, now, now),
+        )
+        mapping_id = cur.lastrowid
+    return row_to_dict(query_one("SELECT * FROM domain_mappings WHERE id=?", (mapping_id,)))
+
+
+def find_domain_project_bindings(hostname):
+    name = str(hostname or "").strip()
+    if not name:
+        return []
+    pattern = f"%{name}%"
+    bindings = []
+    try:
+        direct_rows = query_all(
+            """SELECT dm.*, p.name AS project_name
+               FROM domain_mappings dm
+               LEFT JOIN projects p ON p.id=dm.project_id
+               WHERE lower(COALESCE(dm.record_name, ''))=lower(?)
+                 AND COALESCE(dm.status, 'active')='active'
+               ORDER BY dm.updated_at DESC, dm.id DESC
+               LIMIT 10""",
+            (name,),
+        )
+        for row in direct_rows:
+            item = row_to_dict(row)
+            item["source"] = "domain_mapping"
+            bindings.append(item)
+    except sqlite3.Error:
+        pass
+    try:
+        deployment_rows = query_all(
+            """SELECT DISTINCT p.id AS project_id, p.name AS project_name,
+                      d.environment, d.service_name, d.public_url, d.internal_url
+               FROM projects p
+               JOIN project_deployments d ON d.project_id=p.id
+               WHERE COALESCE(d.public_url, '') LIKE ? OR COALESCE(d.internal_url, '') LIKE ?
+               ORDER BY p.id
+               LIMIT 5""",
+            (pattern, pattern),
+        )
+        for row in deployment_rows:
+            item = row_to_dict(row)
+            item["source"] = "deployment"
+            bindings.append(item)
+    except sqlite3.Error:
+        pass
+    try:
+        endpoint_rows = query_all(
+            """SELECT DISTINCT p.id AS project_id, p.name AS project_name,
+                      e.endpoint_type, e.url
+               FROM projects p
+               JOIN service_endpoints e ON e.project_id=p.id
+               WHERE COALESCE(e.url, '') LIKE ? AND COALESCE(e.is_ignored, 0)=0
+               ORDER BY p.id
+               LIMIT 5""",
+            (pattern,),
+        )
+        for row in endpoint_rows:
+            item = row_to_dict(row)
+            item["source"] = "service_endpoint"
+            bindings.append(item)
+    except sqlite3.Error:
+        pass
+    seen = set()
+    unique = []
+    for item in bindings:
+        key = (item.get("source"), item.get("project_id"), item.get("environment"), item.get("endpoint_type"), item.get("service_name"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def domain_dns_record_summary(record):
+    public = cloudflare_dns_record_public(record)
+    name = public.get("name") or ""
+    zone_name = str(record.get("_zone_name") or "")
+    key = domain_mapping_key(zone_name, name, public.get("type"))
+    direct_mappings = getattr(g, "domain_mapping_lookup", {}).get(key, []) if has_request_context() else []
+    return {
+        "id_masked": mask_identifier(public.get("id")),
+        "type": public.get("type"),
+        "name": name,
+        "content": mask_dns_record_content(public),
+        "ttl": public.get("ttl"),
+        "proxied": bool(public.get("proxied")),
+        "points_to_nas": dns_record_points_to_nas(public),
+        "created_on": public.get("created_on"),
+        "modified_on": public.get("modified_on"),
+        "project_bindings": direct_mappings or find_domain_project_bindings(name),
+        "mapped": bool(direct_mappings),
+    }
+
+
+def domain_zone_checklist(zone_name, records):
+    zone = str(zone_name or "")
+    root_a_records = [
+        item for item in records
+        if str(item.get("type") or "").upper() == "A" and str(item.get("name") or "").lower() == zone.lower()
+    ]
+    www_name = f"www.{zone}" if zone else "www"
+    www_cname_records = [
+        item for item in records
+        if str(item.get("type") or "").upper() == "CNAME" and str(item.get("name") or "").lower() == www_name.lower()
+    ]
+    a_records = [item for item in records if str(item.get("type") or "").upper() == "A"]
+    cname_records = [item for item in records if str(item.get("type") or "").upper() == "CNAME"]
+    nas_records = [item for item in records if dns_record_points_to_nas(item)]
+    proxied_records = [item for item in records if item.get("proxied") is True]
+    return {
+        "root_a_exists": bool(root_a_records),
+        "root_a_points_to_nas": any(dns_record_points_to_nas(item) for item in root_a_records),
+        "www_cname_exists": bool(www_cname_records),
+        "has_a_record": bool(a_records),
+        "has_cname_record": bool(cname_records),
+        "nas_record_count": len(nas_records),
+        "proxied_record_count": len(proxied_records),
+        "all_core_checks_passed": bool(root_a_records) and any(dns_record_points_to_nas(item) for item in root_a_records) and bool(www_cname_records),
+    }
+
+
+def domain_zone_summary(zone, records=None, records_error=None):
+    public = cloudflare_zone_public(zone)
+    record_items = []
+    for item in (records or []):
+        public_record = cloudflare_dns_record_public(item)
+        public_record["_zone_name"] = public.get("name") or ""
+        record_items.append(public_record)
+    record_summaries = [domain_dns_record_summary(item) for item in record_items]
+    return {
+        "id": public.get("id"),
+        "id_masked": mask_identifier(public.get("id")),
+        "name": public.get("name"),
+        "status": public.get("status"),
+        "paused": public.get("paused"),
+        "type": public.get("type"),
+        "account_name": public.get("account_name"),
+        "records_count": len(record_summaries),
+        "records": record_summaries,
+        "records_error": records_error,
+        "checklist": domain_zone_checklist(public.get("name"), record_items),
+    }
+
+
+def fetch_domain_center_zones():
+    if has_request_context():
+        g.domain_mapping_lookup = domain_mapping_lookup()
+    key_info = get_active_cloudflare_api_key()
+    if not key_info.get("ok"):
+        return {"ok": False, "error": key_info.get("error")}
+    zones_result = cloudflare_request("GET", "/zones", key_info["token"], query={"page": 1, "per_page": 100})
+    if not zones_result.get("ok"):
+        return {"ok": False, "error": zones_result.get("error"), "status_code": zones_result.get("status_code")}
+    zones_data = zones_result.get("data") or {}
+    summaries = []
+    for zone in zones_data.get("result") or []:
+        zone_id = str(zone.get("id") or "")
+        records = []
+        records_error = None
+        if zone_id:
+            records_result = cloudflare_request(
+                "GET",
+                f"/zones/{urllib.parse.quote(zone_id, safe='')}/dns_records",
+                key_info["token"],
+                query={"page": 1, "per_page": 100},
+            )
+            if records_result.get("ok"):
+                records = ((records_result.get("data") or {}).get("result") or [])
+            else:
+                records_error = records_result.get("error") or "dns_records_failed"
+        summaries.append(domain_zone_summary(zone, records, records_error))
+    return {
+        "ok": True,
+        "nas_ip": DOMAIN_CENTER_NAS_IP,
+        "zones": summaries,
+        "count": len(summaries),
+        "result_info": zones_data.get("result_info") or {},
+    }
+
+
+def fetch_domain_center_records(zone_id):
+    if has_request_context():
+        g.domain_mapping_lookup = domain_mapping_lookup()
+    key_info = get_active_cloudflare_api_key()
+    if not key_info.get("ok"):
+        return {"ok": False, "error": key_info.get("error")}
+    zone_result = cloudflare_request("GET", f"/zones/{urllib.parse.quote(zone_id, safe='')}", key_info["token"])
+    if not zone_result.get("ok"):
+        return {"ok": False, "error": zone_result.get("error"), "status_code": zone_result.get("status_code")}
+    try:
+        per_page = min(100, max(1, int(request.args.get("per_page") or 100)))
+    except (TypeError, ValueError):
+        per_page = 100
+    records_result = cloudflare_request(
+        "GET",
+        f"/zones/{urllib.parse.quote(zone_id, safe='')}/dns_records",
+        key_info["token"],
+        query={"page": request.args.get("page") or 1, "per_page": per_page},
+    )
+    if not records_result.get("ok"):
+        return {"ok": False, "error": records_result.get("error"), "status_code": records_result.get("status_code")}
+    zone = ((zone_result.get("data") or {}).get("result") or {})
+    records = ((records_result.get("data") or {}).get("result") or [])
+    summary = domain_zone_summary(zone, records)
+    return {
+        "ok": True,
+        "nas_ip": DOMAIN_CENTER_NAS_IP,
+        "zone": {key: summary[key] for key in ("id", "id_masked", "name", "status", "paused", "type", "account_name", "records_count", "checklist")},
+        "records": summary["records"],
+        "count": summary["records_count"],
+    }
 
 
 def detect_api_key_anomalies(api_key_id, ip_address):
@@ -3984,6 +5252,280 @@ def call_gemini_console(prompt, model):
     }
 
 
+AI_CONSOLE_WEBSITE_PROMPT = """請 OpenAI 與 Gemini 協作，產生一個「AI 自動化接案服務」單頁網站。
+需求：
+1. 一頁式網站
+2. 主標題：AI 自動化接案服務
+3. 副標題：從需求、開發、測試到部署，一套流程自動跑
+4. 區塊包含：
+   - Hero
+   - 服務項目
+   - 執行流程
+   - 適合對象
+   - CTA 立即諮詢
+5. 輸出完整 single-file HTML
+6. CSS 內嵌在 style
+7. 不使用外部 CDN
+8. 不連外部圖片
+9. 不含任何 API Key
+10. 不自動部署"""
+AI_CONSOLE_GEMINI_MODEL = "gemini-2.5-flash"
+
+
+def sanitize_ai_console_text(value, secrets_to_strip=None):
+    text = str(value or "")
+    for secret in secrets_to_strip or []:
+        secret_text = str(secret or "")
+        if secret_text:
+            text = text.replace(secret_text, "[redacted]")
+    return text
+
+
+def extract_single_file_html(text):
+    original = str(text or "").strip()
+    content = original
+    for match in re.finditer(r"```(?:html)?\s*(.*?)```", content, flags=re.IGNORECASE | re.DOTALL):
+        candidate = (match.group(1) or "").strip()
+        candidate_lower = candidate.lower()
+        if "<!doctype html" in candidate_lower or "<html" in candidate_lower:
+            content = candidate
+            break
+    content_lower = content.lower()
+    doctype_index = content_lower.find("<!doctype html")
+    html_index = content_lower.find("<html")
+    if doctype_index >= 0:
+        content = content[doctype_index:]
+    elif html_index >= 0:
+        content = content[html_index:]
+    else:
+        return original
+    content_lower = content.lower()
+    end_index = content_lower.rfind("</html>")
+    if end_index >= 0:
+        content = content[:end_index + len("</html>")]
+    return content.strip()
+
+
+def ai_console_error(error, message):
+    return {
+        "ok": False,
+        "error": error,
+        "message": message,
+        "safety_notes": [
+            "No API keys returned.",
+            "No files were written.",
+            "No deployment was triggered.",
+        ],
+    }
+
+
+def call_openai_console_with_key(prompt, model, api_key, max_tokens=900, retry_delays=(2, 6), timeout=60):
+    payload = {
+        "model": model or OPENAI_CHAT_MODEL,
+        "messages": [
+            {"role": "system", "content": "You are a careful web designer. Never include API keys or secrets."},
+            {"role": "user", "content": str(prompt or "")},
+        ],
+        "temperature": 0.2,
+        "max_tokens": max_tokens,
+    }
+    attempts = len(retry_delays) + 1
+    data = None
+    for attempt_index in range(attempts):
+        req = urllib.request.Request(
+            OPENAI_API_URL,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+                break
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                if attempt_index < len(retry_delays):
+                    time.sleep(retry_delays[attempt_index])
+                    continue
+                return {"ok": False, "status": "rate_limited", "error": "OpenAI rate limit or quota reached"}
+            return {"ok": False, "status": "http_error", "error": f"OpenAI HTTP {exc.code}"}
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt_index < len(retry_delays):
+                time.sleep(retry_delays[attempt_index])
+                continue
+            return {"ok": False, "status": "network_error", "error": "OpenAI network error"}
+        except Exception:
+            return {"ok": False, "status": "error", "error": "OpenAI call failed"}
+    if data is None:
+        return {"ok": False, "status": "error", "error": "OpenAI call failed"}
+    text = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    usage = data.get("usage") or {}
+    return {
+        "ok": True,
+        "text": text,
+        "input_tokens": coerce_int(usage.get("prompt_tokens"), approx_ai_tokens(prompt)),
+        "output_tokens": coerce_int(usage.get("completion_tokens"), approx_ai_tokens(text)),
+    }
+
+
+def call_gemini_console_with_key(prompt, model, api_key):
+    model_name = str(model or AI_CONSOLE_GEMINI_MODEL).strip()
+    if model_name.startswith("models/"):
+        model_name = model_name[len("models/"):]
+    req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(model_name)}:generateContent"
+    req_url = f"{req_url}?key={urllib.parse.quote(api_key)}"
+    payload = {"contents": [{"parts": [{"text": str(prompt or "")}]}]}
+    req = urllib.request.Request(
+        req_url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "error": f"Gemini HTTP {exc.code}"}
+    except Exception:
+        return {"ok": False, "error": "Gemini call failed"}
+    parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+    text = "\n".join(str(part.get("text") or "") for part in parts if part.get("text")).strip()
+    usage = data.get("usageMetadata") or {}
+    return {
+        "ok": True,
+        "text": text,
+        "input_tokens": coerce_int(usage.get("promptTokenCount"), approx_ai_tokens(prompt)),
+        "output_tokens": coerce_int(usage.get("candidatesTokenCount"), approx_ai_tokens(text)),
+    }
+
+
+def run_ai_console_gemini_only():
+    gemini_key = get_active_ai_console_key("gemini")
+    if not gemini_key.get("ok"):
+        return ai_console_error("gemini_not_configured", "Gemini key is not configured or cannot be decrypted.")
+
+    secrets_to_strip = [gemini_key.get("key"), API_TOKEN]
+    prompt = (
+        "請產生一個繁體中文 single-file HTML landing page。\n"
+        "主題：AI 自動化接案服務。\n"
+        "副標題：從需求、開發、測試到部署，一套流程自動跑。\n"
+        "必含：\n"
+        "- Hero\n"
+        "- 服務項目\n"
+        "- 執行流程\n"
+        "- 適合對象\n"
+        "- CTA 立即諮詢\n"
+        "限制：\n"
+        "- CSS 內嵌在 style\n"
+        "- 不使用外部 CDN\n"
+        "- 不連外部圖片\n"
+        "- 不含任何 API Key\n"
+        "- 輸出完整 HTML"
+    )
+    result = call_gemini_console_with_key(prompt, "", gemini_key["key"])
+    if not result.get("ok"):
+        return ai_console_error("gemini_generation_failed", result.get("error") or "Gemini generation failed.")
+    final_html = extract_single_file_html(sanitize_ai_console_text(result.get("text"), secrets_to_strip))
+    return {
+        "ok": True,
+        "mode": "gemini_only_website_mvp",
+        "providers_used": [
+            {"provider": "gemini", "source": gemini_key.get("source"), "masked": gemini_key.get("masked")},
+        ],
+        "final_html": final_html,
+        "safety_notes": [
+            "No API keys included in response.",
+            "No files were written.",
+            "No deployment was triggered.",
+            "OpenAI skipped.",
+            "Claude skipped.",
+        ],
+    }
+
+
+def run_ai_console_website_mvp():
+    payload = request.get_json(silent=True) if has_request_context() else {}
+    mode = str((payload or {}).get("mode") or "openai_gemini").strip().lower()
+    if mode == "gemini_only":
+        return run_ai_console_gemini_only()
+
+    openai_key = get_active_ai_console_key("openai")
+    if not openai_key.get("ok"):
+        return ai_console_error("openai_not_configured", "OpenAI key is not configured or cannot be decrypted.")
+    gemini_key = get_active_ai_console_key("gemini")
+    if not gemini_key.get("ok"):
+        return ai_console_error("gemini_not_configured", "Gemini key is not configured or cannot be decrypted.")
+
+    secrets_to_strip = [openai_key.get("key"), gemini_key.get("key"), API_TOKEN]
+    draft_prompt = (
+        "產生一個繁體中文 single-file HTML landing page。\n"
+        "主題：AI 自動化接案服務。\n"
+        "必含：Hero、服務項目、流程、適合對象、CTA。\n"
+        "限制：內嵌 CSS，不用 CDN，不用外部圖片，不含 API Key。\n"
+        "先輸出精簡但完整 HTML。"
+    )
+    draft_result = call_openai_console_with_key(
+        draft_prompt,
+        OPENAI_CHAT_MODEL,
+        openai_key["key"],
+        max_tokens=900,
+    )
+    if not draft_result.get("ok"):
+        if draft_result.get("status") == "rate_limited":
+            return ai_console_error("openai_rate_limited", "OpenAI rate limit or quota reached during draft generation.")
+        return ai_console_error("openai_draft_failed", draft_result.get("error") or "OpenAI draft failed.")
+    draft_html = sanitize_ai_console_text(draft_result.get("text"), secrets_to_strip)
+
+    review_prompt = (
+        "請 review 以下單頁網站草稿，只回摘要與最多 5 點改善建議，不要重寫整份 HTML，"
+        "不要包含任何 API Key 或秘密。\n\n"
+        f"{draft_html[:6000]}"
+    )
+    review_result = call_gemini_console_with_key(review_prompt, "", gemini_key["key"])
+    if not review_result.get("ok"):
+        return ai_console_error("gemini_review_failed", review_result.get("error") or "Gemini review failed.")
+    review_text = sanitize_ai_console_text(review_result.get("text"), secrets_to_strip)
+
+    final_prompt = (
+        "請根據 OpenAI 初稿與 Gemini review，產生最終版完整 single-file HTML。\n"
+        "必含：Hero、服務項目、流程、適合對象、CTA。\n"
+        "限制：內嵌 CSS，不用 CDN，不用外部圖片，不含 API Key。只輸出 HTML，不要 markdown code fence。\n\n"
+        "以下是 OpenAI 初稿：\n"
+        f"{draft_html[:6000]}\n\n"
+        "以下是 Gemini review 摘要與改善建議：\n"
+        f"{review_text[:1200]}"
+    )
+    final_result = call_openai_console_with_key(
+        final_prompt,
+        OPENAI_CHAT_MODEL,
+        openai_key["key"],
+        max_tokens=1400,
+    )
+    if not final_result.get("ok"):
+        if final_result.get("status") == "rate_limited":
+            return ai_console_error("openai_rate_limited", "OpenAI rate limit or quota reached during final generation.")
+        return ai_console_error("openai_final_failed", final_result.get("error") or "OpenAI final generation failed.")
+    final_html = extract_single_file_html(sanitize_ai_console_text(final_result.get("text"), secrets_to_strip))
+
+    return {
+        "ok": True,
+        "mode": "openai_gemini_website_mvp",
+        "providers_used": [
+            {"provider": "openai", "source": openai_key.get("source"), "masked": openai_key.get("masked")},
+            {"provider": "gemini", "source": gemini_key.get("source"), "masked": gemini_key.get("masked")},
+        ],
+        "openai_draft_summary": ai_prompt_summary(draft_html, 500),
+        "gemini_review_summary": ai_prompt_summary(review_text, 500),
+        "final_html": final_html,
+        "safety_notes": [
+            "No API keys included in response.",
+            "No files were written.",
+            "No deployment was triggered.",
+            "Claude skipped.",
+        ],
+    }
+
+
 def run_ai_console_provider(provider_name, prompt, model):
     if provider_name == "gemini":
         return call_gemini_console(prompt, model)
@@ -4698,36 +6240,15 @@ def provider_health_http_json(url, headers=None, timeout=10):
 
 
 def check_openai_health():
-    key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not key:
-        return {"ok": False, "status": "not_configured"}
-    result = provider_health_http_json(
-        "https://api.openai.com/v1/models",
-        headers={"Authorization": f"Bearer {key}"},
-    )
-    if result.get("ok"):
-        models = result.get("data", {}).get("data") or []
-        return {"ok": True, "status": "online", "modelCount": len(models)}
-    return {"ok": False, "status": "error", "error": result.get("error") or "OpenAI health check failed"}
+    return get_active_ai_health_key("openai")
 
 
 def check_gemini_health():
-    key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not key:
-        return {"ok": False, "status": "not_configured"}
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(key)}"
-    result = provider_health_http_json(url)
-    if result.get("ok"):
-        models = result.get("data", {}).get("models") or []
-        return {"ok": True, "status": "online", "modelCount": len(models)}
-    return {"ok": False, "status": "error", "error": result.get("error") or "Gemini health check failed"}
+    return get_active_ai_health_key("gemini")
 
 
 def check_claude_health():
-    key = os.getenv("CLAUDE_API_KEY", "").strip()
-    if not key:
-        return {"ok": False, "status": "not_configured"}
-    return {"ok": False, "status": "configured"}
+    return get_active_ai_health_key("claude")
 
 
 def ai_provider_health_status():
@@ -6383,6 +7904,383 @@ def api_key_usage_record(key_id):
         return jsonify({"ok": True, "api_key_id": key_id, "message": "usage recorded"})
     except PermissionError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 403
+
+
+@app.route("/cloudflare", methods=["GET", "POST"])
+@require_roles("owner", "admin")
+def cloudflare_settings():
+    if request.method == "POST":
+        token_value = request.form.get("token_value") or ""
+        if not token_value.strip():
+            flash("Cloudflare token is required")
+            return redirect(url_for("cloudflare_settings"))
+        name = (request.form.get("name") or "Cloudflare API Token").strip()
+        environment = normalize_choice(request.form.get("environment"), API_KEY_ENVIRONMENTS, "staging")
+        key_id = create_api_key_record({
+            "name": name,
+            "category": "third-party",
+            "provider": "cloudflare",
+            "environment": environment,
+            "status": "active",
+            "version": (request.form.get("version") or "v1").strip() or "v1",
+            "permissions": ["read", "write", "deploy"],
+            "key_value": token_value,
+            "rotation_days": int(request.form.get("rotation_days") or 90),
+            "usage_limit": None,
+            "ai_allowed": 0,
+            "notes": (request.form.get("notes") or "Cloudflare DNS management token").strip(),
+            "source": "cloudflare-settings",
+        })
+        audit_log("cloudflare-token-save", "api_key", key_id, {"name": name, "environment": environment})
+        flash(f"Cloudflare token saved as {name}; value is encrypted and masked.")
+        return redirect(url_for("cloudflare_settings"))
+    return render_template(
+        "cloudflare_settings.html",
+        tokens=cloudflare_api_keys(),
+        environments=API_KEY_ENVIRONMENTS,
+        dns_types=CLOUDFLARE_DNS_TYPES,
+    )
+
+
+@app.route("/domains")
+@require_roles("owner", "admin")
+def domains_center():
+    domain_data = fetch_domain_center_zones()
+    return render_template(
+        "domains.html",
+        domain_data=domain_data,
+        nas_ip=DOMAIN_CENTER_NAS_IP,
+        projects=project_select_options(),
+        domain_mapping_environments=DOMAIN_MAPPING_ENVIRONMENTS,
+        preview_domain_purposes=PREVIEW_DOMAIN_PURPOSES,
+        preview_domain_base_domains=PREVIEW_DOMAIN_BASE_DOMAINS,
+        preview_domain_default_purpose=PREVIEW_DOMAIN_DEFAULT_PURPOSE,
+    )
+
+
+@app.route("/domains/bind", methods=["POST"])
+@require_roles("owner", "admin")
+def domains_bind():
+    try:
+        mapping = upsert_domain_mapping(request.form)
+    except ValueError as exc:
+        flash(str(exc))
+        return redirect(url_for("domains_center"))
+    audit_log("domain-mapping-upsert", "domain_mapping", mapping["id"], {
+        "record_name": mapping.get("record_name"),
+        "record_type": mapping.get("record_type"),
+        "project_id": mapping.get("project_id"),
+    })
+    flash("Domain mapping saved. Cloudflare DNS was not changed.")
+    return redirect(url_for("domains_center"))
+
+
+@app.route("/approval-requests")
+@require_roles("owner", "admin")
+def approval_requests_page():
+    return render_template(
+        "approval_requests.html",
+        app_name=APP_NAME,
+        approval_requests=approval_request_rows(
+            status=request.args.get("status"),
+            project_id=request.args.get("project_id"),
+            request_type=request.args.get("request_type"),
+        ),
+        statuses=APPROVAL_REQUEST_STATUSES,
+        request_types=APPROVAL_REQUEST_TYPES,
+    )
+
+
+@app.route("/api/cloudflare/test-connection", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_cloudflare_test_connection():
+    payload = request.get_json(silent=True) or {}
+    key_info = get_active_cloudflare_api_key(payload.get("api_key_id"))
+    if not key_info.get("ok"):
+        return jsonify({"ok": False, "error": key_info.get("error"), "api_key": key_info.get("api_key")}), 400
+    result = cloudflare_request("GET", "/user/tokens/verify", key_info["token"])
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error"), "status_code": result.get("status_code"), "api_key": key_info["api_key"]}), 502
+    cf_result = (result.get("data") or {}).get("result") or {}
+    return jsonify({
+        "ok": True,
+        "api_key": key_info["api_key"],
+        "cloudflare": {
+            "id": cf_result.get("id"),
+            "status": cf_result.get("status"),
+        },
+        "message": "Cloudflare token verified",
+    })
+
+
+@app.route("/api/cloudflare/zones", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_cloudflare_zones():
+    key_info = get_active_cloudflare_api_key(request.args.get("api_key_id"))
+    if not key_info.get("ok"):
+        return jsonify({"ok": False, "error": key_info.get("error"), "api_key": key_info.get("api_key")}), 400
+    try:
+        per_page = min(100, max(1, int(request.args.get("per_page") or 50)))
+    except (TypeError, ValueError):
+        per_page = 50
+    result = cloudflare_request(
+        "GET",
+        "/zones",
+        key_info["token"],
+        query={
+            "name": request.args.get("name") or "",
+            "page": request.args.get("page") or 1,
+            "per_page": per_page,
+        },
+    )
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error"), "status_code": result.get("status_code"), "api_key": key_info["api_key"]}), 502
+    data = result.get("data") or {}
+    zones = [cloudflare_zone_public(item) for item in data.get("result") or []]
+    return jsonify({
+        "ok": True,
+        "api_key": key_info["api_key"],
+        "zones": zones,
+        "count": len(zones),
+        "result_info": data.get("result_info") or {},
+    })
+
+
+@app.route("/api/cloudflare/zones/<zone_id>/dns-records", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_cloudflare_dns_records(zone_id):
+    key_info = get_active_cloudflare_api_key(request.args.get("api_key_id"))
+    if not key_info.get("ok"):
+        return jsonify({"ok": False, "error": key_info.get("error"), "api_key": key_info.get("api_key")}), 400
+    try:
+        per_page = min(100, max(1, int(request.args.get("per_page") or 50)))
+    except (TypeError, ValueError):
+        per_page = 50
+    result = cloudflare_request(
+        "GET",
+        f"/zones/{urllib.parse.quote(zone_id, safe='')}/dns_records",
+        key_info["token"],
+        query={
+            "type": request.args.get("type") or "",
+            "name": request.args.get("name") or "",
+            "page": request.args.get("page") or 1,
+            "per_page": per_page,
+        },
+    )
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error"), "status_code": result.get("status_code"), "api_key": key_info["api_key"]}), 502
+    data = result.get("data") or {}
+    records = [cloudflare_dns_record_public(item) for item in data.get("result") or []]
+    return jsonify({
+        "ok": True,
+        "api_key": key_info["api_key"],
+        "zone_id": zone_id,
+        "records": records,
+        "count": len(records),
+        "result_info": data.get("result_info") or {},
+    })
+
+
+@app.route("/api/domains", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_domains():
+    result = fetch_domain_center_zones()
+    if not result.get("ok"):
+        return jsonify(result), 502
+    return jsonify(result)
+
+
+@app.route("/api/domains/<zone_id>/records", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_domain_records(zone_id):
+    result = fetch_domain_center_records(zone_id)
+    if not result.get("ok"):
+        return jsonify(result), 502
+    return jsonify(result)
+
+
+@app.route("/api/domain-preview/plan", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_domain_preview_plan():
+    payload = request.get_json(silent=True) or {}
+    project_id = payload.get("project_id")
+    base_domain = payload.get("base_domain")
+    environment = payload.get("environment") or "preview"
+    project_type = payload.get("project_type") or payload.get("purpose") or PREVIEW_DOMAIN_DEFAULT_PURPOSE
+    if not project_id:
+        return jsonify({"ok": False, "error": "project_id is required"}), 400
+    plan, status_code = build_preview_domain_plan(project_id, base_domain, environment, project_type)
+    return jsonify(plan), status_code
+
+
+@app.route("/api/domain-mappings", methods=["GET", "POST"])
+@require_api_roles("owner", "admin")
+def api_domain_mappings():
+    if request.method == "GET":
+        return jsonify({"ok": True, "mappings": domain_mapping_rows(project_id=request.args.get("project_id"))})
+    payload = request.get_json(silent=True) or {}
+    try:
+        mapping = upsert_domain_mapping(payload)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    audit_log("domain-mapping-upsert", "domain_mapping", mapping["id"], {
+        "record_name": mapping.get("record_name"),
+        "record_type": mapping.get("record_type"),
+        "project_id": mapping.get("project_id"),
+    })
+    return jsonify({"ok": True, "mapping": mapping, "message": "Domain mapping saved. Cloudflare DNS was not changed."})
+
+
+@app.route("/api/projects/<int:project_id>/domains", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_project_domains(project_id):
+    if not query_one("SELECT id FROM projects WHERE id=?", (project_id,)):
+        return jsonify({"ok": False, "error": "project not found"}), 404
+    return jsonify({"ok": True, "project_id": project_id, "domains": domain_mapping_rows(project_id=project_id)})
+
+
+@app.route("/api/approval-requests", methods=["GET", "POST"])
+@require_api_roles("owner", "admin")
+def api_approval_requests():
+    if request.method == "GET":
+        return jsonify({
+            "ok": True,
+            "approval_requests": approval_request_rows(
+                status=request.args.get("status"),
+                project_id=request.args.get("project_id"),
+                request_type=request.args.get("request_type"),
+            ),
+        })
+    payload = request.get_json(silent=True) or {}
+    try:
+        item = create_approval_request(payload)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({
+        "ok": True,
+        "approval_request": item,
+        "message": "Approval request created. No DNS, Telegram, or deployment action was executed.",
+    })
+
+
+@app.route("/api/approval-requests/<int:request_id>/send-telegram", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_approval_request_send_telegram(request_id):
+    payload = request.get_json(silent=True) or {}
+    row = approval_request_row(request_id)
+    if not row:
+        return jsonify({"ok": False, "error": "approval request not found"}), 404
+    if row.get("status") != "pending":
+        return jsonify({"ok": False, "error": "approval request is not pending", "status": row.get("status")}), 400
+    force = bool(payload.get("force"))
+    if row.get("telegram_message_id") and not force:
+        return jsonify({
+            "ok": False,
+            "error": "already_sent",
+            "message": "Telegram notification was already sent. Use force=true to resend.",
+            "status": row.get("status"),
+        }), 409
+    try:
+        if payload.get("mock") is True:
+            result = mock_send_telegram_approval(request_id, payload)
+            return jsonify(result)
+        result, status_code = send_telegram_approval_notification(request_id, with_buttons=bool(payload.get("with_buttons")))
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify(result), status_code
+
+
+@app.route("/api/telegram/webhook", methods=["POST"])
+def api_telegram_webhook():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not payload:
+        return jsonify({"ok": True, "ignored": True, "reason": "empty_payload"})
+    if "message" in payload:
+        return jsonify({"ok": True, "ignored": True, "reason": "message_ignored"})
+    if "edited_message" in payload:
+        return jsonify({"ok": True, "ignored": True, "reason": "edited_message_ignored"})
+    if "my_chat_member" in payload or "chat_member" in payload:
+        return jsonify({"ok": True, "ignored": True, "reason": "chat_member_ignored"})
+    callback_query = payload.get("callback_query")
+    if isinstance(callback_query, dict) and not callback_query.get("data"):
+        return jsonify({"ok": True, "ignored": True, "reason": "missing_callback_data"})
+    if not isinstance(callback_query, dict) and not (payload.get("callback_data") or payload.get("data")):
+        return jsonify({"ok": True, "ignored": True, "reason": "unsupported_update_type"})
+    try:
+        result, status_code = process_telegram_approval_callback(payload)
+    except ValueError as exc:
+        if str(exc) in {
+            "invalid callback_data",
+            "invalid approval request id",
+            "invalid approval action",
+            "missing nonce",
+            "missing telegram user",
+        }:
+            return jsonify({"ok": True, "ignored": True, "reason": "invalid_callback_data"})
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify(result), status_code
+
+
+@app.route("/api/telegram/test-message", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_telegram_test_message():
+    payload = request.get_json(silent=True) or {}
+    try:
+        allowed_user_id = int(payload.get("telegram_allowed_user_id") or 1)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid_telegram_allowed_user_id"}), 400
+    allowed = row_to_dict(query_one("SELECT * FROM telegram_allowed_users WHERE id=?", (allowed_user_id,)))
+    if not allowed:
+        return jsonify({"ok": False, "error": "telegram_allowed_user_not_found"}), 404
+    chat_id_masked = allowed.get("chat_id_masked") or ""
+    if str(allowed.get("is_active") if allowed.get("is_active") is not None else "1").strip().lower() in ("0", "false", "no", "off"):
+        return jsonify({
+            "ok": False,
+            "error": "telegram_allowed_user_inactive",
+            "telegram_allowed_user_id": allowed_user_id,
+            "chat_id_masked": chat_id_masked,
+        }), 403
+    if allowed.get("role") not in APPROVAL_ALLOWED_ROLES:
+        return jsonify({
+            "ok": False,
+            "error": "telegram_allowed_user_role_not_allowed",
+            "telegram_allowed_user_id": allowed_user_id,
+            "chat_id_masked": chat_id_masked,
+        }), 403
+    try:
+        chat_id = decrypt_telegram_chat_id(allowed)
+    except Exception:
+        return jsonify({
+            "ok": False,
+            "error": "telegram_chat_id_decrypt_failed",
+            "telegram_allowed_user_id": allowed_user_id,
+            "chat_id_masked": chat_id_masked,
+        }), 400
+    if not chat_id:
+        return jsonify({
+            "ok": False,
+            "error": "telegram_chat_id_not_configured",
+            "telegram_allowed_user_id": allowed_user_id,
+            "chat_id_masked": chat_id_masked,
+        }), 400
+    result = telegram_send_message(chat_id, "DevPilot Telegram approval test.")
+    if not result.get("ok"):
+        return jsonify({
+            "ok": False,
+            "error": result.get("error") or "telegram_send_failed",
+            "status_code": result.get("status_code"),
+            "message": result.get("message") or "Telegram send failed.",
+            "telegram_allowed_user_id": allowed_user_id,
+            "chat_id_masked": result.get("chat_id_masked") or chat_id_masked or mask_chat_id(chat_id),
+        }), 502
+    return jsonify({
+        "ok": True,
+        "telegram_allowed_user_id": allowed_user_id,
+        "chat_id_masked": result.get("chat_id_masked") or chat_id_masked or mask_chat_id(chat_id),
+        "message": "Telegram test message sent.",
+    })
 
 
 @app.route("/computers", methods=["GET", "POST"])
@@ -9371,6 +11269,7 @@ def project_detail(project_id):
     project_heartbeats = heartbeat_query(project_id=project_id)
     flow_messages = recent_flow_messages(limit=20, project_id=project_id)
     flow_runs = flow_run_rows(project_id=project_id, limit=10)
+    project_domains = domain_mapping_rows(project_id=project_id)
     computer_options = get_computer_options()
     docker_svc_rows = query_all(
         """SELECT ds.*, dt.name AS target_name
@@ -9414,6 +11313,7 @@ def project_detail(project_id):
         project_heartbeats=project_heartbeats,
         flow_messages=flow_messages,
         flow_runs=flow_runs,
+        project_domains=project_domains,
         show_hidden=show_hidden,
         computer_options=computer_options,
         api_token=API_TOKEN,
@@ -10173,6 +12073,12 @@ def api_ai_costs():
 @require_api_token
 def api_ai_provider_health():
     return jsonify(ai_provider_health_status())
+
+
+@app.route("/api/ai-console/run", methods=["POST"])
+@require_api_token
+def api_ai_console_run():
+    return jsonify(run_ai_console_website_mvp())
 
 
 @app.route("/api/ai/messages", methods=["GET"])

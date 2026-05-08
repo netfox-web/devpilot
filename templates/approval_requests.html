@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">Approval Requests</h1>
+    <div class="text-muted small">High-risk action approvals. This MVP only changes approval status; it does not write DNS or deploy.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/domains">Domain Center</a>
+    <a class="btn btn-outline-secondary" href="/projects">Projects</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form class="row g-2 align-items-end" method="get" action="/approval-requests">
+      <div class="col-md-3">
+        <label class="form-label small">Status</label>
+        <select class="form-select" name="status">
+          <option value="">All</option>
+          {% for status in statuses %}
+            <option value="{{ status }}" {% if request.args.get('status') == status %}selected{% endif %}>{{ status }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Request Type</label>
+        <select class="form-select" name="request_type">
+          <option value="">All</option>
+          {% for item in request_types %}
+            <option value="{{ item }}" {% if request.args.get('request_type') == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Project ID</label>
+        <input class="form-control" name="project_id" value="{{ request.args.get('project_id', '') }}" placeholder="18">
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-primary w-100">Filter</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>Requests</span>
+    <span class="badge text-bg-light">{{ approval_requests|length }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Project</th>
+          <th>Title</th>
+          <th>Status</th>
+          <th>Summary</th>
+          <th>Payload</th>
+          <th>Telegram Mock</th>
+          <th>Created / Updated</th>
+          <th>Approved / Rejected</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in approval_requests %}
+          {% set record = item.payload.dns_record if item.payload and item.payload.dns_record else {} %}
+          <tr>
+            <td><code>#{{ item.id }}</code></td>
+            <td><span class="badge text-bg-secondary">{{ item.request_type }}</span></td>
+            <td>
+              {% if item.project_id %}
+                <a href="/projects/{{ item.project_id }}">#{{ item.project_id }}</a>
+                <div class="small text-muted">{{ item.project_name or '' }}</div>
+              {% else %}
+                <span class="text-muted">-</span>
+              {% endif %}
+            </td>
+            <td class="small" style="min-width: 14rem;">{{ item.title or '-' }}</td>
+            <td>
+              {% set status_class = 'success' if item.status == 'approved' else ('danger' if item.status == 'rejected' else ('warning' if item.status == 'pending' else 'secondary')) %}
+              <span class="badge text-bg-{{ status_class }}">{{ item.status or '-' }}</span>
+            </td>
+            <td class="small" style="min-width: 16rem;">{{ item.summary or '-' }}</td>
+            <td class="small" style="min-width: 20rem;">
+              {% if record %}
+                <div><b>{{ record.type }}</b> <code>{{ record.name }}</code></div>
+                <div><code>{{ record.content }}</code> / proxied={{ record.proxied }} / ttl={{ record.ttl }}</div>
+              {% else %}
+                <code>{{ item.payload_json }}</code>
+              {% endif %}
+            </td>
+            <td class="small">
+              <div>{{ item.telegram_message_id or '-' }}</div>
+              {% if item.telegram_chat_id_masked %}
+                <div class="text-muted">chat {{ item.telegram_chat_id_masked }}</div>
+              {% endif %}
+            </td>
+            <td class="small text-muted">
+              <div>{{ item.created_at or '-' }}</div>
+              <div>{{ item.updated_at or '-' }}</div>
+            </td>
+            <td class="small text-muted">
+              <div>{{ item.approved_at or '-' }}</div>
+              <div>{{ item.rejected_at or '-' }}</div>
+            </td>
+            <td>
+              {% if item.status == 'pending' %}
+                <button class="btn btn-sm btn-outline-primary" data-send-telegram="{{ item.id }}">Mock Send</button>
+              {% else %}
+                <span class="small text-muted">processed</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="11" class="text-center text-muted py-4">No approval requests.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(() => {
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-send-telegram]");
+    if (!button) return;
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = "Sending...";
+    try {
+      const response = await fetch(`/api/approval-requests/${button.dataset.sendTelegram}/send-telegram`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({telegram_chat_id: "mock-chat"})
+      });
+      const payload = await response.json();
+      if (!payload.ok) {
+        button.textContent = payload.error || "Failed";
+        button.classList.remove("btn-outline-primary");
+        button.classList.add("btn-outline-danger");
+        return;
+      }
+      button.textContent = "Mock sent";
+      button.classList.remove("btn-outline-primary");
+      button.classList.add("btn-outline-success");
+    } catch (error) {
+      button.textContent = "Failed";
+      button.classList.remove("btn-outline-primary");
+      button.classList.add("btn-outline-danger");
+    } finally {
+      setTimeout(() => {
+        button.disabled = false;
+        if (button.textContent === "Sending...") button.textContent = original;
+      }, 1200);
+    }
+  });
+})();
+</script>
+{% endblock %}

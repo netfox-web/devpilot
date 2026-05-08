@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">Domain Center / 網域管理中心</h1>
+    <div class="text-muted small">Read-only Cloudflare zone and DNS overview. DNS changes are not available in this MVP.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/cloudflare">Cloudflare</a>
+    <a class="btn btn-outline-secondary" href="/api-keys">API Keys</a>
+  </div>
+</div>
+
+{% if not domain_data.ok %}
+  <div class="alert alert-warning">
+    <div class="fw-bold">Domain Center is not available</div>
+    <div class="small">{{ domain_data.error or "Cloudflare read-only data could not be loaded." }}</div>
+  </div>
+{% else %}
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="text-muted small">Zones</div>
+          <div class="display-6">{{ domain_data.count }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="text-muted small">NAS IP</div>
+          <div class="h5 mb-0">{{ nas_ip }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="text-muted small">Read Mode</div>
+          <div class="h5 mb-0">Read-only</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="text-muted small">DNS Write API</div>
+          <div class="h5 mb-0 text-success">Disabled</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+      <span>Preview Domain Plan</span>
+      <span class="badge text-bg-warning">plan only</span>
+    </div>
+    <div class="card-body">
+      <form id="preview-domain-plan-form" class="row g-2 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label small">Project</label>
+          <select class="form-select" name="project_id" required>
+            <option value="">Select project</option>
+            {% for project_option in projects %}
+              <option value="{{ project_option.id }}">{{ project_option.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small">Purpose</label>
+          <select class="form-select" name="project_type" id="preview-domain-plan-purpose">
+            {% for purpose in preview_domain_purposes %}
+              <option value="{{ purpose }}" data-domain="{{ preview_domain_base_domains.get(purpose, '') }}" {% if purpose == preview_domain_default_purpose %}selected{% endif %}>{{ purpose }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small">Base domain</label>
+          <select class="form-select" name="base_domain" id="preview-domain-plan-base-domain" required>
+            {% for zone in domain_data.zones %}
+              <option value="{{ zone.name }}">{{ zone.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small">Environment</label>
+          <select class="form-select" name="environment">
+            <option value="preview">preview</option>
+            <option value="staging">staging</option>
+          </select>
+        </div>
+        <div class="col-md-12 col-lg-3">
+          <button class="btn btn-primary w-100" type="submit">Generate Plan</button>
+        </div>
+      </form>
+      <div id="preview-domain-plan-result" class="mt-3 small text-muted">
+        No preview DNS plan generated yet. This does not change Cloudflare DNS.
+      </div>
+    </div>
+  </div>
+
+  {% for zone in domain_data.zones %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+          <div class="fw-bold">{{ zone.name }}</div>
+          <div class="small text-muted">Zone ID: {{ zone.id_masked }}{% if zone.account_name %} · {{ zone.account_name }}{% endif %}</div>
+        </div>
+        <div class="text-end">
+          <span class="badge text-bg-{{ 'success' if zone.status == 'active' else 'secondary' }}">{{ zone.status or "-" }}</span>
+          {% if zone.checklist.all_core_checks_passed %}
+            <span class="badge text-bg-success">上線檢查通過</span>
+          {% else %}
+            <span class="badge text-bg-warning">需要確認</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="row g-2 mb-3">
+          <div class="col-md-2">
+            <div class="border rounded p-2 h-100">
+              <div class="small text-muted">Records</div>
+              <div class="h5 mb-0">{{ zone.records_count }}</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="border rounded p-2 h-100">
+              <div class="small text-muted">Root A</div>
+              <div class="{{ 'text-success' if zone.checklist.root_a_points_to_nas else 'text-warning' }}">
+                {{ "OK" if zone.checklist.root_a_points_to_nas else ("Exists" if zone.checklist.root_a_exists else "Missing") }}
+              </div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="border rounded p-2 h-100">
+              <div class="small text-muted">www CNAME</div>
+              <div class="{{ 'text-success' if zone.checklist.www_cname_exists else 'text-warning' }}">{{ "OK" if zone.checklist.www_cname_exists else "Missing" }}</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="border rounded p-2 h-100">
+              <div class="small text-muted">A Records</div>
+              <div>{{ "Yes" if zone.checklist.has_a_record else "No" }}</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="border rounded p-2 h-100">
+              <div class="small text-muted">CNAME Records</div>
+              <div>{{ "Yes" if zone.checklist.has_cname_record else "No" }}</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="border rounded p-2 h-100">
+              <div class="small text-muted">Proxy On</div>
+              <div>{{ zone.checklist.proxied_record_count }}</div>
+            </div>
+          </div>
+        </div>
+
+        {% if zone.records_error %}
+          <div class="alert alert-warning small">{{ zone.records_error }}</div>
+        {% else %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Name</th>
+                  <th>Content</th>
+                  <th>Proxy</th>
+                  <th>NAS IP</th>
+                  <th>TTL</th>
+                  <th>Project</th>
+                  <th>Bind</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for record in zone.records %}
+                  <tr>
+                    <td><span class="badge text-bg-light">{{ record.type }}</span></td>
+                    <td class="fw-semibold">{{ record.name }}</td>
+                    <td><code>{{ record.content }}</code></td>
+                    <td>
+                      {% if record.proxied %}
+                        <span class="badge text-bg-warning">proxied</span>
+                      {% else %}
+                        <span class="text-muted small">dns only</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if record.points_to_nas %}
+                        <span class="badge text-bg-success">{{ nas_ip }}</span>
+                      {% else %}
+                        <span class="text-muted small">-</span>
+                      {% endif %}
+                    </td>
+                    <td>{{ record.ttl }}</td>
+                    <td style="min-width: 12rem;">
+                      {% if record.project_bindings %}
+                        {% for binding in record.project_bindings %}
+                          <div class="small">
+                            <a href="/projects/{{ binding.project_id }}">{{ binding.project_name }}</a>
+                            <span class="text-muted">({{ binding.environment or binding.endpoint_type or binding.source }})</span>
+                          </div>
+                          {% if binding.status %}
+                            <div class="small text-muted">status: {{ binding.status }}</div>
+                          {% endif %}
+                          {% if binding.preview_url %}
+                            <div class="small text-break"><a href="{{ binding.preview_url }}" target="_blank" rel="noreferrer">{{ binding.preview_url }}</a></div>
+                          {% endif %}
+                        {% endfor %}
+                      {% else %}
+                        <span class="text-muted small">尚未綁定 project</span>
+                      {% endif %}
+                    </td>
+                    <td style="min-width: 26rem;">
+                      <form class="row g-1 align-items-end" method="post" action="/domains/bind">
+                        <input type="hidden" name="zone_name" value="{{ zone.name }}">
+                        <input type="hidden" name="zone_id_masked" value="{{ zone.id_masked }}">
+                        <input type="hidden" name="record_name" value="{{ record.name }}">
+                        <input type="hidden" name="record_type" value="{{ record.type }}">
+                        <input type="hidden" name="record_content" value="{{ record.content }}">
+                        <div class="col-5">
+                          <label class="form-label small mb-1">Project</label>
+                          <select class="form-select form-select-sm" name="project_id" required>
+                            <option value="">Select project</option>
+                            {% for project_option in projects %}
+                              <option value="{{ project_option.id }}">{{ project_option.name }}</option>
+                            {% endfor %}
+                          </select>
+                        </div>
+                        <div class="col-3">
+                          <label class="form-label small mb-1">Env</label>
+                          <select class="form-select form-select-sm" name="environment">
+                            {% for env in domain_mapping_environments %}
+                              <option value="{{ env }}">{{ env }}</option>
+                            {% endfor %}
+                          </select>
+                        </div>
+                        <div class="col-4">
+                          <label class="form-label small mb-1">Preview URL</label>
+                          <input class="form-control form-control-sm" name="preview_url" placeholder="https://...">
+                        </div>
+                        <div class="col-9">
+                          <input class="form-control form-control-sm" name="notes" placeholder="notes">
+                        </div>
+                        <div class="col-3">
+                          <button class="btn btn-sm btn-outline-primary w-100">Bind</button>
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="8" class="text-muted py-3">No DNS records returned.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="alert alert-secondary">No Cloudflare zones returned.</div>
+  {% endfor %}
+{% endif %}
+<script>
+(() => {
+  const form = document.getElementById("preview-domain-plan-form");
+  const resultBox = document.getElementById("preview-domain-plan-result");
+  const purposeSelect = document.getElementById("preview-domain-plan-purpose");
+  const baseDomainSelect = document.getElementById("preview-domain-plan-base-domain");
+  if (!form || !resultBox) return;
+  let latestPreviewPlan = null;
+
+  const escapeHtml = (value) => String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+  const syncBaseDomain = () => {
+    if (!purposeSelect || !baseDomainSelect) return;
+    const selected = purposeSelect.options[purposeSelect.selectedIndex];
+    const domain = selected ? selected.dataset.domain : "";
+    if (!domain) return;
+    const option = Array.from(baseDomainSelect.options).find((item) => item.value === domain);
+    if (option) baseDomainSelect.value = domain;
+  };
+  if (purposeSelect) {
+    purposeSelect.addEventListener("change", syncBaseDomain);
+    syncBaseDomain();
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    resultBox.innerHTML = '<div class="alert alert-info mb-0">Generating read-only DNS plan...</div>';
+    try {
+      const response = await fetch("/api/domain-preview/plan", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          project_id: data.get("project_id"),
+          project_type: data.get("project_type"),
+          base_domain: data.get("base_domain"),
+          environment: data.get("environment")
+        })
+      });
+      const payload = await response.json();
+      if (!payload.ok) {
+        latestPreviewPlan = null;
+        resultBox.innerHTML = `<div class="alert alert-warning mb-0">${escapeHtml(payload.error || "preview plan failed")}</div>`;
+        return;
+      }
+      latestPreviewPlan = payload;
+      const record = payload.dns_record || {};
+      const warnings = (payload.warnings || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+      resultBox.innerHTML = `
+        <div class="border rounded p-3">
+          <div class="d-flex gap-2 flex-wrap mb-2">
+            <span class="badge text-bg-secondary">action: ${escapeHtml(payload.action)}</span>
+            <span class="badge text-bg-warning">requires approval: ${payload.requires_approval ? "yes" : "no"}</span>
+            <span class="badge text-bg-${payload.record_exists ? "danger" : "success"}">record exists: ${payload.record_exists ? "yes" : "no"}</span>
+          </div>
+          <div><b>Type:</b> ${escapeHtml(record.type)}</div>
+          <div><b>Name:</b> <code>${escapeHtml(record.name)}</code></div>
+          <div><b>Content:</b> <code>${escapeHtml(record.content)}</code></div>
+          <div><b>Proxy:</b> ${record.proxied ? "proxied" : "dns only"} / <b>TTL:</b> ${escapeHtml(record.ttl)}</div>
+          ${warnings ? `<ul class="text-warning mt-2 mb-0">${warnings}</ul>` : ""}
+          <div class="d-flex gap-2 align-items-center mt-3">
+            <button class="btn btn-sm btn-outline-primary" type="button" data-create-approval-request>Create Approval Request</button>
+            <span class="text-muted">No DNS write was performed.</span>
+          </div>
+        </div>`;
+    } catch (error) {
+      latestPreviewPlan = null;
+      resultBox.innerHTML = '<div class="alert alert-danger mb-0">Preview plan request failed.</div>';
+    }
+  });
+
+  resultBox.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-create-approval-request]");
+    if (!button || !latestPreviewPlan) return;
+    const record = latestPreviewPlan.dns_record || {};
+    button.disabled = true;
+    button.textContent = "Creating...";
+    try {
+      const response = await fetch("/api/approval-requests", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          request_type: "dns_preview_create",
+          project_id: latestPreviewPlan.project && latestPreviewPlan.project.id,
+          title: `Approve preview DNS: ${record.name || ""}`,
+          summary: `${record.type || "A"} ${record.name || ""} -> ${record.content || ""} (plan only)`,
+          payload: {dns_record: record},
+          notes: "Created from Domain Center preview DNS plan"
+        })
+      });
+      const payload = await response.json();
+      if (!payload.ok) {
+        button.textContent = payload.error || "Create failed";
+        button.classList.remove("btn-outline-primary");
+        button.classList.add("btn-outline-danger");
+        return;
+      }
+      const item = payload.approval_request || {};
+      button.textContent = `Approval #${item.id || ""} created`;
+      button.classList.remove("btn-outline-primary");
+      button.classList.add("btn-outline-success");
+    } catch (error) {
+      button.textContent = "Create failed";
+      button.classList.remove("btn-outline-primary");
+      button.classList.add("btn-outline-danger");
+    }
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">Cloudflare Settings</h1>
+    <div class="text-muted small">Tokens are encrypted in the API Key Center and shown as masked values only.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/api-keys">API Keys</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Save Cloudflare Token</div>
+      <div class="card-body">
+        <form method="post" action="/cloudflare">
+          <label class="form-label">Name</label>
+          <input class="form-control mb-2" name="name" value="Cloudflare API Token" required>
+
+          <label class="form-label">Token value</label>
+          <input class="form-control mb-2" name="token_value" type="password" autocomplete="off" required>
+
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Environment</label>
+              <select class="form-select mb-2" name="environment">
+                {% for environment in environments %}
+                  <option value="{{ environment }}">{{ environment }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Version</label>
+              <input class="form-control mb-2" name="version" value="v1">
+            </div>
+          </div>
+
+          <label class="form-label">Rotation days</label>
+          <input class="form-control mb-2" name="rotation_days" type="number" min="1" value="90">
+
+          <label class="form-label">Notes</label>
+          <textarea class="form-control mb-3" name="notes" rows="2" placeholder="DNS zone read/edit token"></textarea>
+
+          <button class="btn btn-primary w-100">Encrypt and save</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-8">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>Cloudflare Tokens</span>
+        <button class="btn btn-sm btn-outline-primary" id="loadZonesBtn" type="button">Load zones</button>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Env</th>
+              <th>Masked</th>
+              <th>Status</th>
+              <th>Updated</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for token in tokens %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ token.name }}</div>
+                  <div class="small text-muted">#{{ token.id }} {{ token.version }}</div>
+                </td>
+                <td><span class="badge text-bg-{{ 'danger' if token.environment == 'production' else 'secondary' }}">{{ token.environment }}</span></td>
+                <td><code>{{ token.display_mask }}</code></td>
+                <td><span class="badge text-bg-{{ 'success' if token.status == 'active' else 'secondary' }}">{{ token.status }}</span></td>
+                <td class="small">{{ token.updated_at or token.created_at }}</td>
+                <td class="text-end">
+                  {% if token.status == 'active' %}
+                    <button class="btn btn-sm btn-outline-success js-test-token" data-key-id="{{ token.id }}" type="button">Test</button>
+                    <button class="btn btn-sm btn-outline-primary js-load-zones" data-key-id="{{ token.id }}" type="button">Zones</button>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-center text-muted py-4">No Cloudflare token yet</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Zones</div>
+      <div class="card-body">
+        <div id="cloudflareStatus" class="alert alert-secondary small mb-3">Ready.</div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead><tr><th>Name</th><th>Status</th><th>Account</th><th>Zone ID</th><th></th></tr></thead>
+            <tbody id="zonesBody">
+              <tr><td colspan="5" class="text-muted">Load zones to begin.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">DNS Records</div>
+      <div class="card-body">
+        <form id="dnsRecordsForm" class="mb-3">
+          <label class="form-label">Zone ID</label>
+          <input class="form-control mb-2" name="zone_id" id="dnsZoneId" required>
+
+          <div class="row g-2">
+            <div class="col-md-5">
+              <label class="form-label">Type</label>
+              <select class="form-select mb-2" name="type">
+                <option value="">Any</option>
+                {% for type in dns_types %}
+                  <option value="{{ type }}">{{ type }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-7">
+              <label class="form-label">Name filter</label>
+              <input class="form-control mb-2" name="name" placeholder="www.example.com">
+            </div>
+          </div>
+
+          <button class="btn btn-primary w-100" type="submit">Load DNS records</button>
+        </form>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead><tr><th>Type</th><th>Name</th><th>Content</th><th>Proxy</th></tr></thead>
+            <tbody id="dnsRecordsBody">
+              <tr><td colspan="4" class="text-muted">Select a zone and load DNS records.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const statusBox = document.getElementById("cloudflareStatus");
+const zonesBody = document.getElementById("zonesBody");
+const dnsRecordsBody = document.getElementById("dnsRecordsBody");
+let selectedApiKeyId = null;
+
+function setStatus(message, type = "secondary") {
+  statusBox.className = `alert alert-${type} small mb-3`;
+  statusBox.textContent = message;
+}
+
+function optionKeyId(id) {
+  return id ? `?api_key_id=${encodeURIComponent(id)}` : "";
+}
+
+async function readJson(response) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.error || payload.message || `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+async function testToken(apiKeyId) {
+  selectedApiKeyId = apiKeyId || selectedApiKeyId;
+  setStatus("Testing Cloudflare token...", "secondary");
+  const payload = await fetch("/api/cloudflare/test-connection", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({api_key_id: apiKeyId})
+  }).then(readJson);
+  setStatus(`Token verified: ${payload.api_key.masked} (${payload.cloudflare.status || "ok"})`, "success");
+}
+
+async function loadZones(apiKeyId) {
+  selectedApiKeyId = apiKeyId || selectedApiKeyId;
+  setStatus("Loading zones...", "secondary");
+  const payload = await fetch(`/api/cloudflare/zones${optionKeyId(apiKeyId)}`).then(readJson);
+  zonesBody.innerHTML = "";
+  if (!payload.zones.length) {
+    zonesBody.innerHTML = '<tr><td colspan="5" class="text-muted">No zones returned.</td></tr>';
+  }
+  for (const zone of payload.zones) {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td class="fw-semibold"></td>
+      <td></td>
+      <td class="small text-muted"></td>
+      <td><code></code></td>
+      <td class="text-end"><button class="btn btn-sm btn-outline-primary" type="button">Use</button></td>
+    `;
+    row.children[0].textContent = zone.name || "";
+    row.children[1].innerHTML = `<span class="badge text-bg-${zone.status === "active" ? "success" : "secondary"}">${zone.status || "-"}</span>`;
+    row.children[2].textContent = zone.account_name || "";
+    row.children[3].querySelector("code").textContent = zone.id || "";
+    row.children[4].querySelector("button").addEventListener("click", () => {
+      document.getElementById("dnsZoneId").value = zone.id || "";
+      setStatus(`Selected zone ${zone.name}`, "info");
+    });
+    zonesBody.appendChild(row);
+  }
+  setStatus(`Loaded ${payload.zones.length} zone(s).`, "success");
+}
+
+document.querySelectorAll(".js-test-token").forEach((button) => {
+  button.addEventListener("click", () => testToken(button.dataset.keyId).catch((error) => setStatus(error.message, "danger")));
+});
+document.querySelectorAll(".js-load-zones").forEach((button) => {
+  button.addEventListener("click", () => loadZones(button.dataset.keyId).catch((error) => setStatus(error.message, "danger")));
+});
+document.getElementById("loadZonesBtn").addEventListener("click", () => {
+  loadZones(selectedApiKeyId).catch((error) => setStatus(error.message, "danger"));
+});
+
+async function loadDnsRecords(form) {
+  const formData = new FormData(form);
+  const zoneId = formData.get("zone_id");
+  if (!zoneId) {
+    throw new Error("zone_id is required");
+  }
+  const params = new URLSearchParams();
+  if (selectedApiKeyId) params.set("api_key_id", selectedApiKeyId);
+  if (formData.get("type")) params.set("type", formData.get("type"));
+  if (formData.get("name")) params.set("name", formData.get("name"));
+  setStatus("Loading DNS records...", "secondary");
+  const payload = await fetch(`/api/cloudflare/zones/${encodeURIComponent(zoneId)}/dns-records?${params.toString()}`).then(readJson);
+  dnsRecordsBody.innerHTML = "";
+  if (!payload.records.length) {
+    dnsRecordsBody.innerHTML = '<tr><td colspan="4" class="text-muted">No DNS records returned.</td></tr>';
+  }
+  for (const record of payload.records) {
+    const row = document.createElement("tr");
+    row.innerHTML = "<td></td><td></td><td></td><td></td>";
+    row.children[0].textContent = record.type || "";
+    row.children[1].textContent = record.name || "";
+    row.children[2].textContent = record.content || "";
+    row.children[3].innerHTML = record.proxied ? '<span class="badge text-bg-warning">proxied</span>' : '<span class="text-muted small">dns only</span>';
+    dnsRecordsBody.appendChild(row);
+  }
+  setStatus(`Loaded ${payload.records.length} DNS record(s).`, "success");
+}
+
+document.getElementById("dnsRecordsForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await loadDnsRecords(event.currentTarget);
+  } catch (error) {
+    setStatus(error.message, "danger");
+  }
+});
+</script>
+{% endblock %}
