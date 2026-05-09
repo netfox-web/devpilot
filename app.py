@@ -4713,6 +4713,210 @@ def release_dashboard_context():
     }
 
 
+def production_release_note_completed_phases():
+    return [
+        {
+            "phase": "Phase 48",
+            "title": "Release & Backup Dashboard",
+            "status": "complete",
+            "summary": "Read-only release identity, backup inventory, DB safety snapshot, DNS audit, and approval status dashboard.",
+        },
+        {
+            "phase": "Phase 48FUP",
+            "title": "Backup Mount Visibility Fix",
+            "status": "complete",
+            "summary": "Mounted production backup directory read-only for dashboard visibility.",
+        },
+        {
+            "phase": "Phase 49",
+            "title": "Operations Command Center",
+            "status": "complete",
+            "summary": "Home page now summarizes production domain, release, approvals, DNS safety, Shopee AI health, backups, and audit rows.",
+        },
+        {
+            "phase": "Phase 50",
+            "title": "Shopee AI Management Card",
+            "status": "complete",
+            "summary": "Added read-only production and staging health plus domain readiness context for Shopee AI.",
+        },
+        {
+            "phase": "Phase 51",
+            "title": "Domain Readiness Dashboard",
+            "status": "complete",
+            "summary": "Centralized DNS, HTTP, HTTPS, TLS, backend, and reverse proxy readiness status.",
+        },
+        {
+            "phase": "Phase 52",
+            "title": "Domain Action Plan Board",
+            "status": "complete",
+            "summary": "Grouped domain next steps into ready, certificate, upstream, DNS future-create, and high-risk planning lanes.",
+        },
+        {
+            "phase": "Phase 53",
+            "title": "Action Plan Export and Manual Checklist",
+            "status": "complete",
+            "summary": "Added read-only CSV export and static manual checklist for domain action planning.",
+        },
+        {
+            "phase": "Phase 54",
+            "title": "Manual Operations Checklist Center",
+            "status": "complete",
+            "summary": "Added static read-only checklist groups for DNS, NAS, SSL, release, rollback, and sensitive-value safety.",
+        },
+        {
+            "phase": "Phase 55",
+            "title": "Operations Runbook Center",
+            "status": "complete",
+            "summary": "Added read-only runbooks for high-risk manual operations and CSV export.",
+        },
+        {
+            "phase": "Phase 56",
+            "title": "Final Admin UI Polish",
+            "status": "complete",
+            "summary": "Grouped navigation, added consistent safety badges, and clarified read-only dashboard boundaries.",
+        },
+        {
+            "phase": "Phase 57",
+            "title": "Final Production Admin QA Pass",
+            "status": "complete",
+            "summary": "Verified production domain, authenticated pages, read-only APIs, navigation, labels, DB counts, and logs.",
+        },
+        {
+            "phase": "Phase 58",
+            "title": "Legacy Control Warning Labels",
+            "status": "complete",
+            "summary": "Added legacy-control warnings and redacted credential-like examples from rendered admin pages.",
+        },
+    ]
+
+
+def production_release_note_context():
+    release = release_dashboard_context()
+    db_snapshot = release.get("db", {})
+    cloudflare_flag = release.get("safety", {}).get("cloudflare_dns_write", {})
+    mock_flag = release.get("safety", {}).get("mock_dns_execution", {})
+    return {
+        "rendered_at": now_str(),
+        "identity": {
+            "domain": RELEASE_DASHBOARD_DOMAIN,
+            "container": RELEASE_DASHBOARD_CONTAINER,
+            "port": RELEASE_DASHBOARD_PORT,
+            "app_sha256": release.get("identity", {}).get("app_sha256"),
+            "git": release.get("identity", {}).get("git", {}),
+        },
+        "completed_phases": production_release_note_completed_phases(),
+        "acceptance": [
+            {"label": "Production domain", "status": "OK", "detail": "Official domain reaches DevPilot login flow."},
+            {"label": "Login page", "status": "OK", "detail": "Login route returns normally over HTTPS."},
+            {"label": "Main pages", "status": "OK", "detail": "Core, safety, and operations pages render without server errors."},
+            {"label": "Read-only APIs", "status": "OK", "detail": "CSV/report and status APIs respond without data mutation."},
+            {"label": "Runtime logs", "status": "OK", "detail": "No traceback, server error, DNS write, Telegram send, or deploy marker in final QA."},
+            {"label": "Strict scanner", "status": "PASS", "detail": "Rendered pages avoid credential-like examples and internal sensitive field names."},
+            {"label": "DB counts", "status": "UNCHANGED", "detail": "QA and report pages do not change approval, deployment, domain, or DNS audit counts."},
+        ],
+        "safety_chain": [
+            {"label": "DNS prepare", "state": "dry-run only", "ok": True},
+            {"label": "DNS preflight", "state": "read-only", "ok": True},
+            {"label": "Second confirmation", "state": "dry-run only", "ok": True},
+            {"label": "Execute endpoint", "state": "disabled", "ok": True},
+            {"label": "Mock execution", "state": "disabled by default", "ok": True},
+            {"label": CLOUDFLARE_DNS_WRITE_FEATURE_FLAG, "state": "disabled" if not cloudflare_flag.get("effective_enabled") else "flag true but write still unavailable", "ok": not bool(cloudflare_flag.get("dns_write_enabled"))},
+            {"label": MOCK_DNS_EXECUTION_FEATURE_FLAG, "state": "disabled" if not mock_flag.get("effective_enabled") else "flag true", "ok": not bool(mock_flag.get("effective_enabled"))},
+            {"label": "Audit trail", "state": "enabled for blocked execution attempts", "ok": True},
+            {"label": "Real DNS write", "state": "not enabled", "ok": True},
+        ],
+        "db": {
+            "approval_requests_total": db_snapshot.get("approval_requests_total", 0),
+            "approval_pending": db_snapshot.get("approval_pending", 0),
+            "approval_approved": db_snapshot.get("approval_approved", 0),
+            "approval_rejected": db_snapshot.get("approval_rejected", 0),
+            "deployment_jobs": db_snapshot.get("deployment_jobs", 0),
+            "domain_mappings": db_snapshot.get("domain_mappings", 0),
+            "dns_execution_attempts": db_snapshot.get("dns_execution_attempts", 0),
+            "credential_records": db_snapshot.get("api_keys", 0),
+        },
+        "dashboards": [
+            {"label": "Operations Command Center", "href": "/", "summary": "Production status and key operations overview."},
+            {"label": "Release Dashboard", "href": "/release-dashboard", "summary": "Release identity, backups, DB counts, and audit snapshots."},
+            {"label": "Domain Readiness", "href": "/domain-readiness", "summary": "DNS, HTTP, HTTPS, TLS, backend, and readiness status."},
+            {"label": "Domain Action Plan", "href": "/domain-action-plan", "summary": "Read-only domain next-step board and CSV export."},
+            {"label": "Manual Checklist", "href": "/manual-operations-checklist", "summary": "Static manual checklist center."},
+            {"label": "Runbooks", "href": "/operations-runbook", "summary": "Static operations runbook library."},
+        ],
+        "known_limitations": [
+            "Real Cloudflare DNS write is still not enabled.",
+            "NAS reverse proxy and SSL changes remain manual outside this app.",
+            "Legacy operational pages still exist, but they are visually labeled and separated from read-only dashboards.",
+            "Rollback is planned manually; there is no automatic rollback path.",
+            "Backup restore is not available from the UI.",
+            "Safety dashboards do not execute deployment actions.",
+        ],
+        "next_phases": [
+            {"phase": "Phase 60", "title": "Release Freeze / Version Label", "summary": "Add a read-only version label such as DevPilot Admin Safety Release 2026-05-09."},
+            {"phase": "Phase 61", "title": "Release History Export", "summary": "Export release state and dashboard inventory as a static report."},
+            {"phase": "Phase 62", "title": "Production Monitoring Summary", "summary": "Add read-only runtime health and log summary cards."},
+            {"phase": "Phase 63", "title": "Role / Permission Review", "summary": "Review owner/admin/viewer boundaries for existing legacy pages."},
+        ],
+    }
+
+
+def production_release_note_markdown(context=None):
+    note = context or production_release_note_context()
+    git = note.get("identity", {}).get("git", {})
+    lines = [
+        "# Production Release Note / Admin QA Report",
+        "",
+        "## Release Identity",
+        f"- Generated: {note.get('rendered_at')}",
+        f"- Domain: {note.get('identity', {}).get('domain')}",
+        f"- Container: {note.get('identity', {}).get('container')}",
+        f"- Port: {note.get('identity', {}).get('port')}",
+        f"- app.py SHA256: {note.get('identity', {}).get('app_sha256') or 'unavailable'}",
+        f"- Git commit: {git.get('short') or 'unavailable'}",
+        "",
+        "## Completed Phases",
+    ]
+    for item in note.get("completed_phases", []):
+        lines.append(f"- {item['phase']} - {item['title']}: {item['status']}")
+    lines.extend(["", "## Production Acceptance Status"])
+    for item in note.get("acceptance", []):
+        lines.append(f"- {item['label']}: {item['status']} - {item['detail']}")
+    lines.extend(["", "## Safety Chain Status"])
+    for item in note.get("safety_chain", []):
+        lines.append(f"- {item['label']}: {item['state']}")
+    db = note.get("db", {})
+    lines.extend([
+        "",
+        "## Current DB Snapshot",
+        f"- approval_requests: {db.get('approval_requests_total')} total / {db.get('approval_pending')} pending / {db.get('approval_approved')} approved / {db.get('approval_rejected')} rejected",
+        f"- deployment_jobs: {db.get('deployment_jobs')}",
+        f"- domain_mappings: {db.get('domain_mappings')}",
+        f"- dns_execution_attempts: {db.get('dns_execution_attempts')}",
+        f"- credential records: {db.get('credential_records')}",
+        "",
+        "## Known Limitations",
+    ])
+    for item in note.get("known_limitations", []):
+        lines.append(f"- {item}")
+    lines.extend(["", "## Recommended Next Phases"])
+    for item in note.get("next_phases", []):
+        lines.append(f"- {item['phase']} - {item['title']}: {item['summary']}")
+    lines.extend([
+        "",
+        "## Safety Statement",
+        "This report is read-only. It does not run deployment, DNS, NAS, Telegram, restart, rollback, or save actions.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def production_release_note_markdown_response():
+    response = Response(production_release_note_markdown(), mimetype="text/markdown")
+    response.headers["Content-Disposition"] = "attachment; filename=production_release_note.md"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def operations_health_timeout_seconds():
     try:
         return max(0.2, min(3.0, float(os.getenv("DEV_PILOT_OPS_HEALTH_TIMEOUT_SECONDS", "1"))))
@@ -10049,6 +10253,22 @@ def release_dashboard_page():
         app_name=APP_NAME,
         dashboard=release_dashboard_context(),
     )
+
+
+@app.route("/production-release-note")
+@require_roles("owner", "admin")
+def production_release_note_page():
+    return render_template(
+        "production_release_note.html",
+        app_name=APP_NAME,
+        release_note=production_release_note_context(),
+    )
+
+
+@app.route("/api/production-release-note/export.md")
+@require_roles("owner", "admin")
+def production_release_note_export_markdown():
+    return production_release_note_markdown_response()
 
 
 @app.route("/domain-readiness")

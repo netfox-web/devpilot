@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Production Release Note / Admin QA Report</h1>
+    <div class="text-muted small">Read-only summary of the current DevPilot production admin release state.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-secondary">NO DEPLOY</span>
+      <span class="badge text-bg-secondary">DNS WRITE DISABLED</span>
+      <span class="badge text-bg-warning">REPORT ONLY</span>
+    </div>
+  </div>
+  <div class="text-end">
+    <div><a href="/api/production-release-note/export.md">Export Markdown</a></div>
+    <div class="text-muted small">Generated {{ release_note.rendered_at }}</div>
+  </div>
+</div>
+
+<div class="alert alert-info page-note py-2">
+  This page is report-only. It does not deploy, restart, modify DNS, edit NAS settings, change certificates, send Telegram messages, roll back, restore backups, or write application data.
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Release Identity</div>
+      <div class="card-body small">
+        <div class="mb-2">
+          <div class="text-muted">Production domain</div>
+          <a href="{{ release_note.identity.domain }}">{{ release_note.identity.domain }}</a>
+        </div>
+        <div class="mb-2"><span class="text-muted">Container</span><br><code>{{ release_note.identity.container }}</code></div>
+        <div class="mb-2"><span class="text-muted">Port</span><br><code>{{ release_note.identity.port }}</code></div>
+        <div class="mb-2"><span class="text-muted">app.py SHA256</span><br><code class="text-break">{{ release_note.identity.app_sha256 or 'unavailable' }}</code></div>
+        <div>
+          <span class="text-muted">Latest commit</span><br>
+          {% if release_note.identity.git.available %}
+            <code>{{ release_note.identity.git.short }}</code>
+            <span class="text-muted">({{ release_note.identity.git.source }})</span>
+          {% else %}
+            <span class="text-muted">unavailable</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Current DB Snapshot</div>
+      <div class="card-body">
+        <div class="row row-cols-2 g-3 text-center">
+          <div><div class="text-muted small">Approvals</div><div class="fs-4 fw-semibold">{{ release_note.db.approval_requests_total }}</div></div>
+          <div><div class="text-muted small">Pending</div><div class="fs-4 fw-semibold text-warning">{{ release_note.db.approval_pending }}</div></div>
+          <div><div class="text-muted small">Approved</div><div class="fs-4 fw-semibold text-success">{{ release_note.db.approval_approved }}</div></div>
+          <div><div class="text-muted small">Rejected</div><div class="fs-4 fw-semibold text-danger">{{ release_note.db.approval_rejected }}</div></div>
+          <div><div class="text-muted small">Deploy jobs</div><div class="fs-4 fw-semibold">{{ release_note.db.deployment_jobs }}</div></div>
+          <div><div class="text-muted small">Domain mappings</div><div class="fs-4 fw-semibold">{{ release_note.db.domain_mappings }}</div></div>
+          <div><div class="text-muted small">DNS audit rows</div><div class="fs-4 fw-semibold">{{ release_note.db.dns_execution_attempts }}</div></div>
+          <div><div class="text-muted small">Credential records</div><div class="fs-4 fw-semibold">{{ release_note.db.credential_records }}</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safety Statement</div>
+      <div class="card-body small">
+        <div class="d-flex justify-content-between mb-2"><span>Report behavior</span><span class="badge text-bg-info">read-only</span></div>
+        <div class="d-flex justify-content-between mb-2"><span>Deployment action</span><span class="badge text-bg-secondary">not available</span></div>
+        <div class="d-flex justify-content-between mb-2"><span>DNS write action</span><span class="badge text-bg-secondary">not available</span></div>
+        <div class="d-flex justify-content-between mb-2"><span>NAS or certificate action</span><span class="badge text-bg-secondary">not available</span></div>
+        <div class="d-flex justify-content-between"><span>Telegram action</span><span class="badge text-bg-secondary">not available</span></div>
+        <hr>
+        <div class="text-muted">Use the linked dashboards for review only. Any future operational work still needs a separate controlled phase.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Completed Phases Summary</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Phase</th><th>Area</th><th>Status</th><th>Summary</th></tr></thead>
+          <tbody>
+            {% for item in release_note.completed_phases %}
+              <tr>
+                <td><code>{{ item.phase }}</code></td>
+                <td>{{ item.title }}</td>
+                <td><span class="badge text-bg-success">{{ item.status }}</span></td>
+                <td class="small">{{ item.summary }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Production Acceptance Status</div>
+      <div class="list-group list-group-flush">
+        {% for item in release_note.acceptance %}
+          <div class="list-group-item">
+            <div class="d-flex justify-content-between gap-3">
+              <div class="fw-semibold">{{ item.label }}</div>
+              <span class="badge text-bg-{{ 'success' if item.status in ['OK', 'PASS', 'UNCHANGED'] else 'secondary' }}">{{ item.status }}</span>
+            </div>
+            <div class="small text-muted">{{ item.detail }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safety Chain Status</div>
+      <div class="card-body">
+        <div class="row row-cols-1 row-cols-md-2 g-3">
+          {% for item in release_note.safety_chain %}
+            <div class="col">
+              <div class="border rounded p-3 h-100">
+                <div class="d-flex justify-content-between gap-2">
+                  <div class="fw-semibold">{{ item.label }}</div>
+                  <span class="badge text-bg-{{ 'success' if item.ok else 'warning' }}">{{ 'safe' if item.ok else 'review' }}</span>
+                </div>
+                <div class="small text-muted mt-1">{{ item.state }}</div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Dashboards Now Available</div>
+      <div class="card-body">
+        <div class="row g-3">
+          {% for item in release_note.dashboards %}
+            <div class="col-md-6">
+              <div class="border rounded p-3 h-100">
+                <div class="fw-semibold"><a href="{{ item.href }}">{{ item.label }}</a></div>
+                <div class="small text-muted">{{ item.summary }}</div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Known Limitations</div>
+      <div class="card-body">
+        <ul class="mb-0">
+          {% for item in release_note.known_limitations %}
+            <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recommended Next Phases</div>
+      <div class="card-body">
+        <div class="vstack gap-3">
+          {% for item in release_note.next_phases %}
+            <div>
+              <div class="fw-semibold"><code>{{ item.phase }}</code> {{ item.title }}</div>
+              <div class="small text-muted">{{ item.summary }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
