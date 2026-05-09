@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Operations Runbook Center</h1>
+    <div class="text-muted small">Read-only SOP library for high-risk DevPilot operations.</div>
+  </div>
+  <div class="text-end">
+    <div><a href="/api/operations-runbook/export.csv">Export CSV</a></div>
+    <div class="text-muted small">Rendered {{ runbook.rendered_at }}</div>
+  </div>
+</div>
+
+<div class="alert alert-info py-2">
+  These runbooks are documentation only. They do not save state, run shell commands, change DNS, edit NAS reverse proxy rules, modify certificates, deploy services, restart containers, or create deployment jobs.
+</div>
+
+<div class="row row-cols-2 row-cols-md-4 g-3 mb-4">
+  <div class="col">
+    <div class="card shadow-sm h-100">
+      <div class="card-body text-center">
+        <div class="text-muted small">Runbooks</div>
+        <div class="fs-4 fw-semibold">{{ runbook.summary.runbooks }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card shadow-sm h-100">
+      <div class="card-body text-center">
+        <div class="text-muted small">Documented Steps</div>
+        <div class="fs-4 fw-semibold">{{ runbook.summary.steps }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card shadow-sm h-100">
+      <div class="card-body text-center">
+        <div class="text-muted small">Execution</div>
+        <div class="fs-6 fw-semibold text-secondary">Not available</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card shadow-sm h-100">
+      <div class="card-body text-center">
+        <div class="text-muted small">Saved State</div>
+        <div class="fs-6 fw-semibold text-secondary">Not stored</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  {% for item in runbook['runbooks'] %}
+    <div class="col-xl-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header">
+          <div class="fw-bold">{{ item.title }}</div>
+          <div class="text-muted small">{{ item.purpose }}</div>
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <div class="text-muted small text-uppercase">Preconditions</div>
+            <ol class="small mb-0">
+              {% for line in item.preconditions %}
+                <li>{{ line }}</li>
+              {% endfor %}
+            </ol>
+          </div>
+          <div class="mb-3">
+            <div class="text-muted small text-uppercase">Steps</div>
+            <ol class="small mb-0">
+              {% for step in item.steps %}
+                <li>{{ step }}</li>
+              {% endfor %}
+            </ol>
+          </div>
+          <div class="mb-3">
+            <div class="text-muted small text-uppercase">Validation</div>
+            <ul class="small mb-0">
+              {% for line in item.validation %}
+                <li>{{ line }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          <div class="mb-3">
+            <div class="text-muted small text-uppercase">Rollback / Stop Condition</div>
+            <div class="small">{{ item.stop_condition }}</div>
+          </div>
+          <div>
+            <div class="text-muted small text-uppercase">Forbidden Actions</div>
+            <ul class="small mb-0">
+              {% for line in item.forbidden_actions %}
+                <li>{{ line }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header fw-bold">Read-only Guardrails</div>
+  <div class="card-body small">
+    <div class="row row-cols-1 row-cols-md-3 g-3">
+      <div class="col">
+        <div class="fw-semibold">No execution</div>
+        <div class="text-muted">This page contains no controls for DNS, NAS, certificates, deployments, restarts, or rollback.</div>
+      </div>
+      <div class="col">
+        <div class="fw-semibold">No saved state</div>
+        <div class="text-muted">Runbook progress is not stored and no database changes are made.</div>
+      </div>
+      <div class="col">
+        <div class="fw-semibold">Separate approval required</div>
+        <div class="text-muted">Any future execution still needs its own controlled phase and explicit approval.</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

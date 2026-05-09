@@ -5739,6 +5739,226 @@ def manual_operations_checklist_csv_response():
     return response
 
 
+def operations_runbook_sections():
+    return [
+        {
+            "key": "dns_real_write",
+            "title": "DNS Real Write Runbook",
+            "purpose": "Perform a future single-record Cloudflare DNS write with explicit gates, backup, audit, and read-back verification.",
+            "preconditions": [
+                "Owner-only approval is granted for exactly one record.",
+                "Cloudflare read-only preflight has passed.",
+                "Production database backup path is recorded.",
+                "Rollback payload is ready before the write.",
+            ],
+            "steps": [
+                "Confirm the hostname, type, content, proxied state, and ttl.",
+                "Confirm decision is create or update and not delete.",
+                "Confirm the final phrase was provided in the approved execution phase.",
+                "Create or update only the planned single record in the future write phase.",
+                "Read back the record immediately and compare it to the planned payload.",
+                "Record audit result and sanitized provider response.",
+            ],
+            "validation": [
+                "Read-back shows exactly the expected record.",
+                "No unrelated hostnames changed.",
+                "deployment_jobs count remains unchanged.",
+                "domain_mappings remains unchanged unless a separate approved phase says otherwise.",
+            ],
+            "stop_condition": "Stop if the record already exists unexpectedly, preflight fails, backup hash does not match, or scope expands beyond one record.",
+            "forbidden_actions": [
+                "Do not write multiple records in one phase.",
+                "Do not delete DNS records from this runbook.",
+                "Do not combine DNS write with deployment or restart work.",
+            ],
+        },
+        {
+            "key": "nas_ssl_reverse_proxy",
+            "title": "NAS SSL / Reverse Proxy Runbook",
+            "purpose": "Prepare and verify NAS routing and HTTPS readiness for an existing hostname without changing backend runtime.",
+            "preconditions": [
+                "DNS points to the NAS public address.",
+                "Backend local health endpoint returns OK.",
+                "Target source hostname and destination port are explicit.",
+                "Certificate coverage is known before public HTTPS verification.",
+            ],
+            "steps": [
+                "Confirm current HTTP and HTTPS behavior.",
+                "Confirm whether an existing reverse proxy rule already covers the hostname.",
+                "Plan source HTTPS hostname and destination local upstream.",
+                "Confirm certificate CN or SAN covers the hostname.",
+                "Verify strict HTTPS health path after setup in a separate approved phase.",
+            ],
+            "validation": [
+                "HTTPS health endpoint returns 200 with strict TLS.",
+                "Root path does not land on DSM unless intentionally expected.",
+                "Backend logs show no application errors.",
+            ],
+            "stop_condition": "Stop if certificate coverage is missing, upstream health fails, or the target hostname is ambiguous.",
+            "forbidden_actions": [
+                "Do not restart backend containers.",
+                "Do not alter unrelated reverse proxy rules.",
+                "Do not change DNS while performing NAS routing work.",
+            ],
+        },
+        {
+            "key": "release_deploy",
+            "title": "Release Deploy Runbook",
+            "purpose": "Deploy reviewed DevPilot files with backups, constrained copy scope, and post-deploy smoke tests.",
+            "preconditions": [
+                "git status is clean and latest commit is expected.",
+                "py_compile and diff check pass.",
+                "Deployment file list is explicit.",
+                "Production file backups and hashes are recorded.",
+            ],
+            "steps": [
+                "Back up every production file that will be overwritten.",
+                "Verify backup SHA equals production-before SHA.",
+                "Copy only the approved files.",
+                "Verify production SHA equals local HEAD SHA.",
+                "Recreate only the target DevPilot container.",
+                "Run route smoke tests, DB count checks, and log security scan.",
+            ],
+            "validation": [
+                "Container is Up on the expected port mapping.",
+                "app.py compiles inside the container.",
+                "Regression routes return expected statuses.",
+                "No DB, DNS, Telegram, or deployment side effect occurred.",
+            ],
+            "stop_condition": "Stop if backup creation fails, hashes differ unexpectedly, or deployment delta includes unrelated files.",
+            "forbidden_actions": [
+                "Do not sync the whole folder.",
+                "Do not overwrite .env or data/project_manager.db.",
+                "Do not restart staging or backend containers.",
+            ],
+        },
+        {
+            "key": "emergency_rollback",
+            "title": "Emergency Rollback Runbook",
+            "purpose": "Restore a clearly scoped previous state only after the rollback target and backup are verified.",
+            "preconditions": [
+                "Rollback target is explicit.",
+                "Correct backup path exists.",
+                "Backup hash and expected previous hash are verified.",
+                "Rollback phase has separate approval.",
+            ],
+            "steps": [
+                "Stop if the target is uncertain.",
+                "Identify whether rollback is file, database, DNS, or service routing.",
+                "For file rollback, restore only the scoped file from the approved backup.",
+                "For DNS or database rollback, open a separate approval phase.",
+                "Verify the restored state with read-only checks.",
+            ],
+            "validation": [
+                "Restored file or record matches the rollback payload.",
+                "Application smoke tests pass.",
+                "Logs show no traceback or unintended side effects.",
+            ],
+            "stop_condition": "Stop if the backup is missing, hashes do not match, or rollback would affect unrelated services.",
+            "forbidden_actions": [
+                "Do not perform automatic rollback from this page.",
+                "Do not restore a database without a dedicated approval phase.",
+                "Do not delete DNS records without a separate rollback approval.",
+            ],
+        },
+        {
+            "key": "secret_leak_response",
+            "title": "Secret Leak Response Runbook",
+            "purpose": "Contain and remediate accidental credential exposure without spreading the exposed value further.",
+            "preconditions": [
+                "Stop writing or repeating the exposed value.",
+                "Identify affected provider and environment from masked metadata only.",
+                "Preserve audit context without copying sensitive value text.",
+            ],
+            "steps": [
+                "Stop output and remove exposed value from visible reports where possible.",
+                "Rotate the affected credential in its provider console.",
+                "Revoke the old credential after replacement is verified.",
+                "Review audit logs and recent application logs for further exposure.",
+                "Confirm the value is not committed to git.",
+                "Document the incident with masked identifiers only.",
+            ],
+            "validation": [
+                "New credential works where required.",
+                "Old credential is revoked.",
+                "Git and recent logs do not contain the exposed value.",
+            ],
+            "stop_condition": "Stop if provider access is unclear or rotation ownership is not confirmed.",
+            "forbidden_actions": [
+                "Do not paste complete credential values into chat, pages, CSV files, or logs.",
+                "Do not reveal environment file contents.",
+                "Do not continue normal deployment until exposure is contained.",
+            ],
+        },
+        {
+            "key": "telegram_approval_test",
+            "title": "Telegram Approval Test Runbook",
+            "purpose": "Verify approval notification behavior using mock approval requests without triggering DNS or deployment side effects.",
+            "preconditions": [
+                "A mock approval request exists and is pending.",
+                "Request type is mock_approval_test.",
+                "Allowed operator is ready to press exactly one button.",
+                "No DNS or deployment request is used for the test.",
+            ],
+            "steps": [
+                "Send one inline notification for the mock request.",
+                "For reject testing, press Reject once and verify rejected state.",
+                "For approve testing, use a new mock request and press Approve once.",
+                "Confirm duplicate callback tolerance metrics remain clean.",
+                "Verify DB counts and logs after each test.",
+            ],
+            "validation": [
+                "Mock request reaches the expected final status.",
+                "No deployment job is created.",
+                "No Cloudflare DNS action occurs.",
+                "Logs do not expose callback values or sensitive runtime values.",
+            ],
+            "stop_condition": "Stop if the request is not mock_approval_test, is no longer pending, or the operator is unsure which button to press.",
+            "forbidden_actions": [
+                "Do not press buttons on DNS or deployment requests.",
+                "Do not press both Approve and Reject on the same request.",
+                "Do not simulate callback payloads manually.",
+            ],
+        },
+    ]
+
+
+def operations_runbook_context():
+    runbooks = operations_runbook_sections()
+    return {
+        "rendered_at": now_str(),
+        "runbooks": runbooks,
+        "summary": {
+            "runbooks": len(runbooks),
+            "steps": sum(len(item.get("steps") or []) for item in runbooks),
+        },
+    }
+
+
+def operations_runbook_csv_response():
+    context = operations_runbook_context()
+    output = io.StringIO()
+    fieldnames = ["runbook", "section", "step_order", "step", "validation", "forbidden_actions"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for runbook in context.get("runbooks", []):
+        validations = " | ".join(runbook.get("validation") or [])
+        forbidden = " | ".join(runbook.get("forbidden_actions") or [])
+        for index, step in enumerate(runbook.get("steps") or [], start=1):
+            writer.writerow({
+                "runbook": runbook.get("title") or "",
+                "section": "Steps",
+                "step_order": index,
+                "step": step,
+                "validation": validations,
+                "forbidden_actions": forbidden,
+            })
+    response = Response(output.getvalue(), mimetype="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=operations_runbook.csv"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def operations_command_center_context():
     release = release_dashboard_context()
     backup_items = release.get("backups", {}).get("items", [])
@@ -9832,6 +10052,22 @@ def manual_operations_checklist_page():
 @require_roles("owner", "admin")
 def manual_operations_checklist_export_csv():
     return manual_operations_checklist_csv_response()
+
+
+@app.route("/operations-runbook")
+@require_roles("owner", "admin")
+def operations_runbook_page():
+    return render_template(
+        "operations_runbook.html",
+        app_name=APP_NAME,
+        runbook=operations_runbook_context(),
+    )
+
+
+@app.route("/api/operations-runbook/export.csv")
+@require_roles("owner", "admin")
+def operations_runbook_export_csv():
+    return operations_runbook_csv_response()
 
 
 @app.route("/ai-console")
