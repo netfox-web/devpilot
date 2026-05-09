@@ -38,6 +38,64 @@
   </div>
 </div>
 
+<div class="card shadow-sm mb-3 border-info">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>Claude Executor Preview</span>
+    <span class="badge text-bg-info">Preview only / No file write / No deploy / No DNS</span>
+  </div>
+  <div class="card-body">
+    <div class="alert alert-info small mb-3">
+      This preview calls the selected AI provider and returns text or HTML only. It does not write project files, deploy, restart services, call DNS, or send Telegram messages.
+    </div>
+    <form id="claudePreviewForm">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Executor</label>
+          <select class="form-select" name="provider">
+            <option value="claude" selected>Claude</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Claude model</label>
+          <input class="form-control" name="model" value="claude-sonnet-4-6">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Reviewer</label>
+          <select class="form-select" name="reviewer_provider">
+            <option value="none">None</option>
+            <option value="gemini" selected>Gemini</option>
+          </select>
+        </div>
+      </div>
+      <div class="row g-3 mt-1">
+        <div class="col-md-4">
+          <label class="form-label">Max tokens</label>
+          <input class="form-control" type="number" min="16" max="8192" name="max_tokens" value="4096">
+        </div>
+        <div class="col-md-8 d-flex align-items-end">
+          <div class="small text-muted">Gemini review is advisory. Nothing is saved or applied from this preview.</div>
+        </div>
+      </div>
+      <label class="form-label mt-3">Prompt</label>
+      <textarea class="form-control" name="prompt" rows="5" placeholder="Ask Claude to return text or a single-file HTML preview only." required>請只回覆 OK</textarea>
+      <div class="d-flex gap-2 align-items-center mt-3">
+        <button type="submit" class="btn btn-outline-primary" id="btnClaudePreview">Run preview</button>
+        <span class="small text-muted" id="claudePreviewStatus">No preview run yet.</span>
+      </div>
+    </form>
+    <div class="row g-3 mt-2">
+      <div class="col-lg-7">
+        <label class="form-label">Executor output</label>
+        <pre class="bg-light border rounded p-3 small text-wrap" id="claudePreviewOutput" style="max-height: 24rem; overflow:auto;">-</pre>
+      </div>
+      <div class="col-lg-5">
+        <label class="form-label">Reviewer output</label>
+        <pre class="bg-light border rounded p-3 small text-wrap" id="claudePreviewReview" style="max-height: 24rem; overflow:auto;">-</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="card shadow-sm mb-3">
   <div class="card-header fw-bold">Task Templates</div>
   <div class="table-responsive">
@@ -388,6 +446,48 @@
     }
     btn.addEventListener('click', checkProviders);
     checkProviders();
+  })();
+
+  (function () {
+    const form = document.getElementById('claudePreviewForm');
+    if (!form) return;
+    const button = document.getElementById('btnClaudePreview');
+    const status = document.getElementById('claudePreviewStatus');
+    const output = document.getElementById('claudePreviewOutput');
+    const review = document.getElementById('claudePreviewReview');
+
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Running...';
+      status.textContent = 'Preview running. No files are being written.';
+      output.textContent = '-';
+      review.textContent = '-';
+      const data = Object.fromEntries(new FormData(form).entries());
+      data.mode = 'claude_preview';
+      data.review_enabled = data.reviewer_provider === 'gemini';
+      try {
+        const resp = await fetch('/api/ai-console/run', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        const result = await resp.json();
+        if (!resp.ok || !result.ok) {
+          throw new Error(result.message || result.error || ('HTTP ' + resp.status));
+        }
+        output.textContent = result.executor_output || result.final_html || '';
+        review.textContent = result.reviewer_output || 'Reviewer not run.';
+        status.textContent = `Done: ${result.executor_provider || 'provider'} / ${result.executor_model || '-'} / review ${result.review_status || 'not_run'}`;
+      } catch (err) {
+        status.textContent = 'Preview failed: ' + err.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = original;
+      }
+    });
   })();
 </script>
 {% endblock %}

@@ -128,7 +128,7 @@ AI_PROVIDER_STATUSES = ["active", "disabled", "error"]
 AI_COST_TASK_ROLES = ["planner", "executor", "reviewer", "tester"]
 AI_USAGE_STATUSES = ["success", "failed"]
 AI_MESSAGE_STATUSES = ["running", "done", "failed"]
-AI_CONSOLE_PROVIDER_CHOICES = ["auto", "openai", "gemini"]
+AI_CONSOLE_PROVIDER_CHOICES = ["auto", "openai", "gemini", "claude"]
 AI_TASK_STATUSES = ["queued", "running", "done", "failed", "blocked", "canceled"]
 AI_TASK_PRIORITIES = ["low", "medium", "high", "urgent"]
 AI_TASK_TYPES = [
@@ -563,6 +563,9 @@ def get_active_ai_console_key(provider):
     provider_map = {
         "openai": "openai",
         "gemini": "google",
+        "google": "google",
+        "claude": "anthropic",
+        "anthropic": "anthropic",
     }
     canonical = str(provider or "").strip().lower()
     db_provider = provider_map.get(canonical)
@@ -8238,6 +8241,7 @@ AI_CONSOLE_WEBSITE_PROMPT = """請 OpenAI 與 Gemini 協作，產生一個「AI 
 9. 不含任何 API Key
 10. 不自動部署"""
 AI_CONSOLE_GEMINI_MODEL = "gemini-2.5-flash"
+AI_CONSOLE_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 
 def sanitize_ai_console_text(value, secrets_to_strip=None):
@@ -8367,6 +8371,177 @@ def call_gemini_console_with_key(prompt, model, api_key):
     }
 
 
+def normalize_claude_console_model(model):
+    for candidate in (model, os.getenv("CLAUDE_DEFAULT_MODEL", ""), os.getenv("CLAUDE_MODEL", ""), AI_CONSOLE_CLAUDE_MODEL):
+        model_name = str(candidate or "").strip()
+        if model_name and model_name != "claude":
+            return model_name
+    return AI_CONSOLE_CLAUDE_MODEL
+
+
+def call_claude_console_with_key(prompt, model, api_key, max_tokens=4096, timeout=90):
+    token_limit = max(16, min(coerce_int(max_tokens, 4096), 8192))
+    payload = {
+        "model": normalize_claude_console_model(model),
+        "max_tokens": token_limit,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "user", "content": str(prompt or "")},
+        ],
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": os.getenv("ANTHROPIC_VERSION", "2023-06-01"),
+            "content-type": "application/json; charset=utf-8",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "status": "http_error", "error": f"Claude HTTP {exc.code}"}
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
+        return {"ok": False, "status": "network_error", "error": "Claude network error"}
+    except Exception:
+        return {"ok": False, "status": "error", "error": "Claude call failed"}
+    text = "\n".join(
+        str(part.get("text") or "")
+        for part in data.get("content", [])
+        if part.get("type") == "text" and part.get("text")
+    ).strip()
+    usage = data.get("usage") or {}
+    input_tokens = coerce_int(usage.get("input_tokens"), approx_ai_tokens(prompt))
+    output_tokens = coerce_int(usage.get("output_tokens"), approx_ai_tokens(text))
+    return {
+        "ok": True,
+        "text": text,
+        "model": data.get("model") or payload["model"],
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "raw": {"usage": usage},
+    }
+
+
+def ai_console_complete_html(text):
+    html = str(text or "").lower()
+    return ("<!doctype html" in html or "<html" in html) and "</html>" in html
+
+
+def ai_console_review_status(review_text):
+    text = str(review_text or "").strip()
+    compact = text.lower()
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
+    json_text = (fenced.group(1) if fenced else text).strip()
+    try:
+        parsed = json.loads(json_text)
+        verdict = str(parsed.get("verdict") or "").strip().lower()
+        if verdict in ("pass", "fail"):
+            return verdict
+    except Exception:
+        pass
+    if re.search(r"\bfail\b", compact):
+        return "fail"
+    if '"verdict"' in compact and '"pass"' in compact:
+        return "pass"
+    if re.search(r"\bpass\b", compact):
+        return "pass"
+    return "reviewed" if compact.strip() else "not_run"
+
+
+def run_ai_console_claude_preview(payload):
+    prompt = str((payload or {}).get("prompt") or (payload or {}).get("task_prompt") or "").strip()
+    if not prompt:
+        return ai_console_error("prompt_required", "Prompt is required for Claude preview.")
+    claude_key = get_active_ai_console_key("claude")
+    if not claude_key.get("ok"):
+        return ai_console_error("claude_not_configured", "Claude key is not configured or cannot be decrypted.")
+
+    requested_model = (payload or {}).get("model") or (payload or {}).get("executor_model") or ""
+    max_tokens = coerce_int((payload or {}).get("max_tokens"), 4096)
+    secrets_to_strip = [claude_key.get("key"), API_TOKEN]
+    executor_result = call_claude_console_with_key(
+        prompt,
+        requested_model,
+        claude_key["key"],
+        max_tokens=max_tokens,
+    )
+    if not executor_result.get("ok"):
+        return ai_console_error("claude_generation_failed", executor_result.get("error") or "Claude generation failed.")
+
+    executor_output = sanitize_ai_console_text(executor_result.get("text"), secrets_to_strip)
+    reviewer_provider = str((payload or {}).get("reviewer_provider") or "").strip().lower()
+    review_enabled = (payload or {}).get("review_enabled") in (True, 1, "1", "true", "yes", "on")
+    if review_enabled and not reviewer_provider:
+        reviewer_provider = "gemini"
+
+    reviewer_output = ""
+    review_status = "not_run"
+    reviewer_info = None
+    if reviewer_provider in ("gemini", "google"):
+        gemini_key = get_active_ai_console_key("gemini")
+        if not gemini_key.get("ok"):
+            return ai_console_error("gemini_not_configured", "Gemini reviewer key is not configured or cannot be decrypted.")
+        secrets_to_strip.append(gemini_key.get("key"))
+        review_prompt = (
+            "Review this AI Console preview output against the user prompt. "
+            "Reply in compact JSON with keys: verdict, issues, safety. "
+            "PASS only if the output satisfies the prompt, contains no secrets, and does not include deploy/DNS/file-write instructions.\n\n"
+            f"PROMPT:\n{prompt[:3000]}\n\n"
+            f"OUTPUT:\n{executor_output[:12000]}"
+        )
+        reviewer_result = call_gemini_console_with_key(
+            review_prompt,
+            (payload or {}).get("reviewer_model") or AI_CONSOLE_GEMINI_MODEL,
+            gemini_key["key"],
+        )
+        if not reviewer_result.get("ok"):
+            return ai_console_error("gemini_review_failed", reviewer_result.get("error") or "Gemini review failed.")
+        reviewer_output = sanitize_ai_console_text(reviewer_result.get("text"), secrets_to_strip)
+        review_status = ai_console_review_status(reviewer_output)
+        reviewer_info = {
+            "provider": "gemini",
+            "source": gemini_key.get("source"),
+            "masked": gemini_key.get("masked"),
+            "model": (payload or {}).get("reviewer_model") or AI_CONSOLE_GEMINI_MODEL,
+        }
+    elif reviewer_provider in ("", "none"):
+        reviewer_provider = "none"
+    else:
+        return ai_console_error("unsupported_reviewer", "Only Gemini reviewer is supported in this preview flow.")
+
+    final_html = extract_single_file_html(executor_output)
+    return {
+        "ok": True,
+        "mode": "claude_executor_preview",
+        "executor_provider": "claude",
+        "executor_model": executor_result.get("model") or normalize_claude_console_model(requested_model),
+        "executor_output": executor_output,
+        "final_html": final_html,
+        "complete_html": ai_console_complete_html(final_html),
+        "reviewer_provider": reviewer_provider,
+        "review_status": review_status,
+        "reviewer_output": reviewer_output,
+        "providers_used": [
+            {"provider": "claude", "source": claude_key.get("source"), "masked": claude_key.get("masked")},
+        ] + ([reviewer_info] if reviewer_info else []),
+        "usage": {
+            "executor_input_tokens": executor_result.get("input_tokens"),
+            "executor_output_tokens": executor_result.get("output_tokens"),
+        },
+        "safety_notes": [
+            "Preview only.",
+            "No API keys included in response.",
+            "No files were written.",
+            "No deployment was triggered.",
+            "No DNS or Telegram action was triggered.",
+        ],
+    }
+
+
 def run_ai_console_gemini_only():
     gemini_key = get_active_ai_console_key("gemini")
     if not gemini_key.get("ok"):
@@ -8413,6 +8588,9 @@ def run_ai_console_gemini_only():
 
 def run_ai_console_website_mvp():
     payload = request.get_json(silent=True) if has_request_context() else {}
+    provider = str((payload or {}).get("provider") or (payload or {}).get("executor_provider") or "").strip().lower()
+    if provider in ("claude", "anthropic") or str((payload or {}).get("mode") or "").strip().lower() in ("claude", "claude_preview", "claude_executor_preview"):
+        return run_ai_console_claude_preview(payload or {})
     mode = str((payload or {}).get("mode") or "openai_gemini").strip().lower()
     if mode == "gemini_only":
         return run_ai_console_gemini_only()
@@ -15229,7 +15407,7 @@ def api_ai_provider_health():
 
 
 @app.route("/api/ai-console/run", methods=["POST"])
-@require_api_token
+@require_api_roles("owner", "admin", "ai")
 def api_ai_console_run():
     return jsonify(run_ai_console_website_mvp())
 
