@@ -21,6 +21,41 @@
   This page is report-only. It does not deploy, restart, modify DNS, edit NAS settings, change certificates, send Telegram messages, roll back, restore backups, or write application data.
 </div>
 
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span>Release Version Label</span>
+    <span class="badge text-bg-info">READ-ONLY FREEZE</span>
+  </div>
+  <div class="card-body">
+    <div class="row g-3 align-items-start">
+      <div class="col-xl-4">
+        <div class="text-muted small">Release name</div>
+        <div class="fw-semibold">{{ release_note.release_version.release_name }}</div>
+      </div>
+      <div class="col-md-4 col-xl-2">
+        <div class="text-muted small">Status</div>
+        <span class="badge text-bg-secondary">{{ release_note.release_version.release_status }}</span>
+      </div>
+      <div class="col-md-4 col-xl-2">
+        <div class="text-muted small">Frozen commit</div>
+        <code>{{ release_note.release_version.release_commit }}</code>
+      </div>
+      <div class="col-md-4 col-xl-2">
+        <div class="text-muted small">Git tag</div>
+        <span class="badge text-bg-secondary">not created</span>
+      </div>
+      <div class="col-xl-2">
+        <div class="text-muted small">Write capabilities</div>
+        <span class="badge text-bg-secondary">disabled</span>
+      </div>
+      <div class="col-12">
+        <div class="text-muted small">Frozen scope</div>
+        <div>{{ release_note.release_version.release_scope }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="row g-3 mb-3">
   <div class="col-xl-4">
     <div class="card shadow-sm h-100">

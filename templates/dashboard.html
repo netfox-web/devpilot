@@ -38,6 +38,30 @@
 
   <div class="col-xl-3 col-md-6">
     <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Release Version</div>
+      <div class="card-body small">
+        <div class="mb-2"><span class="badge text-bg-info">READ-ONLY FREEZE</span></div>
+        <div class="fw-semibold">{{ operations.release_version.release_name }}</div>
+        <div class="d-flex justify-content-between mt-3 mb-2">
+          <span>Status</span>
+          <span class="badge text-bg-secondary">{{ operations.release_version.release_status }}</span>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span>Commit</span>
+          <code>{{ operations.release_version.release_commit }}</code>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span>Git tag</span>
+          <span class="badge text-bg-secondary">not created</span>
+        </div>
+        <div class="text-muted">{{ operations.release_version.release_scope }}</div>
+        <div class="mt-3"><a href="/production-release-note">Open Release Note</a></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
       <div class="card-header fw-bold">Release / Backup</div>
       <div class="card-body small">
         <div class="mb-2"><span class="badge text-bg-info">BACKUPS READ-ONLY</span></div>

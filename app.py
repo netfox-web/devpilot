@@ -92,6 +92,11 @@ RELEASE_DASHBOARD_BACKUP_DIR = Path(os.getenv("DEV_PILOT_RELEASE_BACKUP_DIR") or
 RELEASE_DASHBOARD_DOMAIN = os.getenv("DEV_PILOT_RELEASE_DOMAIN", "https://devpilot.aicenter.com.tw/")
 RELEASE_DASHBOARD_CONTAINER = os.getenv("DEV_PILOT_RELEASE_CONTAINER", "devpilot-project-manager")
 RELEASE_DASHBOARD_PORT = os.getenv("DEV_PILOT_RELEASE_PORT", "5010:5000")
+ADMIN_SAFETY_RELEASE_NAME = "DevPilot Admin Safety Release 2026-05-09"
+ADMIN_SAFETY_RELEASE_STATUS = "frozen_read_only"
+ADMIN_SAFETY_RELEASE_SCOPE = "Admin UI, approval safety, DNS safety chain, release dashboards"
+ADMIN_SAFETY_RELEASE_COMMIT = "1898e9f"
+ADMIN_SAFETY_RELEASE_COMMIT_MESSAGE = "feat: add production release note report"
 OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_HEALTH_URL", "http://211.75.219.184:3030/api/health")
 OPERATIONS_SHOPEE_STAGING_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_STAGING_HEALTH_URL", "http://211.75.219.184:3032/api/health")
 OPERATIONS_SHOPEE_PRODUCTION_DOMAIN = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_DOMAIN", "shopee.aichat.tw")
@@ -4504,6 +4509,28 @@ def release_dashboard_git_head():
         return {"available": False, "commit": "", "short": "", "source": "read_error"}
 
 
+def release_version_info():
+    current_git = release_dashboard_git_head()
+    return {
+        "ok": True,
+        "release_name": ADMIN_SAFETY_RELEASE_NAME,
+        "release_status": ADMIN_SAFETY_RELEASE_STATUS,
+        "release_scope": ADMIN_SAFETY_RELEASE_SCOPE,
+        "release_commit": ADMIN_SAFETY_RELEASE_COMMIT,
+        "release_commit_message": ADMIN_SAFETY_RELEASE_COMMIT_MESSAGE,
+        "current_git_commit": current_git.get("short") or "",
+        "current_git_source": current_git.get("source") or "",
+        "git_tag_created": False,
+        "production_domain": RELEASE_DASHBOARD_DOMAIN,
+        "write_capabilities": {
+            "cloudflare_dns_write": False,
+            "deploy": False,
+            "telegram_send": False,
+            "backup_restore": False,
+        },
+    }
+
+
 def release_dashboard_backup_type(filename):
     name = str(filename or "").lower()
     if name.startswith("project_manager.db.bak") or name.endswith(".db") or ".db.bak" in name:
@@ -4690,6 +4717,7 @@ def release_dashboard_context():
     cloudflare_flag = cloudflare_dns_write_flag_status()
     mock_flag = release_dashboard_mock_flag_status()
     return {
+        "version": release_version_info(),
         "identity": {
             "domain": RELEASE_DASHBOARD_DOMAIN,
             "container": RELEASE_DASHBOARD_CONTAINER,
@@ -4795,8 +4823,10 @@ def production_release_note_context():
     db_snapshot = release.get("db", {})
     cloudflare_flag = release.get("safety", {}).get("cloudflare_dns_write", {})
     mock_flag = release.get("safety", {}).get("mock_dns_execution", {})
+    release_version = release_version_info()
     return {
         "rendered_at": now_str(),
+        "release_version": release_version,
         "identity": {
             "domain": RELEASE_DASHBOARD_DOMAIN,
             "container": RELEASE_DASHBOARD_CONTAINER,
@@ -4865,6 +4895,13 @@ def production_release_note_markdown(context=None):
     git = note.get("identity", {}).get("git", {})
     lines = [
         "# Production Release Note / Admin QA Report",
+        "",
+        "## Release Version Label",
+        f"- Release name: {note.get('release_version', {}).get('release_name')}",
+        f"- Status: {note.get('release_version', {}).get('release_status')}",
+        f"- Frozen commit: {note.get('release_version', {}).get('release_commit')}",
+        f"- Git tag created: {str(note.get('release_version', {}).get('git_tag_created')).lower()}",
+        f"- Scope: {note.get('release_version', {}).get('release_scope')}",
         "",
         "## Release Identity",
         f"- Generated: {note.get('rendered_at')}",
@@ -6212,6 +6249,7 @@ def operations_command_center_context():
     shopee_project_link = f"/projects/{shopee_project.get('id')}" if shopee_project.get("exists") and shopee_project.get("id") else "/projects/18"
     return {
         "rendered_at": now_str(),
+        "release_version": release.get("version") or release_version_info(),
         "production_domain": {
             "url": RELEASE_DASHBOARD_DOMAIN,
             "status": "online",
@@ -10269,6 +10307,12 @@ def production_release_note_page():
 @require_roles("owner", "admin")
 def production_release_note_export_markdown():
     return production_release_note_markdown_response()
+
+
+@app.route("/api/release/version")
+@require_roles("owner", "admin")
+def release_version_api():
+    return jsonify(release_version_info())
 
 
 @app.route("/domain-readiness")
