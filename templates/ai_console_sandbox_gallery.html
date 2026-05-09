@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 {% set artifact_items = artifacts["items"] %}
+{% set summary = artifacts["summary"] %}
+{% set retention_policy = artifacts["retention_policy"] %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h1 class="h3 mb-1">AI Console Sandbox Gallery</h1>
@@ -21,6 +23,48 @@
   <span class="small">This page lists sandbox HTML artifacts only. It does not delete, apply, deploy, or move files into any project.</span>
 </div>
 
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="border rounded p-3 h-100">
+      <div class="text-muted small">Total artifacts</div>
+      <div class="h4 mb-0">{{ summary.total_artifacts }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="border rounded p-3 h-100">
+      <div class="text-muted small">Total size</div>
+      <div class="h4 mb-0">{{ summary.total_size_label }}</div>
+      <div class="small text-muted">{{ summary.total_size_mb }} MB</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="border rounded p-3 h-100">
+      <div class="text-muted small">Newest artifact</div>
+      <div class="fw-semibold">{{ summary.newest_artifact_at or '-' }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="border rounded p-3 h-100">
+      <div class="text-muted small">Oldest artifact</div>
+      <div class="fw-semibold">{{ summary.oldest_artifact_at or '-' }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3 border-info">
+  <div class="card-header fw-bold">Retention Policy</div>
+  <div class="card-body small">
+    <p class="mb-2">{{ retention_policy.summary }}</p>
+    <div class="d-flex flex-wrap gap-2">
+      <span class="badge text-bg-success">fresh &lt;= {{ retention_policy.fresh_days }} days</span>
+      <span class="badge text-bg-warning">review after {{ retention_policy.fresh_days }} days</span>
+      <span class="badge text-bg-danger">stale after {{ retention_policy.stale_days }} days</span>
+      <span class="badge text-bg-secondary">delete disabled</span>
+      <span class="badge text-bg-secondary">cleanup disabled</span>
+    </div>
+  </div>
+</div>
+
 <div class="card shadow-sm">
   <div class="card-header fw-bold d-flex justify-content-between align-items-center">
     <span>Recent Artifacts</span>
@@ -38,7 +82,9 @@
             <tr>
               <th>Artifact</th>
               <th>Size</th>
+              <th>Age</th>
               <th>Modified</th>
+              <th>Retention</th>
               <th>Safety</th>
               <th class="text-end">Links</th>
             </tr>
@@ -50,8 +96,20 @@
                   <div class="fw-semibold">{{ item.filename }}</div>
                   <div class="small text-muted">{{ item.artifact_id }}</div>
                 </td>
-                <td>{{ item.size_label }}</td>
+                <td>
+                  <div>{{ item.size_label }}</div>
+                  <span class="badge text-bg-light">{{ item.size_category }}</span>
+                </td>
+                <td>
+                  <div>{{ item.age_days }} days</div>
+                  <div class="small text-muted">{{ item.age_hours }} hours</div>
+                </td>
                 <td>{{ item.modified_at }}</td>
+                <td>
+                  {% set retention_class = 'danger' if item.stale_warning else ('warning' if item.retention_status == 'review_after_7_days' else 'success') %}
+                  <span class="badge text-bg-{{ retention_class }}">{{ item.retention_status }}</span>
+                  <div class="small text-muted">{{ item.recommended_action }}</div>
+                </td>
                 <td>
                   <span class="badge text-bg-success">sandbox</span>
                   <span class="badge text-bg-secondary">read-only</span>

@@ -8509,12 +8509,59 @@ def read_ai_console_sandbox_artifact(artifact_id):
     return path, path.read_text(encoding="utf-8", errors="replace")
 
 
+def ai_console_sandbox_size_category(size_bytes):
+    size = int(size_bytes or 0)
+    if size < 100 * 1024:
+        return "small"
+    if size < 1024 * 1024:
+        return "medium"
+    return "large"
+
+
+def ai_console_sandbox_retention_metadata(age_days):
+    days = float(age_days or 0)
+    if days <= 7:
+        return {
+            "retention_status": "fresh",
+            "recommended_action": "keep",
+            "stale_warning": False,
+        }
+    if days <= 30:
+        return {
+            "retention_status": "review_after_7_days",
+            "recommended_action": "review_later",
+            "stale_warning": False,
+        }
+    return {
+        "retention_status": "stale_after_30_days",
+        "recommended_action": "eligible_for_future_cleanup",
+        "stale_warning": True,
+    }
+
+
 def list_ai_console_sandbox_artifacts(limit=50):
     root = ai_console_sandbox_dir()
+    retention_policy = {
+        "summary": "Sandbox artifacts are preview-only. Cleanup is not enabled in this release.",
+        "fresh_days": 7,
+        "stale_days": 30,
+        "cleanup_enabled": False,
+        "delete_enabled": False,
+        "apply_to_project_enabled": False,
+    }
     result = {
         "ok": True,
         "exists": False,
         "root_label": "data/ai_console_sandbox",
+        "summary": {
+            "total_artifacts": 0,
+            "total_size_bytes": 0,
+            "total_size_label": release_dashboard_format_size(0),
+            "total_size_mb": 0.0,
+            "newest_artifact_at": "",
+            "oldest_artifact_at": "",
+        },
+        "retention_policy": retention_policy,
         "items": [],
         "error": "",
     }
@@ -8536,13 +8583,26 @@ def list_ai_console_sandbox_artifacts(limit=50):
                 stat = child.stat()
             except (OSError, ValueError):
                 continue
+            modified_dt = datetime.fromtimestamp(stat.st_mtime)
+            age_seconds = max(0, int((now_dt() - modified_dt).total_seconds()))
+            age_hours = round(age_seconds / 3600, 2)
+            age_days = round(age_seconds / 86400, 2)
+            retention = ai_console_sandbox_retention_metadata(age_days)
             items.append({
                 "artifact_id": artifact_id,
                 "filename": child.name,
                 "size_bytes": stat.st_size,
+                "size_kb": round(stat.st_size / 1024, 2),
                 "size_label": release_dashboard_format_size(stat.st_size),
-                "modified_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "size_category": ai_console_sandbox_size_category(stat.st_size),
+                "modified_at": modified_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 "modified_ts": stat.st_mtime,
+                "age_seconds": age_seconds,
+                "age_hours": age_hours,
+                "age_days": age_days,
+                "retention_status": retention["retention_status"],
+                "recommended_action": retention["recommended_action"],
+                "stale_warning": retention["stale_warning"],
                 "preview_url": f"/ai-console/sandbox/{artifact_id}",
                 "download_url": f"/api/ai-console/sandbox/{artifact_id}/download",
                 "is_html": True,
@@ -8555,6 +8615,15 @@ def list_ai_console_sandbox_artifacts(limit=50):
                 },
             })
         items.sort(key=lambda item: item["modified_ts"], reverse=True)
+        total_size = sum(int(item.get("size_bytes") or 0) for item in items)
+        result["summary"] = {
+            "total_artifacts": len(items),
+            "total_size_bytes": total_size,
+            "total_size_label": release_dashboard_format_size(total_size),
+            "total_size_mb": round(total_size / (1024 * 1024), 4),
+            "newest_artifact_at": items[0]["modified_at"] if items else "",
+            "oldest_artifact_at": items[-1]["modified_at"] if items else "",
+        }
         result["items"] = [
             {key: value for key, value in item.items() if key != "modified_ts"}
             for item in items[:coerce_int(limit, 50)]
@@ -15601,6 +15670,8 @@ def api_ai_console_sandbox_list():
         "mode": "read_only_sandbox_gallery",
         "root_label": artifacts.get("root_label"),
         "exists": artifacts.get("exists"),
+        "summary": artifacts.get("summary") or {},
+        "retention_policy": artifacts.get("retention_policy") or {},
         "count": len(artifacts.get("items") or []),
         "items": artifacts.get("items") or [],
         "error": artifacts.get("error") or "",
