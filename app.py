@@ -734,7 +734,10 @@ UI_TRANSLATIONS["zh-Hant"].update({
     "Agent Fleet": "Agent Fleet",
     "AI Center Fleet Console": "AI Center Fleet Console",
     "External service URL": "外部服務 URL",
+    "Protected upstream": "受保護 upstream",
     "Recommended domain": "建議網域",
+    "Recommended protection": "建議保護",
+    "Cloudflare Access in front of ai-fleet-console": "在 ai-fleet-console 前方使用 Cloudflare Access",
     "Integration mode": "整合模式",
     "Read-only Phase 1": "唯讀 Phase 1",
     "Security status": "安全狀態",
@@ -751,6 +754,15 @@ UI_TRANSLATIONS["zh-Hant"].update({
     "No token-like content detected in sampled responses.": "抽樣回應未偵測到 token-like 內容。",
     "Review required before public domain binding.": "公開網域綁定前需要審查。",
     "Reverse Proxy Plan": "Reverse Proxy 規劃",
+    "Cloudflare Access Plan": "Cloudflare Access 規劃",
+    "Protected domain link is disabled until Access is active.": "Cloudflare Access 啟用前不提供 protected domain 連結。",
+    "Access active": "Access 已啟用",
+    "Root currently public": "Root 目前公開",
+    "API currently public": "API 目前公開",
+    "WebSocket Upgrade": "WebSocket Upgrade",
+    "Must protect": "必須保護",
+    "Not exposed by DevPilot": "DevPilot 不公開導流",
+    "Protected domain open is pending.": "Protected domain 開啟連結待啟用。",
     "This phase does not execute DNS, NAS, certificate, DB, or deploy actions.": "本階段不執行 DNS、NAS、憑證、DB 或部署動作。",
     "Fleet service remains unchanged.": "Fleet 服務維持不變。",
     "DevPilot read-only entry only.": "僅新增 DevPilot 唯讀入口。",
@@ -759,7 +771,10 @@ UI_TRANSLATIONS["zh-Hant"].update({
 UI_TRANSLATIONS["en"].update({
     "遠端中心": "Remote Center",
     "外部服務 URL": "External service URL",
+    "受保護 upstream": "Protected upstream",
     "建議網域": "Recommended domain",
+    "建議保護": "Recommended protection",
+    "在 ai-fleet-console 前方使用 Cloudflare Access": "Cloudflare Access in front of ai-fleet-console",
     "整合模式": "Integration mode",
     "唯讀 Phase 1": "Read-only Phase 1",
     "安全狀態": "Security status",
@@ -776,6 +791,14 @@ UI_TRANSLATIONS["en"].update({
     "抽樣回應未偵測到 token-like 內容。": "No token-like content detected in sampled responses.",
     "公開網域綁定前需要審查。": "Review required before public domain binding.",
     "Reverse Proxy 規劃": "Reverse Proxy Plan",
+    "Cloudflare Access 規劃": "Cloudflare Access Plan",
+    "Cloudflare Access 啟用前不提供 protected domain 連結。": "Protected domain link is disabled until Access is active.",
+    "Access 已啟用": "Access active",
+    "Root 目前公開": "Root currently public",
+    "API 目前公開": "API currently public",
+    "必須保護": "Must protect",
+    "DevPilot 不公開導流": "Not exposed by DevPilot",
+    "Protected domain 開啟連結待啟用。": "Protected domain open is pending.",
     "本階段不執行 DNS、NAS、憑證、DB 或部署動作。": "This phase does not execute DNS, NAS, certificate, DB, or deploy actions.",
     "Fleet 服務維持不變。": "Fleet service remains unchanged.",
     "僅新增 DevPilot 唯讀入口。": "DevPilot read-only entry only.",
@@ -921,6 +944,8 @@ AI_FLEET_OFFLINE_AFTER_SECONDS = int(os.getenv("AI_FLEET_OFFLINE_AFTER_SECONDS",
 AI_FLEET_POLL_ENABLED = os.getenv("AI_FLEET_POLL_ENABLED", "1").lower() not in ("0", "false", "no", "off")
 AI_CENTER_FLEET_CONSOLE_URL = os.getenv("AI_CENTER_FLEET_CONSOLE_URL", "http://211.75.219.184:3004").rstrip("/")
 AI_CENTER_FLEET_RECOMMENDED_DOMAIN = os.getenv("AI_CENTER_FLEET_RECOMMENDED_DOMAIN", "fleet.aicenter.com.tw")
+AI_CENTER_FLEET_PROTECTED_URL = os.getenv("AI_CENTER_FLEET_PROTECTED_URL", f"https://{AI_CENTER_FLEET_RECOMMENDED_DOMAIN}").rstrip("/")
+AI_CENTER_FLEET_ACCESS_ACTIVE = os.getenv("AI_CENTER_FLEET_ACCESS_ACTIVE", "0").lower() in ("1", "true", "yes", "on")
 AI_CENTER_FLEET_HTTP_TIMEOUT_SECONDS = float(os.getenv("AI_CENTER_FLEET_HTTP_TIMEOUT_SECONDS", "3"))
 _AI_FLEET_THREAD_STARTED = False
 _AI_FLEET_THREAD_LOCK = threading.Lock()
@@ -7159,11 +7184,65 @@ def ai_center_fleet_secret_like_detected(*texts):
     ))
 
 
+def ai_center_fleet_websocket_probe(path):
+    parsed = urllib.parse.urlparse(AI_CENTER_FLEET_CONSOLE_URL)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    result = {
+        "path": path,
+        "ok": False,
+        "status_code": None,
+        "upgrade_header": False,
+        "connection_upgrade": False,
+        "detail": "not checked",
+    }
+    if not host:
+        result["detail"] = "host unavailable"
+        return result
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    request_path = path if str(path).startswith("/") else f"/{path}"
+    host_header = f"{host}:{port}" if port not in (80, 443) else host
+    request_bytes = (
+        f"GET {request_path} HTTP/1.1\r\n"
+        f"Host: {host_header}\r\n"
+        "Connection: Upgrade\r\n"
+        "Upgrade: websocket\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "User-Agent: DevPilot AI Center Fleet websocket preflight/1.0\r\n"
+        "\r\n"
+    ).encode("ascii")
+    try:
+        if parsed.scheme == "https":
+            context = ssl.create_default_context()
+            sock = context.wrap_socket(socket.create_connection((host, port), timeout=AI_CENTER_FLEET_HTTP_TIMEOUT_SECONDS), server_hostname=host)
+        else:
+            sock = socket.create_connection((host, port), timeout=AI_CENTER_FLEET_HTTP_TIMEOUT_SECONDS)
+        with sock:
+            sock.settimeout(AI_CENTER_FLEET_HTTP_TIMEOUT_SECONDS)
+            sock.sendall(request_bytes)
+            raw = sock.recv(2048).decode("iso-8859-1", errors="replace")
+    except Exception as exc:
+        result["detail"] = str(exc)
+        return result
+    status_match = re.search(r"^HTTP/\S+\s+(\d+)", raw)
+    if status_match:
+        result["status_code"] = int(status_match.group(1))
+    header_text = raw.split("\r\n\r\n", 1)[0].lower()
+    result["upgrade_header"] = "upgrade: websocket" in header_text
+    result["connection_upgrade"] = "connection:" in header_text and "upgrade" in header_text
+    result["ok"] = result["status_code"] == 101 and result["upgrade_header"] and result["connection_upgrade"]
+    result["detail"] = "upgrade accepted" if result["ok"] else f"HTTP {result['status_code'] or 'unknown'}"
+    return result
+
+
 def ai_center_fleet_context():
     root_fetch = ai_center_fleet_fetch("/")
     login_fetch = ai_center_fleet_fetch("/login", read_limit=12000)
     machines_fetch = ai_center_fleet_fetch("/api/machines", accept="application/json,text/plain,*/*")
     projects_fetch = ai_center_fleet_fetch("/api/projects", accept="application/json,text/plain,*/*")
+    websocket_browser = ai_center_fleet_websocket_probe("/ws/browser")
+    websocket_agent = ai_center_fleet_websocket_probe("/ws/agent")
 
     root_text = ai_center_fleet_visible_text(root_fetch.get("body"))
     machines_data = ai_center_fleet_json(machines_fetch)
@@ -7190,8 +7269,11 @@ def ai_center_fleet_context():
         "rendered_at": now_str(),
         "title": "AI Center Fleet Console",
         "service": {
-            "url": AI_CENTER_FLEET_CONSOLE_URL,
+            "upstream_url": AI_CENTER_FLEET_CONSOLE_URL,
             "recommended_domain": AI_CENTER_FLEET_RECOMMENDED_DOMAIN,
+            "protected_url": AI_CENTER_FLEET_PROTECTED_URL,
+            "protected_link_enabled": AI_CENTER_FLEET_ACCESS_ACTIVE,
+            "recommended_protection": "Cloudflare Access in front of ai-fleet-console",
             "integration_mode": "Read-only Phase 1",
             "security_status": "pending auth / reverse proxy review",
             "container": "ai-fleet-console-console-1",
@@ -7229,11 +7311,18 @@ def ai_center_fleet_context():
             "repo_paths_visible": bool(repo_paths_visible),
             "agent_state_visible": bool(agent_state_visible),
         },
+        "websocket": {
+            "browser": websocket_browser,
+            "agent": websocket_agent,
+            "upgrade_verified": bool(websocket_browser.get("ok") or websocket_agent.get("ok")),
+        },
         "security": {
             "secret_like_detected": bool(secret_like),
             "machine_names_visible": bool(machine_names_visible or "機器管理" in root_text),
             "repo_paths_visible": bool(repo_paths_visible),
             "agent_heartbeat_visible": bool(agent_state_visible or connected_machines),
+            "root_currently_public": bool(root_public),
+            "api_currently_public": machines_fetch.get("status_code") == 200 or projects_fetch.get("status_code") == 200,
             "websocket_review_required": True,
             "raw_values_hidden": True,
         },
@@ -7246,10 +7335,18 @@ def ai_center_fleet_context():
             "nas_change_this_phase": False,
             "certificate_change_this_phase": False,
         },
+        "must_protect": [
+            "/",
+            "/api/machines",
+            "/api/projects",
+            "WebSocket endpoints",
+            "static app routes",
+        ],
         "recommendations": [
             "Keep 3004 unchanged and treat it as an external protected service.",
             "Add authentication or access control before binding a public domain.",
             "Use fleet.aicenter.com.tw only after DNS/NAS/SSL preflight and manual confirmation.",
+            "Enable DevPilot outbound link only after Cloudflare Access is active.",
             "Keep Fleet DB separate from DevPilot DB until a later schema review.",
             "Expose only summarized machine/project status inside DevPilot; do not mirror raw repo paths or credentials.",
         ],

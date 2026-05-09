@@ -26,23 +26,31 @@
       <div class="card-header fw-bold">{{ ui_t("AI Center Fleet") }}</div>
       <div class="card-body">
         <dl class="row small mb-3">
-          <dt class="col-sm-5">{{ ui_t("External service URL") }}</dt>
-          <dd class="col-sm-7"><code>{{ fleet.service.url }}</code></dd>
+          <dt class="col-sm-5">{{ ui_t("Protected upstream") }}</dt>
+          <dd class="col-sm-7"><code>{{ fleet.service.upstream_url }}</code></dd>
           <dt class="col-sm-5">{{ ui_t("Recommended domain") }}</dt>
           <dd class="col-sm-7"><code>{{ fleet.service.recommended_domain }}</code></dd>
+          <dt class="col-sm-5">{{ ui_t("Recommended protection") }}</dt>
+          <dd class="col-sm-7">{{ ui_t(fleet.service.recommended_protection) }}</dd>
           <dt class="col-sm-5">{{ ui_t("Integration mode") }}</dt>
           <dd class="col-sm-7"><span class="badge text-bg-info">{{ ui_t(fleet.service.integration_mode) }}</span></dd>
           <dt class="col-sm-5">{{ ui_t("Security status") }}</dt>
           <dd class="col-sm-7"><span class="badge text-bg-warning">{{ ui_t(fleet.service.security_status) }}</span></dd>
+          <dt class="col-sm-5">{{ ui_t("Access active") }}</dt>
+          <dd class="col-sm-7"><span class="badge text-bg-{{ 'success' if fleet.service.protected_link_enabled else 'secondary' }}">{{ fleet.service.protected_link_enabled }}</span></dd>
           <dt class="col-sm-5">Container</dt>
           <dd class="col-sm-7"><code>{{ fleet.service.container }}</code></dd>
           <dt class="col-sm-5">Compose</dt>
           <dd class="col-sm-7"><code>{{ fleet.service.compose_path }}</code></dd>
         </dl>
-        <a class="btn btn-outline-dark btn-sm" href="{{ fleet.service.url }}" target="_blank" rel="noopener noreferrer">
-          {{ ui_t("Open external console") }}
-        </a>
-        <div class="small text-muted mt-2">{{ ui_t("External protected service") }}</div>
+        {% if fleet.service.protected_link_enabled %}
+          <a class="btn btn-outline-dark btn-sm" href="{{ fleet.service.protected_url }}" target="_blank" rel="noopener noreferrer">
+            {{ ui_t("Open external console") }}
+          </a>
+        {% else %}
+          <button class="btn btn-outline-secondary btn-sm" type="button" disabled>{{ ui_t("Protected domain open is pending.") }}</button>
+        {% endif %}
+        <div class="small text-muted mt-2">{{ ui_t("Protected domain link is disabled until Access is active.") }}</div>
       </div>
     </div>
   </div>
@@ -74,11 +82,22 @@
           <table class="table table-sm align-middle mb-0">
             <tbody>
               <tr>
-                <th style="width: 220px">{{ ui_t("Root access") }}</th>
+                <th style="width: 220px">{{ ui_t("Must protect") }}</th>
+                <td>
+                  {% for item in fleet.must_protect %}
+                    <span class="badge text-bg-secondary me-1">{{ item }}</span>
+                  {% endfor %}
+                </td>
+              </tr>
+              <tr>
+                <th>{{ ui_t("Root access") }}</th>
                 <td>
                   HTTP {{ fleet.root.status_code or '-' }}
                   {% if fleet.root.latency_ms is not none %}<span class="text-muted small">({{ fleet.root.latency_ms }} ms)</span>{% endif %}
                   <div class="small text-muted">title: {{ fleet.root.title or '-' }}</div>
+                  {% if fleet.security.root_currently_public %}
+                    <span class="badge text-bg-warning">{{ ui_t("Root currently public") }}</span>
+                  {% endif %}
                 </td>
               </tr>
               <tr>
@@ -92,15 +111,28 @@
               </tr>
               <tr>
                 <th>Machines API</th>
-                <td>HTTP {{ fleet.machines.api_status_code or '-' }} · count {{ fleet.machines.count }} · connected {{ fleet.machines.connected_count }}</td>
+                <td>
+                  HTTP {{ fleet.machines.api_status_code or '-' }} · count {{ fleet.machines.count }} · connected {{ fleet.machines.connected_count }}
+                  {% if fleet.machines.api_status_code == 200 %}<span class="badge text-bg-warning">{{ ui_t("API currently public") }}</span>{% endif %}
+                </td>
               </tr>
               <tr>
                 <th>Projects API</th>
-                <td>HTTP {{ fleet.projects.api_status_code or '-' }} · count {{ fleet.projects.count }} · running {{ fleet.projects.running_count }}</td>
+                <td>
+                  HTTP {{ fleet.projects.api_status_code or '-' }} · count {{ fleet.projects.count }} · running {{ fleet.projects.running_count }}
+                  {% if fleet.projects.api_status_code == 200 %}<span class="badge text-bg-warning">{{ ui_t("API currently public") }}</span>{% endif %}
+                </td>
               </tr>
               <tr>
                 <th>{{ ui_t("Agent state visible") }}</th>
                 <td><span class="badge text-bg-{{ 'warning' if fleet.security.agent_heartbeat_visible else 'success' }}">{{ 'yes' if fleet.security.agent_heartbeat_visible else 'no' }}</span></td>
+              </tr>
+              <tr>
+                <th>{{ ui_t("WebSocket Upgrade") }}</th>
+                <td>
+                  <div><code>{{ fleet.websocket.browser.path }}</code> · {{ fleet.websocket.browser.detail }} · upgrade={{ fleet.websocket.browser.upgrade_header }}</div>
+                  <div><code>{{ fleet.websocket.agent.path }}</code> · {{ fleet.websocket.agent.detail }} · upgrade={{ fleet.websocket.agent.upgrade_header }}</div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -121,11 +153,13 @@
 <div class="row g-3">
   <div class="col-lg-6">
     <div class="card shadow-sm h-100">
-      <div class="card-header fw-bold">{{ ui_t("Reverse Proxy Plan") }}</div>
+      <div class="card-header fw-bold">{{ ui_t("Cloudflare Access Plan") }}</div>
       <div class="card-body small">
         <dl class="row mb-0">
           <dt class="col-sm-4">Domain</dt>
           <dd class="col-sm-8"><code>{{ fleet.reverse_proxy_plan.domain }}</code></dd>
+          <dt class="col-sm-4">Protection</dt>
+          <dd class="col-sm-8">{{ ui_t(fleet.service.recommended_protection) }}</dd>
           <dt class="col-sm-4">Source</dt>
           <dd class="col-sm-8">{{ fleet.reverse_proxy_plan.source }}</dd>
           <dt class="col-sm-4">Destination</dt>
