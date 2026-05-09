@@ -8635,6 +8635,60 @@ def list_ai_console_sandbox_artifacts(limit=50):
         return result
 
 
+def ai_console_sandbox_cleanup_plan():
+    artifacts = list_ai_console_sandbox_artifacts(limit=10000)
+    criteria = {
+        "stale_after_days": 30,
+        "review_after_days": 7,
+        "max_file_types": [".html"],
+        "recursive_scan": False,
+        "owner_only_future_cleanup_required": True,
+    }
+    candidates = []
+    for item in artifacts.get("items") or []:
+        if float(item.get("age_days") or 0) <= criteria["stale_after_days"]:
+            continue
+        candidates.append({
+            "artifact_id": item.get("artifact_id"),
+            "filename": item.get("filename"),
+            "age_days": item.get("age_days"),
+            "size_bytes": item.get("size_bytes"),
+            "size_label": item.get("size_label"),
+            "reason": "stale_after_30_days",
+            "future_action": "delete_candidate",
+            "preview_url": item.get("preview_url"),
+            "download_url": item.get("download_url"),
+        })
+    potential_bytes = sum(int(item.get("size_bytes") or 0) for item in candidates)
+    return {
+        "ok": artifacts.get("ok", True),
+        "mode": "dry_run",
+        "cleanup_enabled": False,
+        "delete_enabled": False,
+        "apply_to_project_enabled": False,
+        "criteria": criteria,
+        "summary": {
+            "total_artifacts": (artifacts.get("summary") or {}).get("total_artifacts", 0),
+            "eligible_for_future_cleanup": len(candidates),
+            "potential_bytes_reclaimable": potential_bytes,
+            "potential_size_label": release_dashboard_format_size(potential_bytes),
+            "potential_size_mb": round(potential_bytes / (1024 * 1024), 4),
+        },
+        "candidates": candidates,
+        "safety": {
+            "dry_run_only": True,
+            "artifact_delete_performed": False,
+            "artifact_modify_performed": False,
+            "project_repo_write": False,
+            "deploy": False,
+            "dns_write": False,
+            "telegram_send": False,
+            "db_write": False,
+        },
+        "note": "Cleanup planning is read-only. No artifacts are deleted or modified.",
+    }
+
+
 def run_ai_console_claude_preview(payload):
     prompt = str((payload or {}).get("prompt") or (payload or {}).get("task_prompt") or "").strip()
     if not prompt:
@@ -10922,10 +10976,12 @@ def ai_console_page():
 @require_roles("owner", "admin")
 def ai_console_sandbox_gallery_page():
     artifacts = list_ai_console_sandbox_artifacts(limit=50)
+    cleanup_plan = ai_console_sandbox_cleanup_plan()
     return render_template(
         "ai_console_sandbox_gallery.html",
         app_name=APP_NAME,
         artifacts=artifacts,
+        cleanup_plan=cleanup_plan,
     )
 
 
@@ -15685,6 +15741,12 @@ def api_ai_console_sandbox_list():
             "telegram_send": False,
         },
     })
+
+
+@app.route("/api/ai-console/sandbox/cleanup-plan", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_ai_console_sandbox_cleanup_plan():
+    return jsonify(ai_console_sandbox_cleanup_plan())
 
 
 @app.route("/api/ai-console/sandbox/<artifact_id>/download", methods=["GET"])

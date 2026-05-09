@@ -3,6 +3,8 @@
 {% set artifact_items = artifacts["items"] %}
 {% set summary = artifacts["summary"] %}
 {% set retention_policy = artifacts["retention_policy"] %}
+{% set cleanup_summary = cleanup_plan["summary"] %}
+{% set cleanup_criteria = cleanup_plan["criteria"] %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h1 class="h3 mb-1">AI Console Sandbox Gallery</h1>
@@ -21,6 +23,52 @@
   <span class="badge text-bg-secondary">NO DEPLOY</span>
   <span class="badge text-bg-secondary">NO DNS</span>
   <span class="small">This page lists sandbox HTML artifacts only. It does not delete, apply, deploy, or move files into any project.</span>
+</div>
+
+<div class="card shadow-sm mb-3 border-warning">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>Cleanup Planning</span>
+    <span class="badge text-bg-warning">DRY-RUN ONLY</span>
+  </div>
+  <div class="card-body">
+    <div class="alert alert-warning small mb-3">
+      Cleanup is not enabled. This section only estimates future candidates and reclaimable space; it does not remove or modify sandbox files.
+    </div>
+    <div class="row g-3">
+      <div class="col-md-3">
+        <div class="border rounded p-3 h-100">
+          <div class="text-muted small">Eligible for future cleanup</div>
+          <div class="h4 mb-0">{{ cleanup_summary.eligible_for_future_cleanup }}</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="border rounded p-3 h-100">
+          <div class="text-muted small">Potential reclaimable</div>
+          <div class="h4 mb-0">{{ cleanup_summary.potential_size_label }}</div>
+          <div class="small text-muted">{{ cleanup_summary.potential_size_mb }} MB</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="border rounded p-3 h-100">
+          <div class="text-muted small">Review after</div>
+          <div class="h4 mb-0">{{ cleanup_criteria.review_after_days }} days</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="border rounded p-3 h-100">
+          <div class="text-muted small">Candidate after</div>
+          <div class="h4 mb-0">{{ cleanup_criteria.stale_after_days }} days</div>
+        </div>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 mt-3">
+      <span class="badge text-bg-secondary">no file removal</span>
+      <span class="badge text-bg-secondary">no project write</span>
+      <span class="badge text-bg-secondary">no deploy</span>
+      <span class="badge text-bg-secondary">HTML only</span>
+      <a class="badge text-bg-light text-decoration-none" href="/api/ai-console/sandbox/cleanup-plan">Dry-run JSON</a>
+    </div>
+  </div>
 </div>
 
 <div class="row g-3 mb-3">
