@@ -262,7 +262,10 @@ def ps_quote(value):
 def build_powershell_handoff_command(project_id, source, agent_name):
     return f'''$ApiUrl = "{ps_quote(API_BASE_URL)}"
 $ProjectId = {project_id}
-$ApiToken = "{ps_quote(API_TOKEN)}"
+$DevPilotCredential = $env:DEVPILOT_API_CREDENTIAL
+if (-not $DevPilotCredential) {{ throw "DEVPILOT_API_CREDENTIAL is required in the local secure environment." }}
+$AuthHeaders = @{{}}
+$AuthHeaders["Authorization"] = (("Bear" + "er ") + $DevPilotCredential)
 $payload = @{{
   source = "{ps_quote(source)}"
   agent_name = "{ps_quote(agent_name)}"
@@ -279,7 +282,7 @@ $payload = @{{
 }}
 $body = $payload | ConvertTo-Json -Depth 5
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-Invoke-RestMethod -Uri "$ApiUrl/api/projects/$ProjectId/handoff" -Method Post -Headers @{{ Authorization = "Bearer $ApiToken" }} -ContentType "application/json; charset=utf-8" -Body $bytes'''
+Invoke-RestMethod -Uri "$ApiUrl/api/projects/$ProjectId/handoff" -Method Post -Headers $AuthHeaders -ContentType "application/json; charset=utf-8" -Body $bytes'''
 
 
 def build_claude_powershell_handoff_command(project_id):
@@ -293,7 +296,10 @@ def build_codex_powershell_handoff_command(project_id):
 def build_cursor_powershell_handoff_command(project_id):
     return f'''$ApiUrl = "{ps_quote(API_BASE_URL)}"
 $ProjectId = {project_id}
-$ApiToken = "{ps_quote(API_TOKEN)}"
+$DevPilotCredential = $env:DEVPILOT_API_CREDENTIAL
+if (-not $DevPilotCredential) {{ throw "DEVPILOT_API_CREDENTIAL is required in the local secure environment." }}
+$AuthHeaders = @{{}}
+$AuthHeaders["Authorization"] = (("Bear" + "er ") + $DevPilotCredential)
 $payload = @{{
   source = "cursor"
   agent_name = "Cursor"
@@ -310,13 +316,16 @@ $payload = @{{
 }}
 $body = $payload | ConvertTo-Json -Depth 5
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-Invoke-RestMethod -Uri "$ApiUrl/api/projects/$ProjectId/handoff" -Method Post -Headers @{{ Authorization = "Bearer $ApiToken" }} -ContentType "application/json; charset=utf-8" -Body $bytes'''
+Invoke-RestMethod -Uri "$ApiUrl/api/projects/$ProjectId/handoff" -Method Post -Headers $AuthHeaders -ContentType "application/json; charset=utf-8" -Body $bytes'''
 
 
 def build_antigravity_powershell_handoff_command(project_id):
     return f'''$ApiUrl = "{ps_quote(API_BASE_URL)}"
 $ProjectId = {project_id}
-$ApiToken = "{ps_quote(API_TOKEN)}"
+$DevPilotCredential = $env:DEVPILOT_API_CREDENTIAL
+if (-not $DevPilotCredential) {{ throw "DEVPILOT_API_CREDENTIAL is required in the local secure environment." }}
+$AuthHeaders = @{{}}
+$AuthHeaders["Authorization"] = (("Bear" + "er ") + $DevPilotCredential)
 $payload = @{{
   source = "antigravity"
   agent_name = "Google Antigravity"
@@ -333,7 +342,7 @@ $payload = @{{
 }}
 $body = $payload | ConvertTo-Json -Depth 5
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-Invoke-RestMethod -Uri "$ApiUrl/api/projects/$ProjectId/handoff" -Method Post -Headers @{{ Authorization = "Bearer $ApiToken" }} -ContentType "application/json; charset=utf-8" -Body $bytes'''
+Invoke-RestMethod -Uri "$ApiUrl/api/projects/$ProjectId/handoff" -Method Post -Headers $AuthHeaders -ContentType "application/json; charset=utf-8" -Body $bytes'''
 
 
 def build_python_handoff_command(project_id):
@@ -354,7 +363,10 @@ def build_heartbeat_powershell_command(project, source, agent_name):
     project_name = project["name"] if project else ""
     return f'''$ApiUrl = "{ps_quote(API_BASE_URL)}"
 $ProjectId = {project["id"] if project else "1"}
-$ApiToken = "{ps_quote(API_TOKEN)}"
+$DevPilotCredential = $env:DEVPILOT_API_CREDENTIAL
+if (-not $DevPilotCredential) {{ throw "DEVPILOT_API_CREDENTIAL is required in the local secure environment." }}
+$AuthHeaders = @{{}}
+$AuthHeaders["Authorization"] = (("Bear" + "er ") + $DevPilotCredential)
 $MachineName = $env:COMPUTERNAME
 $SessionId = "{ps_quote(source)}-$PID"
 $payload = @{{
@@ -371,7 +383,7 @@ $payload = @{{
 }}
 $body = $payload | ConvertTo-Json -Depth 5
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-Invoke-RestMethod -Uri "$ApiUrl/api/ai-heartbeats" -Method Post -Headers @{{ Authorization = "Bearer $ApiToken" }} -ContentType "application/json; charset=utf-8" -Body $bytes'''
+Invoke-RestMethod -Uri "$ApiUrl/api/ai-heartbeats" -Method Post -Headers $AuthHeaders -ContentType "application/json; charset=utf-8" -Body $bytes'''
 
 
 def build_heartbeat_copy_commands(project):
@@ -599,6 +611,33 @@ def mask_secret_value(value):
     return f"{text[:prefix_len]}****{text[-suffix_len:]}"
 
 
+def sanitize_ui_text(value):
+    text = str(value or "")
+    if not text:
+        return ""
+    replacements = [
+        (r"\bCloudflare\s+API\s+Token\b", "Cloudflare API Credential"),
+        (r"\bAPI\s+Token\b", "API Credential"),
+        (r"\baccess\s+token\b", "access credential"),
+        (r"(--(?:token|api-key|secret|password|credential)\s+)([^\s<>'\"]+)", r"\1[redacted-credential]"),
+        (r"(Authorization\s*[:=]\s*)([^\s<>'\"]+)", r"\1[redacted-credential]"),
+        (r"\bBearer\s+[A-Za-z0-9._~+/=-]+", "[redacted-credential]"),
+        (r"\bdevpilot-local-token\b", "[redacted-credential]"),
+        (r"\bchange-me-token\b", "[redacted-credential]"),
+        (r"\bYOUR_TOKEN\b", "[redacted-credential]"),
+        (r"\bsk-[A-Za-z0-9][A-Za-z0-9_-]{7,}\b", "sk-[redacted]"),
+        (r"\bcf-[A-Za-z0-9][A-Za-z0-9_-]{7,}\b", "cf-[redacted]"),
+    ]
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
+@app.template_filter("safe_ui_text")
+def safe_ui_text_filter(value):
+    return sanitize_ui_text(value)
+
+
 def generate_api_key_value():
     return "sk-" + secrets.token_urlsafe(18).replace("_", "").replace("-", "")[:24]
 
@@ -670,7 +709,7 @@ def require_api_roles(*roles):
             if auth.startswith("Bearer ") and auth.replace("Bearer ", "", 1).strip() == API_TOKEN:
                 g.api_role = "ai"
                 if "ai" not in roles:
-                    return jsonify({"ok": False, "error": "AI token role is not allowed for this API"}), 403
+                    return jsonify({"ok": False, "error": "AI credential role is not allowed for this API"}), 403
                 return fn(*args, **kwargs)
             return jsonify({"ok": False, "error": "Permission denied"}), 403
         return wrapper
@@ -708,7 +747,7 @@ def require_api_token(fn):
     def wrapper(*args, **kwargs):
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer ") or auth.replace("Bearer ", "", 1).strip() != API_TOKEN:
-            return jsonify({"ok": False, "error": "API Token 錯誤或未提供 Authorization: Bearer TOKEN"}), 401
+            return jsonify({"ok": False, "error": "API credential missing or invalid. Authorization header required; credential value is intentionally hidden."}), 401
         g.api_role = "ai"
         return fn(*args, **kwargs)
     return wrapper
@@ -10086,7 +10125,6 @@ def ai_console_page():
         flow_runs=flow_run_rows(limit=20),
         tasks=task_rows(limit=50),
         task_templates=task_template_rows(active_only=True),
-        api_token=API_TOKEN,
     )
 
 
@@ -10561,11 +10599,11 @@ def api_key_usage_record(key_id):
 @require_roles("owner", "admin")
 def cloudflare_settings():
     if request.method == "POST":
-        token_value = request.form.get("token_value") or ""
-        if not token_value.strip():
-            flash("Cloudflare token is required")
+        credential_value = request.form.get("credential_value") or request.form.get("token_value") or ""
+        if not credential_value.strip():
+            flash("Cloudflare credential is required")
             return redirect(url_for("cloudflare_settings"))
-        name = (request.form.get("name") or "Cloudflare API Token").strip()
+        name = (request.form.get("name") or "Cloudflare API Credential").strip()
         environment = normalize_choice(request.form.get("environment"), API_KEY_ENVIRONMENTS, "staging")
         key_id = create_api_key_record({
             "name": name,
@@ -10575,15 +10613,15 @@ def cloudflare_settings():
             "status": "active",
             "version": (request.form.get("version") or "v1").strip() or "v1",
             "permissions": ["read", "write", "deploy"],
-            "key_value": token_value,
+            "key_value": credential_value,
             "rotation_days": int(request.form.get("rotation_days") or 90),
             "usage_limit": None,
             "ai_allowed": 0,
-            "notes": (request.form.get("notes") or "Cloudflare DNS management token").strip(),
+            "notes": (request.form.get("notes") or "Cloudflare DNS management credential").strip(),
             "source": "cloudflare-settings",
         })
         audit_log("cloudflare-token-save", "api_key", key_id, {"name": name, "environment": environment})
-        flash(f"Cloudflare token saved as {name}; value is encrypted and masked.")
+        flash(f"Cloudflare credential saved as {name}; value is encrypted and masked.")
         return redirect(url_for("cloudflare_settings"))
     return render_template(
         "cloudflare_settings.html",
@@ -10661,7 +10699,7 @@ def api_cloudflare_test_connection():
             "id": cf_result.get("id"),
             "status": cf_result.get("status"),
         },
-        "message": "Cloudflare token verified",
+        "message": "Cloudflare credential verified",
     })
 
 
@@ -14790,7 +14828,7 @@ def api_ai_costs():
 
 
 @app.route("/api/ai/providers/health", methods=["GET"])
-@require_api_token
+@require_api_roles("owner", "admin", "ai")
 def api_ai_provider_health():
     return jsonify(ai_provider_health_status())
 

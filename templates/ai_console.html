@@ -372,7 +372,7 @@
       btn.disabled = true;
       btn.textContent = 'Testing...';
       try {
-        const resp = await fetch('/api/ai/providers/health', { headers: { 'Authorization': 'Bearer {{ api_token }}' } });
+        const resp = await fetch('/api/ai/providers/health', { credentials: 'same-origin' });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         setProvider('openai', data.openai || {});

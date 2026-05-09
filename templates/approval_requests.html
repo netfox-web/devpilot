@@ -16,6 +16,11 @@
   </div>
 </div>
 
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">Controlled notification testing area.</div>
+  <div class="small">Use test sends only inside an authorized QA phase. Real DNS/deploy approval flows require explicit phase authorization.</div>
+</div>
+
 <div class="card shadow-sm mb-3">
   <div class="card-body">
     <form class="row g-2 align-items-end" method="get" action="/approval-requests">
@@ -129,7 +134,7 @@
             </td>
             <td>
               {% if item.status == 'pending' %}
-                <button class="btn btn-sm btn-outline-primary" data-send-telegram="{{ item.id }}">Mock Send</button>
+                <button class="btn btn-sm btn-outline-primary" data-send-telegram="{{ item.id }}">Controlled Test Send</button>
               {% else %}
                 <span class="small text-muted">processed</span>
               {% endif %}

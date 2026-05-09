@@ -16,6 +16,11 @@
   </div>
 </div>
 
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">Legacy/manual domain binding controls are present below.</div>
+  <div class="small">Verify the DNS safety gate before any domain mapping change. This page still does not perform Cloudflare DNS writes.</div>
+</div>
+
 {% if not domain_data.ok %}
   <div class="alert alert-warning">
     <div class="fw-bold">Domain Center is not available</div>

@@ -13,6 +13,11 @@
   </div>
 </div>
 
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">Legacy operational controls are present on this project page.</div>
+  <div class="small">Review carefully before use. Production-impacting actions require a separate approval phase. This page is distinct from the read-only safety dashboards.</div>
+</div>
+
 <div class="row g-3 mb-3">
   <div class="col-lg-8">
     <div class="card shadow-sm h-100">
@@ -38,7 +43,7 @@
         <div>專案 ID：<code>{{ project.id }}</code></div>
         <div>查狀態：<code>GET /api/projects/{{ project.id }}/status</code></div>
         <div>回寫交接：<code>POST /api/projects/{{ project.id }}/handoff</code></div>
-        <div class="text-muted mt-2">Token 請放在 Header：<br><code>Authorization: Bearer YOUR_TOKEN</code></div>
+        <div class="text-muted mt-2">Secure auth header required. The credential value is intentionally hidden on this page.</div>
       </div>
     </div>
   </div>
@@ -270,10 +275,10 @@
         {% for message in flow_messages[:5] %}
           <div class="list-group-item px-0">
             <div class="d-flex justify-content-between gap-2">
-              <span>{{ message.prompt_summary }}</span>
+              <span>{{ message.prompt_summary|safe_ui_text }}</span>
               <span class="small text-muted">{{ message.created_at }}</span>
             </div>
-            <div class="small text-muted">{{ message.response_text or message.raw_response }}</div>
+            <div class="small text-muted">{{ (message.response_text or message.raw_response)|safe_ui_text }}</div>
           </div>
         {% endfor %}
       </div>
@@ -305,7 +310,7 @@
                 <td>{{ run.done_tasks or 0 }} / {{ run.failed_tasks or 0 }}</td>
                 <td><code class="small">{{ run.stopped_reason or '-' }}</code></td>
                 <td style="min-width: 24rem;">
-                  <pre class="small bg-light border rounded p-2 mb-0 text-wrap">{{ run.summary or '-' }}</pre>
+                  <pre class="small bg-light border rounded p-2 mb-0 text-wrap">{{ (run.summary or '-')|safe_ui_text }}</pre>
                 </td>
               </tr>
             {% else %}
@@ -421,7 +426,7 @@
                 <div class="text-muted">{{ task.approved_by or 'local_admin' }} / {{ task.approved_at }}</div>
               {% endif %}
             </td>
-            <td class="small text-break" style="min-width: 240px;">{{ task.result or task.error_message or task.prompt }}</td>
+            <td class="small text-break" style="min-width: 240px;">{{ (task.result or task.error_message or task.prompt)|safe_ui_text }}</td>
             <td class="small text-muted">{{ task.updated_at or '-' }}</td>
             <td>
               <div class="d-flex flex-wrap gap-1 justify-content-end">
@@ -624,7 +629,7 @@
         <textarea class="form-control" name="features" rows="3" placeholder="台灣製&#10;80抽&#10;RO純水"></textarea>
       </div>
     </form>
-    <div class="small text-muted mt-2">Claude 產生短影音腳本與貼文文案；Kling 生成影片。所有 access token 只從環境變數讀取，不會顯示、寫入 log 或存進資料庫；發佈必須手動按鈕確認。</div>
+          <div class="small text-muted mt-2">Claude 產生短影音腳本與貼文文案；Kling 生成影片。所有 access credentials 只從環境變數讀取，不會顯示、寫入 log 或存進資料庫；發佈必須手動按鈕確認。</div>
 
     <hr>
     <div class="table-responsive">
@@ -728,7 +733,7 @@
       <div class="col-xl-3 col-lg-4 col-md-6">
         <div class="border rounded p-3 h-100 d-flex flex-column">
           <button type="button" class="btn btn-outline-secondary w-100 js-copy-handoff" data-command-key="python">複製 Python 回寫指令</button>
-          <div class="small text-muted mt-2">使用 scripts/report_handoff.py，Token 從 .env 或環境變數讀取。</div>
+          <div class="small text-muted mt-2">Use scripts/report_handoff.py with credentials supplied from a secure local environment. No credential value is shown here.</div>
         </div>
       </div>
     </div>
@@ -768,7 +773,7 @@
                 <td>{{ h.agent_name or '-' }}</td>
                 <td><span class="badge text-bg-{{ 'danger' if h.is_offline else ('success' if h.display_status in ['running', 'done'] else ('warning' if h.display_status == 'error' else 'secondary')) }}">{{ h.display_status }}</span></td>
                 <td>{{ h.machine_name or '-' }}</td>
-                <td class="small">{{ h.current_task or '-' }}<div class="text-muted">{{ h.last_message or '' }}</div></td>
+                <td class="small">{{ (h.current_task or '-')|safe_ui_text }}<div class="text-muted">{{ (h.last_message or '')|safe_ui_text }}</div></td>
                 <td class="small text-muted">{{ h.last_seen_at or '-' }}</td>
               </tr>
             {% else %}
@@ -839,8 +844,8 @@
               <span class="badge text-bg-dark">{{ l.source }}</span>
               <span class="badge text-bg-info">{{ l.work_mode }}</span>
               {% if l.is_hidden %}<span class="badge text-bg-warning">已隱藏</span>{% endif %}
-              <b>{{ l.summary or '無摘要' }}</b>
-              {% if l.is_hidden %}<div class="small text-muted">隱藏時間：{{ l.hidden_at or '-' }}｜原因：{{ l.hidden_reason or '-' }}</div>{% endif %}
+              <b>{{ (l.summary or '無摘要')|safe_ui_text }}</b>
+              {% if l.is_hidden %}<div class="small text-muted">隱藏時間：{{ l.hidden_at or '-' }}｜原因：{{ (l.hidden_reason or '-')|safe_ui_text }}</div>{% endif %}
             </div>
             <div class="text-end">
               <small class="text-muted d-block">{{ l.created_at }}</small>
@@ -855,12 +860,12 @@
               {% endif %}
             </div>
           </div>
-          <div class="small mt-2">測試：{{ l.test_result or '-' }}</div>
-          <div class="small">Git：{{ l.git_status or '-' }}｜Branch：{{ l.repo_branch or '-' }}｜Commit：{{ l.commit_sha or '-' }}</div>
-          <div class="small">完成階段：{{ parse_json_list(l.completed_phases)|join(', ') }}</div>
-          <div class="small">修改檔案：{{ parse_json_list(l.changed_files)|join(', ') }}</div>
-          <div class="small text-danger">注意：{{ l.warnings or '-' }}</div>
-          <div class="small text-primary">下一步：{{ l.next_steps or '-' }}</div>
+          <div class="small mt-2">測試：{{ (l.test_result or '-')|safe_ui_text }}</div>
+          <div class="small">Git：{{ (l.git_status or '-')|safe_ui_text }}｜Branch：{{ (l.repo_branch or '-')|safe_ui_text }}｜Commit：{{ (l.commit_sha or '-')|safe_ui_text }}</div>
+          <div class="small">完成階段：{{ (parse_json_list(l.completed_phases)|join(', '))|safe_ui_text }}</div>
+          <div class="small">修改檔案：{{ (parse_json_list(l.changed_files)|join(', '))|safe_ui_text }}</div>
+          <div class="small text-danger">注意：{{ (l.warnings or '-')|safe_ui_text }}</div>
+          <div class="small text-primary">下一步：{{ (l.next_steps or '-')|safe_ui_text }}</div>
         </div>{% else %}<div class="list-group-item text-muted">尚無交接紀錄</div>{% endfor %}
       </div></div></div>
       <div class="col-lg-5"><form class="card shadow-sm p-3" method="post" action="/projects/{{ project.id }}/handoff"><h5>新增交接紀錄</h5>
@@ -883,6 +888,10 @@
   </div>
 
   <div class="tab-pane fade" id="deploy">
+    <div class="alert alert-danger page-note py-2">
+      <div class="fw-semibold">Legacy deployment controls below can affect runtime services.</div>
+      <div class="small">Use only inside an authorized deployment phase. Read-only dashboards never trigger these actions.</div>
+    </div>
     <div class="card shadow-sm mb-3">
       <div class="card-header fw-bold d-flex justify-content-between align-items-center">
         <span>多環境部署</span>
@@ -915,7 +924,7 @@
                 <option value="">選擇已核准 production job</option>
                 {% for job in deployment_jobs %}
                   {% if job.environment == 'production' and job.status == 'approved' %}
-                    <option value="{{ job.id }}">#{{ job.id }} {{ job.task or 'production deploy' }}</option>
+                    <option value="{{ job.id }}">#{{ job.id }} {{ (job.task or 'production deploy')|safe_ui_text }}</option>
                   {% endif %}
                 {% endfor %}
               </select>
@@ -939,7 +948,7 @@
                   <td>{{ job.environment }}</td>
                   <td><span class="badge text-bg-{{ 'success' if job.status in ['approved', 'succeeded'] else ('danger' if job.status == 'failed' else 'secondary') }}">{{ job.status }}</span></td>
                   <td>{% if job.validation_status %}<span class="badge text-bg-{{ 'success' if job.validation_status == 'pass' else 'danger' }}">{{ job.validation_status }}</span>{% else %}-{% endif %}</td>
-                  <td class="small">{{ job.task or '-' }}</td>
+                  <td class="small">{{ (job.task or '-')|safe_ui_text }}</td>
                   <td class="small text-break">{{ job.target_path or '-' }}</td>
                   <td class="small text-muted">{{ job.updated_at or '-' }}</td>
                   <td>
@@ -974,7 +983,7 @@
                 <div class="small border-bottom py-2">
                   <span class="badge text-bg-{{ 'success' if report.status == 'pass' else 'danger' }}">{{ report.status }}</span>
                   <span class="ms-1">score {{ report.score }}</span>
-                  <div>{{ report.summary or '-' }}</div>
+                  <div>{{ (report.summary or '-')|safe_ui_text }}</div>
                   <div class="text-muted">{{ report.created_at }}</div>
                 </div>
               {% else %}
@@ -1148,23 +1157,23 @@
             <td><span class="badge text-bg-{{ 'success' if job.status in ['waiting_approval', 'deployed'] else ('danger' if job.status == 'failed' else ('warning' if job.status == 'running' else 'secondary')) }}">{{ job.status }}</span></td>
             <td>{{ job.risk_level or '-' }}</td>
             <td class="small" style="min-width: 280px;">
-              <div>{{ job.task_prompt or job.task or '-' }}</div>
+              <div>{{ (job.task_prompt or job.task or '-')|safe_ui_text }}</div>
               {% if job.changed_files %}
                 <div class="mt-2">
                   <span class="fw-semibold">changed_files</span>
-                  <pre class="small bg-light border rounded p-2 mb-1 text-wrap">{{ job.changed_files }}</pre>
+                  <pre class="small bg-light border rounded p-2 mb-1 text-wrap">{{ job.changed_files|safe_ui_text }}</pre>
                 </div>
               {% endif %}
               {% if job.diff_stat %}
                 <div class="mt-2">
                   <span class="fw-semibold">diff_stat</span>
-                  <pre class="small bg-light border rounded p-2 mb-1 text-wrap">{{ job.diff_stat }}</pre>
+                  <pre class="small bg-light border rounded p-2 mb-1 text-wrap">{{ job.diff_stat|safe_ui_text }}</pre>
                 </div>
               {% endif %}
               {% if job.error_message %}
                 <div class="mt-2 text-danger">
                   <span class="fw-semibold">error_message</span>
-                  <pre class="small bg-light border border-danger-subtle rounded p-2 mb-1 text-wrap">{{ job.error_message }}</pre>
+                  <pre class="small bg-light border border-danger-subtle rounded p-2 mb-1 text-wrap">{{ job.error_message|safe_ui_text }}</pre>
                 </div>
               {% endif %}
             </td>

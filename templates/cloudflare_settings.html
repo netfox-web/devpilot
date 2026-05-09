@@ -3,7 +3,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h1 class="h3 mb-1">Cloudflare Settings</h1>
-    <div class="text-muted small">Tokens are encrypted in the API Key Center and shown as masked values only.</div>
+    <div class="text-muted small">Cloudflare credentials are encrypted in the API Key Center and shown as masked values only.</div>
     <div class="safety-badge-strip">
       <span class="badge text-bg-info">MASKED VALUES ONLY</span>
       <span class="badge text-bg-secondary">DNS WRITE DISABLED</span>
@@ -13,17 +13,22 @@
   <a class="btn btn-outline-secondary" href="/api-keys">API Keys</a>
 </div>
 
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">API key management area.</div>
+  <div class="small">Do not paste credential values into screenshots or chat. DNS write remains disabled unless a separate approved phase enables it.</div>
+</div>
+
 <div class="row g-3">
   <div class="col-xl-4">
     <div class="card shadow-sm h-100">
-      <div class="card-header fw-bold">Save Cloudflare Token</div>
+      <div class="card-header fw-bold">Save Cloudflare Credential</div>
       <div class="card-body">
         <form method="post" action="/cloudflare">
           <label class="form-label">Name</label>
-          <input class="form-control mb-2" name="name" value="Cloudflare API Token" required>
+          <input class="form-control mb-2" name="name" value="Cloudflare API Credential" required>
 
-          <label class="form-label">Token value</label>
-          <input class="form-control mb-2" name="token_value" type="password" autocomplete="off" required>
+          <label class="form-label">Credential value</label>
+          <input class="form-control mb-2" name="credential_value" type="password" autocomplete="off" required>
 
           <div class="row g-2">
             <div class="col-md-6">
@@ -44,9 +49,9 @@
           <input class="form-control mb-2" name="rotation_days" type="number" min="1" value="90">
 
           <label class="form-label">Notes</label>
-          <textarea class="form-control mb-3" name="notes" rows="2" placeholder="DNS zone read/edit token"></textarea>
+          <textarea class="form-control mb-3" name="notes" rows="2" placeholder="DNS zone read/edit credential"></textarea>
 
-          <button class="btn btn-primary w-100">Encrypt and save</button>
+          <button class="btn btn-primary w-100">Encrypt and save credential</button>
         </form>
       </div>
     </div>
@@ -55,7 +60,7 @@
   <div class="col-xl-8">
     <div class="card shadow-sm h-100">
       <div class="card-header fw-bold d-flex justify-content-between align-items-center">
-        <span>Cloudflare Tokens</span>
+        <span>Cloudflare Credentials</span>
         <button class="btn btn-sm btn-outline-primary" id="loadZonesBtn" type="button">Load zones</button>
       </div>
       <div class="table-responsive">
@@ -71,25 +76,25 @@
             </tr>
           </thead>
           <tbody>
-            {% for token in tokens %}
+            {% for credential in tokens %}
               <tr>
                 <td>
-                  <div class="fw-semibold">{{ token.name }}</div>
-                  <div class="small text-muted">#{{ token.id }} {{ token.version }}</div>
+                  <div class="fw-semibold">{{ credential.name|safe_ui_text }}</div>
+                  <div class="small text-muted">#{{ credential.id }} {{ credential.version }}</div>
                 </td>
-                <td><span class="badge text-bg-{{ 'danger' if token.environment == 'production' else 'secondary' }}">{{ token.environment }}</span></td>
-                <td><code>{{ token.display_mask }}</code></td>
-                <td><span class="badge text-bg-{{ 'success' if token.status == 'active' else 'secondary' }}">{{ token.status }}</span></td>
-                <td class="small">{{ token.updated_at or token.created_at }}</td>
+                <td><span class="badge text-bg-{{ 'danger' if credential.environment == 'production' else 'secondary' }}">{{ credential.environment }}</span></td>
+                <td><code>{{ credential.display_mask }}</code></td>
+                <td><span class="badge text-bg-{{ 'success' if credential.status == 'active' else 'secondary' }}">{{ credential.status }}</span></td>
+                <td class="small">{{ credential.updated_at or credential.created_at }}</td>
                 <td class="text-end">
-                  {% if token.status == 'active' %}
-                    <button class="btn btn-sm btn-outline-success js-test-token" data-key-id="{{ token.id }}" type="button">Test</button>
-                    <button class="btn btn-sm btn-outline-primary js-load-zones" data-key-id="{{ token.id }}" type="button">Zones</button>
+                  {% if credential.status == 'active' %}
+                    <button class="btn btn-sm btn-outline-success js-test-credential" data-key-id="{{ credential.id }}" type="button">Test</button>
+                    <button class="btn btn-sm btn-outline-primary js-load-zones" data-key-id="{{ credential.id }}" type="button">Zones</button>
                   {% endif %}
                 </td>
               </tr>
             {% else %}
-              <tr><td colspan="6" class="text-center text-muted py-4">No Cloudflare token yet</td></tr>
+              <tr><td colspan="6" class="text-center text-muted py-4">No Cloudflare credential yet</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -217,15 +222,15 @@ async function readJson(response) {
   return payload;
 }
 
-async function testToken(apiKeyId) {
+async function testCredential(apiKeyId) {
   selectedApiKeyId = apiKeyId || selectedApiKeyId;
-  setStatus("Testing Cloudflare token...", "secondary");
+  setStatus("Testing Cloudflare credential...", "secondary");
   const payload = await fetch("/api/cloudflare/test-connection", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({api_key_id: apiKeyId})
   }).then(readJson);
-  setStatus(`Token verified: ${payload.api_key.masked} (${payload.cloudflare.status || "ok"})`, "success");
+  setStatus(`Credential verified: ${payload.api_key.masked} (${payload.cloudflare.status || "ok"})`, "success");
 }
 
 async function loadZones(apiKeyId) {
@@ -258,8 +263,8 @@ async function loadZones(apiKeyId) {
   setStatus(`Loaded ${payload.zones.length} zone(s).`, "success");
 }
 
-document.querySelectorAll(".js-test-token").forEach((button) => {
-  button.addEventListener("click", () => testToken(button.dataset.keyId).catch((error) => setStatus(error.message, "danger")));
+document.querySelectorAll(".js-test-credential").forEach((button) => {
+  button.addEventListener("click", () => testCredential(button.dataset.keyId).catch((error) => setStatus(error.message, "danger")));
 });
 document.querySelectorAll(".js-load-zones").forEach((button) => {
   button.addEventListener("click", () => loadZones(button.dataset.keyId).catch((error) => setStatus(error.message, "danger")));
