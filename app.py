@@ -1,8 +1,10 @@
 import os
 import base64
+import csv
 import hashlib
 import hmac
 import html as html_lib
+import io
 import ipaddress
 import json
 import re
@@ -5219,6 +5221,62 @@ def domain_action_plan_item(hostname, current_status, recommended_action, risk_l
     }
 
 
+def domain_action_plan_manual_checklists():
+    return [
+        {
+            "hostname": "staging.aichat.tw",
+            "category": "SSL / Certificate Needed",
+            "items": [
+                "DNS exists and resolves to the NAS public IP.",
+                "Reverse proxy rule still needs confirmation for staging.aichat.tw HTTPS 443 to 127.0.0.1:3032.",
+                "Certificate must include staging.aichat.tw or a matching wildcard.",
+                "NAS UI or privileged setup is required; DevPilot does not modify it from this board.",
+                "Verify https://staging.aichat.tw/api/health with strict TLS before marking ready.",
+            ],
+        },
+        {
+            "hostname": "api.aichat.tw",
+            "category": "DNS Missing / Future Create",
+            "items": [
+                "DNS record is missing.",
+                "API upstream must be chosen before DNS creation.",
+                "CORS, authentication, and rate limits need review.",
+                "Run final DNS preflight and rollback planning before any create.",
+            ],
+        },
+        {
+            "hostname": "admin.aichat.tw",
+            "category": "DNS Missing / Future Create",
+            "items": [
+                "DNS record is missing.",
+                "Cloudflare Access or an IP allowlist must be designed first.",
+                "Admin upstream must be selected and protected.",
+                "Do not expose this hostname before access control is ready.",
+            ],
+        },
+        {
+            "hostname": "widget.aichat.tw",
+            "category": "Backend / Upstream Pending",
+            "items": [
+                "DNS exists.",
+                "Widget route, static service, or iframe endpoint still needs a decision.",
+                "CSP, iframe headers, and CORS behavior need review.",
+                "Verify HTTPS behavior after the upstream is selected.",
+            ],
+        },
+        {
+            "hostname": "www.aichat.tw",
+            "category": "High-risk / Do Not Touch First",
+            "items": [
+                "Existing CNAME must stay unchanged until the landing page is ready.",
+                "Landing page upstream must be selected.",
+                "Root and www redirect behavior need a separate plan.",
+                "Preserve the existing DNS snapshot before any future update.",
+            ],
+        },
+    ]
+
+
 def domain_action_plan_context():
     readiness = domain_readiness_context()
     sections = [
@@ -5361,8 +5419,46 @@ def domain_action_plan_context():
         "rendered_at": now_str(),
         "readiness": readiness,
         "sections": sections,
+        "manual_checklists": domain_action_plan_manual_checklists(),
         "summary": {section["key"]: len(section["items"]) for section in sections},
     }
+
+
+def domain_action_plan_csv_response():
+    board = domain_action_plan_context()
+    output = io.StringIO()
+    fieldnames = [
+        "hostname",
+        "category",
+        "current_status",
+        "readiness",
+        "recommended_action",
+        "risk_level",
+        "prerequisites",
+        "next_phase",
+        "manual_confirmation_required",
+        "notes",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for section in board.get("sections", []):
+        for item in section.get("items", []):
+            writer.writerow({
+                "hostname": item.get("hostname") or "",
+                "category": section.get("title") or "",
+                "current_status": item.get("current_status") or "",
+                "readiness": item.get("current_status") or "",
+                "recommended_action": item.get("recommended_action") or "",
+                "risk_level": item.get("risk_level") or "",
+                "prerequisites": " | ".join(item.get("prerequisites") or []),
+                "next_phase": item.get("next_phase") or "",
+                "manual_confirmation_required": "yes" if item.get("manual_confirmation_phrase") else "no",
+                "notes": "planning-only; no DNS, NAS, certificate, backend, or deployment change",
+            })
+    response = Response(output.getvalue(), mimetype="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=domain_action_plan.csv"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def operations_command_center_context():
@@ -9436,6 +9532,12 @@ def domain_action_plan_page():
         app_name=APP_NAME,
         board=domain_action_plan_context(),
     )
+
+
+@app.route("/api/domain-action-plan/export.csv")
+@require_roles("owner", "admin")
+def domain_action_plan_export_csv():
+    return domain_action_plan_csv_response()
 
 
 @app.route("/ai-console")
