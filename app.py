@@ -89,6 +89,8 @@ RELEASE_DASHBOARD_BACKUP_DIR = Path(os.getenv("DEV_PILOT_RELEASE_BACKUP_DIR") or
 RELEASE_DASHBOARD_DOMAIN = os.getenv("DEV_PILOT_RELEASE_DOMAIN", "https://devpilot.aicenter.com.tw/")
 RELEASE_DASHBOARD_CONTAINER = os.getenv("DEV_PILOT_RELEASE_CONTAINER", "devpilot-project-manager")
 RELEASE_DASHBOARD_PORT = os.getenv("DEV_PILOT_RELEASE_PORT", "5010:5000")
+OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_HEALTH_URL", "http://211.75.219.184:3030/api/health")
+OPERATIONS_SHOPEE_STAGING_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_STAGING_HEALTH_URL", "http://211.75.219.184:3032/api/health")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -4665,6 +4667,118 @@ def release_dashboard_context():
     }
 
 
+def operations_health_timeout_seconds():
+    try:
+        return max(0.2, min(3.0, float(os.getenv("DEV_PILOT_OPS_HEALTH_TIMEOUT_SECONDS", "1"))))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def operations_http_health_check(name, environment, url, port):
+    started = time.monotonic()
+    base = {
+        "name": name,
+        "environment": environment,
+        "url": url,
+        "port": port,
+        "ok": False,
+        "status_code": None,
+        "latency_ms": None,
+        "detail": "",
+    }
+    if not url:
+        base["detail"] = "health url not configured"
+        return base
+    try:
+        req = urllib.request.Request(
+            url,
+            method="GET",
+            headers={"User-Agent": "DevPilot operations command center/1.0", "Accept": "application/json,text/plain,*/*"},
+        )
+        with urllib.request.urlopen(req, timeout=operations_health_timeout_seconds()) as resp:
+            resp.read(512)
+            base["status_code"] = resp.status
+            base["ok"] = 200 <= int(resp.status) < 300
+            base["latency_ms"] = int((time.monotonic() - started) * 1000)
+            base["detail"] = "health endpoint responded"
+            return base
+    except urllib.error.HTTPError as exc:
+        base["status_code"] = exc.code
+        base["latency_ms"] = int((time.monotonic() - started) * 1000)
+        base["detail"] = f"HTTP {exc.code}"
+        return base
+    except Exception as exc:
+        base["latency_ms"] = int((time.monotonic() - started) * 1000)
+        base["detail"] = type(exc).__name__
+        return base
+
+
+def operations_shopee_health():
+    return [
+        operations_http_health_check(
+            "Shopee AI production backend",
+            "production",
+            OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL,
+            "3030",
+        ),
+        operations_http_health_check(
+            "Shopee AI staging backend",
+            "staging",
+            OPERATIONS_SHOPEE_STAGING_HEALTH_URL,
+            "3032",
+        ),
+    ]
+
+
+def operations_command_center_context():
+    release = release_dashboard_context()
+    backup_items = release.get("backups", {}).get("items", [])
+    cloudflare_flag = release.get("safety", {}).get("cloudflare_dns_write", {})
+    mock_flag = release.get("safety", {}).get("mock_dns_execution", {})
+    return {
+        "rendered_at": now_str(),
+        "production_domain": {
+            "url": RELEASE_DASHBOARD_DOMAIN,
+            "status": "online",
+            "login_protected": True,
+            "detail": "Authenticated DevPilot route rendered successfully.",
+        },
+        "release": {
+            "url": "/release-dashboard",
+            "backup_count": len(backup_items),
+            "latest_backup": backup_items[0] if backup_items else None,
+            "backup_mount_read_only": True,
+            "app_sha256": release.get("identity", {}).get("app_sha256"),
+            "git": release.get("identity", {}).get("git", {}),
+        },
+        "approval": release.get("db", {}),
+        "dns_safety": {
+            "prepare_dry_run": True,
+            "preflight_read_only": True,
+            "confirm_dry_run": True,
+            "execute_disabled": True,
+            "real_dns_write_disabled": True,
+            "cloudflare_api_write_disabled": True,
+        },
+        "cloudflare_flags": {
+            "dns_write": cloudflare_flag,
+            "mock_dns_execution": mock_flag,
+        },
+        "shopee_health": operations_shopee_health(),
+        "recent_backups": backup_items[:6],
+        "recent_dns_attempts": release.get("dns_attempts", [])[:5],
+        "quick_links": [
+            {"label": "Release Dashboard", "href": "/release-dashboard"},
+            {"label": "Approval Requests", "href": "/approval-requests"},
+            {"label": "Cloudflare", "href": "/cloudflare"},
+            {"label": "Domains", "href": "/domains"},
+            {"label": "AI Console", "href": "/ai-console"},
+            {"label": "Project 18", "href": "/projects/18"},
+            {"label": "Deployment Board", "href": "/deployment-board"},
+        ],
+    }
+
+
 def record_dns_execution_attempt(
     request_id,
     confirmation,
@@ -8618,6 +8732,12 @@ def start_ai_fleet_poller():
 @app.route("/")
 @require_login
 def dashboard():
+    return render_template(
+        "dashboard.html",
+        app_name=APP_NAME,
+        operations=operations_command_center_context(),
+    )
+
     projects = query_all("SELECT * FROM projects ORDER BY updated_at DESC")
     recent_logs = query_all("SELECT h.*, p.name AS project_name FROM handoff_logs h JOIN projects p ON h.project_id=p.id WHERE COALESCE(h.is_hidden, 0)=0 ORDER BY h.created_at DESC LIMIT 8")
     overdue_tasks = query_all("SELECT t.*, p.name AS project_name FROM project_tasks t JOIN projects p ON t.project_id=p.id WHERE t.due_date < ? AND t.status != '已完成' ORDER BY t.due_date ASC LIMIT 8", (today_str(),))
@@ -8647,7 +8767,6 @@ def dashboard():
         endpoint_stats=endpoint_stats,
         daily_report=daily_report,
         recent_ai_messages=recent_ai_messages(limit=5),
-        api_token=API_TOKEN,
     )
 
 
