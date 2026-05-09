@@ -728,6 +728,59 @@ UI_TRANSLATIONS["en"].update({
     "有問題": "Has issue",
     "逾期": "Overdue",
 })
+UI_TRANSLATIONS["zh-Hant"].update({
+    "AI Center Fleet": "AI Center Fleet",
+    "Remote Center": "遠端中心",
+    "Agent Fleet": "Agent Fleet",
+    "AI Center Fleet Console": "AI Center Fleet Console",
+    "External service URL": "外部服務 URL",
+    "Recommended domain": "建議網域",
+    "Integration mode": "整合模式",
+    "Read-only Phase 1": "唯讀 Phase 1",
+    "Security status": "安全狀態",
+    "pending auth / reverse proxy review": "等待 auth / reverse proxy 審查",
+    "External protected service": "外部受保護服務",
+    "Open external console": "開啟外部 console",
+    "Auth / Exposure Review": "Auth / 暴露面審查",
+    "Root access": "Root 存取",
+    "Login gate": "登入閘門",
+    "Machine names visible": "可見機器名稱",
+    "Repo paths visible": "可見 repo 路徑",
+    "Agent state visible": "可見 agent 狀態",
+    "Secret-like content": "疑似 secret 內容",
+    "No token-like content detected in sampled responses.": "抽樣回應未偵測到 token-like 內容。",
+    "Review required before public domain binding.": "公開網域綁定前需要審查。",
+    "Reverse Proxy Plan": "Reverse Proxy 規劃",
+    "This phase does not execute DNS, NAS, certificate, DB, or deploy actions.": "本階段不執行 DNS、NAS、憑證、DB 或部署動作。",
+    "Fleet service remains unchanged.": "Fleet 服務維持不變。",
+    "DevPilot read-only entry only.": "僅新增 DevPilot 唯讀入口。",
+    "Read-only Findings": "唯讀檢查結果",
+})
+UI_TRANSLATIONS["en"].update({
+    "遠端中心": "Remote Center",
+    "外部服務 URL": "External service URL",
+    "建議網域": "Recommended domain",
+    "整合模式": "Integration mode",
+    "唯讀 Phase 1": "Read-only Phase 1",
+    "安全狀態": "Security status",
+    "等待 auth / reverse proxy 審查": "pending auth / reverse proxy review",
+    "外部受保護服務": "External protected service",
+    "開啟外部 console": "Open external console",
+    "Auth / 暴露面審查": "Auth / Exposure Review",
+    "Root 存取": "Root access",
+    "登入閘門": "Login gate",
+    "可見機器名稱": "Machine names visible",
+    "可見 repo 路徑": "Repo paths visible",
+    "可見 agent 狀態": "Agent state visible",
+    "疑似 secret 內容": "Secret-like content",
+    "抽樣回應未偵測到 token-like 內容。": "No token-like content detected in sampled responses.",
+    "公開網域綁定前需要審查。": "Review required before public domain binding.",
+    "Reverse Proxy 規劃": "Reverse Proxy Plan",
+    "本階段不執行 DNS、NAS、憑證、DB 或部署動作。": "This phase does not execute DNS, NAS, certificate, DB, or deploy actions.",
+    "Fleet 服務維持不變。": "Fleet service remains unchanged.",
+    "僅新增 DevPilot 唯讀入口。": "DevPilot read-only entry only.",
+    "唯讀檢查結果": "Read-only Findings",
+})
 OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_HEALTH_URL", "http://211.75.219.184:3030/api/health")
 OPERATIONS_SHOPEE_STAGING_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_STAGING_HEALTH_URL", "http://211.75.219.184:3032/api/health")
 OPERATIONS_SHOPEE_PRODUCTION_DOMAIN = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_DOMAIN", "shopee.aichat.tw")
@@ -866,6 +919,9 @@ AI_FLEET_MACHINES_URL = os.getenv("AI_FLEET_MACHINES_URL", "http://211.75.219.18
 AI_FLEET_POLL_INTERVAL_SECONDS = int(os.getenv("AI_FLEET_POLL_INTERVAL_SECONDS", "30"))
 AI_FLEET_OFFLINE_AFTER_SECONDS = int(os.getenv("AI_FLEET_OFFLINE_AFTER_SECONDS", str(HEARTBEAT_OFFLINE_SECONDS)))
 AI_FLEET_POLL_ENABLED = os.getenv("AI_FLEET_POLL_ENABLED", "1").lower() not in ("0", "false", "no", "off")
+AI_CENTER_FLEET_CONSOLE_URL = os.getenv("AI_CENTER_FLEET_CONSOLE_URL", "http://211.75.219.184:3004").rstrip("/")
+AI_CENTER_FLEET_RECOMMENDED_DOMAIN = os.getenv("AI_CENTER_FLEET_RECOMMENDED_DOMAIN", "fleet.aicenter.com.tw")
+AI_CENTER_FLEET_HTTP_TIMEOUT_SECONDS = float(os.getenv("AI_CENTER_FLEET_HTTP_TIMEOUT_SECONDS", "3"))
 _AI_FLEET_THREAD_STARTED = False
 _AI_FLEET_THREAD_LOCK = threading.Lock()
 ENDPOINT_TYPES = ["frontend", "admin", "api", "health", "docs", "login", "unknown"]
@@ -7032,6 +7088,174 @@ def operations_runbook_csv_response():
     return response
 
 
+def ai_center_fleet_fetch(path="", accept="text/html,application/json,text/plain,*/*", read_limit=180000):
+    path = str(path or "")
+    if path and not path.startswith("/"):
+        path = "/" + path
+    url = f"{AI_CENTER_FLEET_CONSOLE_URL}{path}"
+    result = {
+        "ok": False,
+        "url": url,
+        "status_code": None,
+        "content_type": "",
+        "latency_ms": None,
+        "detail": "not checked",
+        "body": "",
+    }
+    started = time.monotonic()
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "DevPilot AI Center Fleet read-only/1.0", "Accept": accept},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=AI_CENTER_FLEET_HTTP_TIMEOUT_SECONDS) as resp:
+            raw = resp.read(read_limit)
+            result["status_code"] = resp.status
+            result["content_type"] = resp.headers.get("Content-Type", "")
+            result["latency_ms"] = int((time.monotonic() - started) * 1000)
+            result["body"] = raw.decode("utf-8", errors="replace")
+            result["ok"] = 200 <= resp.status < 400
+            result["detail"] = "responded"
+            return result
+    except urllib.error.HTTPError as exc:
+        raw = exc.read(min(read_limit, 8192))
+        result["status_code"] = exc.code
+        result["content_type"] = exc.headers.get("Content-Type", "")
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        result["body"] = raw.decode("utf-8", errors="replace")
+        result["detail"] = f"HTTP {exc.code}"
+        return result
+    except Exception as exc:
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        result["detail"] = str(exc)
+        return result
+
+
+def ai_center_fleet_html_title(html):
+    match = re.search(r"<title[^>]*>(.*?)</title>", str(html or ""), flags=re.I | re.S)
+    return html_lib.unescape(re.sub(r"\s+", " ", match.group(1)).strip()) if match else ""
+
+
+def ai_center_fleet_visible_text(html):
+    text = re.sub(r"(?is)<script.*?</script>", " ", str(html or ""))
+    text = re.sub(r"(?is)<style.*?</style>", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return html_lib.unescape(re.sub(r"\s+", " ", text).strip())
+
+
+def ai_center_fleet_json(fetch_result):
+    try:
+        return json.loads(fetch_result.get("body") or "")
+    except Exception:
+        return None
+
+
+def ai_center_fleet_secret_like_detected(*texts):
+    sample = "\n".join(str(item or "")[:40000] for item in texts)
+    return bool(re.search(
+        r"(?i)(authorization\s*:|bearer\s+[a-z0-9_\-]{8,}|api[_-]?key|secret|password|private\s+key|session[_-]?cookie|token\s*[:=])",
+        sample,
+    ))
+
+
+def ai_center_fleet_context():
+    root_fetch = ai_center_fleet_fetch("/")
+    login_fetch = ai_center_fleet_fetch("/login", read_limit=12000)
+    machines_fetch = ai_center_fleet_fetch("/api/machines", accept="application/json,text/plain,*/*")
+    projects_fetch = ai_center_fleet_fetch("/api/projects", accept="application/json,text/plain,*/*")
+
+    root_text = ai_center_fleet_visible_text(root_fetch.get("body"))
+    machines_data = ai_center_fleet_json(machines_fetch)
+    projects_data = ai_center_fleet_json(projects_fetch)
+    machines = (machines_data or {}).get("machines") if isinstance(machines_data, dict) else machines_data
+    projects = (projects_data or {}).get("projects") if isinstance(projects_data, dict) else projects_data
+    machines = machines if isinstance(machines, list) else []
+    projects = projects if isinstance(projects, list) else []
+
+    machine_names_visible = any((item.get("hostname") or item.get("displayName")) for item in machines if isinstance(item, dict))
+    repo_paths_visible = any(item.get("path") for item in projects if isinstance(item, dict))
+    agent_state_visible = any(
+        item.get("aiAgent") or item.get("aiState") or item.get("currentAction") or item.get("activeTaskCount")
+        for item in projects
+        if isinstance(item, dict)
+    )
+    root_public = root_fetch.get("status_code") == 200 and "專案總覽" in root_text
+    login_gate = login_fetch.get("status_code") in (200, 302, 401, 403) and not root_public
+    secret_like = ai_center_fleet_secret_like_detected(root_fetch.get("body"), machines_fetch.get("body"), projects_fetch.get("body"))
+    connected_machines = sum(1 for item in machines if isinstance(item, dict) and item.get("connected_via"))
+    running_projects = sum(1 for item in projects if isinstance(item, dict) and str(item.get("aiState") or "").lower() in ("running", "active"))
+
+    return {
+        "rendered_at": now_str(),
+        "title": "AI Center Fleet Console",
+        "service": {
+            "url": AI_CENTER_FLEET_CONSOLE_URL,
+            "recommended_domain": AI_CENTER_FLEET_RECOMMENDED_DOMAIN,
+            "integration_mode": "Read-only Phase 1",
+            "security_status": "pending auth / reverse proxy review",
+            "container": "ai-fleet-console-console-1",
+            "compose_path": "/volume1/docker/ai-fleet-console/docker-compose.yml",
+        },
+        "root": {
+            "status_code": root_fetch.get("status_code"),
+            "content_type": root_fetch.get("content_type"),
+            "latency_ms": root_fetch.get("latency_ms"),
+            "title": ai_center_fleet_html_title(root_fetch.get("body")),
+            "public_without_login": bool(root_public),
+            "detected_sections": [
+                label for label, needle in [
+                    ("project overview", "專案總覽"),
+                    ("machine management", "機器管理"),
+                    ("project monitoring", "專案監測"),
+                ] if needle in root_text
+            ],
+        },
+        "auth": {
+            "login_endpoint_status": login_fetch.get("status_code"),
+            "login_gate_detected": bool(login_gate),
+            "finding": "root_public_without_login" if root_public else "protected_or_unreachable",
+        },
+        "machines": {
+            "api_status_code": machines_fetch.get("status_code"),
+            "count": len(machines),
+            "connected_count": connected_machines,
+            "names_visible": bool(machine_names_visible),
+        },
+        "projects": {
+            "api_status_code": projects_fetch.get("status_code"),
+            "count": len(projects),
+            "running_count": running_projects,
+            "repo_paths_visible": bool(repo_paths_visible),
+            "agent_state_visible": bool(agent_state_visible),
+        },
+        "security": {
+            "secret_like_detected": bool(secret_like),
+            "machine_names_visible": bool(machine_names_visible or "機器管理" in root_text),
+            "repo_paths_visible": bool(repo_paths_visible),
+            "agent_heartbeat_visible": bool(agent_state_visible or connected_machines),
+            "websocket_review_required": True,
+            "raw_values_hidden": True,
+        },
+        "reverse_proxy_plan": {
+            "domain": AI_CENTER_FLEET_RECOMMENDED_DOMAIN,
+            "source": "HTTPS 443",
+            "destination": "HTTP 127.0.0.1:3004",
+            "websocket_support_required": True,
+            "dns_write_this_phase": False,
+            "nas_change_this_phase": False,
+            "certificate_change_this_phase": False,
+        },
+        "recommendations": [
+            "Keep 3004 unchanged and treat it as an external protected service.",
+            "Add authentication or access control before binding a public domain.",
+            "Use fleet.aicenter.com.tw only after DNS/NAS/SSL preflight and manual confirmation.",
+            "Keep Fleet DB separate from DevPilot DB until a later schema review.",
+            "Expose only summarized machine/project status inside DevPilot; do not mirror raw repo paths or credentials.",
+        ],
+    }
+
+
 def operations_command_center_context():
     release = release_dashboard_context()
     backup_items = release.get("backups", {}).get("items", [])
@@ -11600,6 +11824,17 @@ def domain_action_plan_page():
 @require_roles("owner", "admin")
 def domain_action_plan_export_csv():
     return domain_action_plan_csv_response()
+
+
+@app.route("/ai-center/fleet")
+@app.route("/agent-fleet")
+@require_roles("owner", "admin")
+def ai_center_fleet_page():
+    return render_template(
+        "ai_center_fleet.html",
+        app_name=APP_NAME,
+        fleet=ai_center_fleet_context(),
+    )
 
 
 @app.route("/manual-operations-checklist")

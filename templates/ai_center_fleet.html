@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">{{ ui_t("AI Center Fleet Console") }}</h1>
+    <div class="text-muted small">{{ ui_t("DevPilot read-only entry only.") }}</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">{{ ui_t("READ-ONLY") }}</span>
+      <span class="badge text-bg-secondary">{{ ui_t("NO DEPLOY") }}</span>
+      <span class="badge text-bg-secondary">{{ ui_t("NO DNS CHANGE") }}</span>
+      <span class="badge text-bg-secondary">{{ ui_t("NO NAS CHANGE") }}</span>
+      <span class="badge text-bg-secondary">{{ ui_t("MANUAL ONLY") }}</span>
+    </div>
+  </div>
+  <div class="text-muted small">Rendered {{ fleet.rendered_at }}</div>
+</div>
+
+<div class="alert alert-warning page-note py-2">
+  {{ ui_t("This phase does not execute DNS, NAS, certificate, DB, or deploy actions.") }}
+  {{ ui_t("Fleet service remains unchanged.") }}
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">{{ ui_t("AI Center Fleet") }}</div>
+      <div class="card-body">
+        <dl class="row small mb-3">
+          <dt class="col-sm-5">{{ ui_t("External service URL") }}</dt>
+          <dd class="col-sm-7"><code>{{ fleet.service.url }}</code></dd>
+          <dt class="col-sm-5">{{ ui_t("Recommended domain") }}</dt>
+          <dd class="col-sm-7"><code>{{ fleet.service.recommended_domain }}</code></dd>
+          <dt class="col-sm-5">{{ ui_t("Integration mode") }}</dt>
+          <dd class="col-sm-7"><span class="badge text-bg-info">{{ ui_t(fleet.service.integration_mode) }}</span></dd>
+          <dt class="col-sm-5">{{ ui_t("Security status") }}</dt>
+          <dd class="col-sm-7"><span class="badge text-bg-warning">{{ ui_t(fleet.service.security_status) }}</span></dd>
+          <dt class="col-sm-5">Container</dt>
+          <dd class="col-sm-7"><code>{{ fleet.service.container }}</code></dd>
+          <dt class="col-sm-5">Compose</dt>
+          <dd class="col-sm-7"><code>{{ fleet.service.compose_path }}</code></dd>
+        </dl>
+        <a class="btn btn-outline-dark btn-sm" href="{{ fleet.service.url }}" target="_blank" rel="noopener noreferrer">
+          {{ ui_t("Open external console") }}
+        </a>
+        <div class="small text-muted mt-2">{{ ui_t("External protected service") }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">{{ ui_t("Read-only Findings") }}</div>
+      <div class="card-body">
+        <div class="row row-cols-2 row-cols-md-4 g-3 text-center mb-3">
+          <div>
+            <div class="text-muted small">{{ ui_t("Root access") }}</div>
+            <div><span class="badge text-bg-{{ 'warning' if fleet.root.public_without_login else 'success' }}">{{ fleet.auth.finding }}</span></div>
+          </div>
+          <div>
+            <div class="text-muted small">{{ ui_t("Machine names visible") }}</div>
+            <div><span class="badge text-bg-{{ 'warning' if fleet.security.machine_names_visible else 'success' }}">{{ 'yes' if fleet.security.machine_names_visible else 'no' }}</span></div>
+          </div>
+          <div>
+            <div class="text-muted small">{{ ui_t("Repo paths visible") }}</div>
+            <div><span class="badge text-bg-{{ 'warning' if fleet.security.repo_paths_visible else 'success' }}">{{ 'yes' if fleet.security.repo_paths_visible else 'no' }}</span></div>
+          </div>
+          <div>
+            <div class="text-muted small">{{ ui_t("Secret-like content") }}</div>
+            <div><span class="badge text-bg-{{ 'danger' if fleet.security.secret_like_detected else 'success' }}">{{ 'review' if fleet.security.secret_like_detected else 'none detected' }}</span></div>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <tbody>
+              <tr>
+                <th style="width: 220px">{{ ui_t("Root access") }}</th>
+                <td>
+                  HTTP {{ fleet.root.status_code or '-' }}
+                  {% if fleet.root.latency_ms is not none %}<span class="text-muted small">({{ fleet.root.latency_ms }} ms)</span>{% endif %}
+                  <div class="small text-muted">title: {{ fleet.root.title or '-' }}</div>
+                </td>
+              </tr>
+              <tr>
+                <th>{{ ui_t("Login gate") }}</th>
+                <td>
+                  <span class="badge text-bg-{{ 'success' if fleet.auth.login_gate_detected else 'warning' }}">
+                    {{ 'detected' if fleet.auth.login_gate_detected else 'not detected' }}
+                  </span>
+                  <span class="small text-muted">/login HTTP {{ fleet.auth.login_endpoint_status or '-' }}</span>
+                </td>
+              </tr>
+              <tr>
+                <th>Machines API</th>
+                <td>HTTP {{ fleet.machines.api_status_code or '-' }} · count {{ fleet.machines.count }} · connected {{ fleet.machines.connected_count }}</td>
+              </tr>
+              <tr>
+                <th>Projects API</th>
+                <td>HTTP {{ fleet.projects.api_status_code or '-' }} · count {{ fleet.projects.count }} · running {{ fleet.projects.running_count }}</td>
+              </tr>
+              <tr>
+                <th>{{ ui_t("Agent state visible") }}</th>
+                <td><span class="badge text-bg-{{ 'warning' if fleet.security.agent_heartbeat_visible else 'success' }}">{{ 'yes' if fleet.security.agent_heartbeat_visible else 'no' }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="small text-muted mt-2">
+          {% if fleet.security.secret_like_detected %}
+            {{ ui_t("Review required before public domain binding.") }}
+          {% else %}
+            {{ ui_t("No token-like content detected in sampled responses.") }}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">{{ ui_t("Reverse Proxy Plan") }}</div>
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Domain</dt>
+          <dd class="col-sm-8"><code>{{ fleet.reverse_proxy_plan.domain }}</code></dd>
+          <dt class="col-sm-4">Source</dt>
+          <dd class="col-sm-8">{{ fleet.reverse_proxy_plan.source }}</dd>
+          <dt class="col-sm-4">Destination</dt>
+          <dd class="col-sm-8"><code>{{ fleet.reverse_proxy_plan.destination }}</code></dd>
+          <dt class="col-sm-4">WebSocket</dt>
+          <dd class="col-sm-8">{{ 'required' if fleet.reverse_proxy_plan.websocket_support_required else 'not required' }}</dd>
+          <dt class="col-sm-4">DNS write</dt>
+          <dd class="col-sm-8"><span class="badge text-bg-secondary">{{ fleet.reverse_proxy_plan.dns_write_this_phase }}</span></dd>
+          <dt class="col-sm-4">NAS change</dt>
+          <dd class="col-sm-8"><span class="badge text-bg-secondary">{{ fleet.reverse_proxy_plan.nas_change_this_phase }}</span></dd>
+          <dt class="col-sm-4">Certificate change</dt>
+          <dd class="col-sm-8"><span class="badge text-bg-secondary">{{ fleet.reverse_proxy_plan.certificate_change_this_phase }}</span></dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Phase 81 Recommendation</div>
+      <div class="card-body small">
+        <ul class="mb-0">
+          {% for item in fleet.recommendations %}
+            <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
