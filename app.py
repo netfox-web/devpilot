@@ -8242,6 +8242,9 @@ AI_CONSOLE_WEBSITE_PROMPT = """請 OpenAI 與 Gemini 協作，產生一個「AI 
 10. 不自動部署"""
 AI_CONSOLE_GEMINI_MODEL = "gemini-2.5-flash"
 AI_CONSOLE_CLAUDE_MODEL = "claude-sonnet-4-6"
+AI_CONSOLE_SANDBOX_DIR = Path(os.getenv("AI_CONSOLE_SANDBOX_DIR", "data/ai_console_sandbox"))
+AI_CONSOLE_SANDBOX_MAX_BYTES = 1024 * 1024
+AI_CONSOLE_SANDBOX_ID_RE = re.compile(r"^ai_console_\d{8}_\d{6}_[a-f0-9]{8}$")
 
 
 def sanitize_ai_console_text(value, secrets_to_strip=None):
@@ -8452,10 +8455,69 @@ def ai_console_review_status(review_text):
     return "reviewed" if compact.strip() else "not_run"
 
 
+def ai_console_sandbox_dir():
+    root = AI_CONSOLE_SANDBOX_DIR
+    if not root.is_absolute():
+        root = Path(app.root_path) / root
+    return root.resolve()
+
+
+def ai_console_sandbox_artifact_path(artifact_id):
+    artifact_text = str(artifact_id or "").strip()
+    if not AI_CONSOLE_SANDBOX_ID_RE.fullmatch(artifact_text):
+        raise ValueError("invalid sandbox artifact id")
+    root = ai_console_sandbox_dir()
+    path = (root / f"{artifact_text}.html").resolve()
+    if root not in path.parents:
+        raise ValueError("sandbox path escapes root")
+    return path
+
+
+def ai_console_sandbox_owner_allowed():
+    user = current_user()
+    return bool(user and has_role("owner", "admin"))
+
+
+def create_ai_console_sandbox_html_artifact(html):
+    root = ai_console_sandbox_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    content = str(html or "")
+    encoded = content.encode("utf-8")
+    if not content.strip():
+        raise ValueError("empty sandbox html")
+    if len(encoded) > AI_CONSOLE_SANDBOX_MAX_BYTES:
+        raise ValueError("sandbox html exceeds size limit")
+    artifact_id = f"ai_console_{now_dt().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}"
+    path = ai_console_sandbox_artifact_path(artifact_id)
+    path.write_text(content, encoding="utf-8")
+    return {
+        "type": "sandbox_html",
+        "id": artifact_id,
+        "filename": path.name,
+        "preview_url": f"/ai-console/sandbox/{artifact_id}",
+        "download_url": f"/api/ai-console/sandbox/{artifact_id}/download",
+        "size_bytes": len(encoded),
+    }
+
+
+def read_ai_console_sandbox_artifact(artifact_id):
+    path = ai_console_sandbox_artifact_path(artifact_id)
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError("sandbox artifact not found")
+    if path.stat().st_size > AI_CONSOLE_SANDBOX_MAX_BYTES:
+        raise ValueError("sandbox artifact exceeds size limit")
+    return path, path.read_text(encoding="utf-8", errors="replace")
+
+
 def run_ai_console_claude_preview(payload):
     prompt = str((payload or {}).get("prompt") or (payload or {}).get("task_prompt") or "").strip()
     if not prompt:
         return ai_console_error("prompt_required", "Prompt is required for Claude preview.")
+    output_mode = str((payload or {}).get("output_mode") or "preview_only").strip().lower()
+    if output_mode not in ("preview_only", "sandbox_html"):
+        return ai_console_error("unsupported_output_mode", "Only preview_only and sandbox_html output modes are supported.")
+    if output_mode == "sandbox_html" and not ai_console_sandbox_owner_allowed():
+        return ai_console_error("sandbox_permission_denied", "Sandbox artifacts require owner/admin session.")
     claude_key = get_active_ai_console_key("claude")
     if not claude_key.get("ok"):
         return ai_console_error("claude_not_configured", "Claude key is not configured or cannot be decrypted.")
@@ -8514,17 +8576,38 @@ def run_ai_console_claude_preview(payload):
         return ai_console_error("unsupported_reviewer", "Only Gemini reviewer is supported in this preview flow.")
 
     final_html = extract_single_file_html(executor_output)
+    complete_html = ai_console_complete_html(final_html)
+    artifact = None
+    artifact_write_status = "not_requested"
+    artifact_error = ""
+    if output_mode == "sandbox_html":
+        artifact_write_status = "not_written"
+        if reviewer_provider != "gemini" or review_status != "pass":
+            artifact_write_status = "blocked_review_required"
+        elif not complete_html:
+            artifact_write_status = "blocked_incomplete_html"
+        else:
+            try:
+                artifact = create_ai_console_sandbox_html_artifact(final_html)
+                artifact_write_status = "written"
+            except ValueError as exc:
+                artifact_error = str(exc)
+                artifact_write_status = "blocked_invalid_artifact"
     return {
         "ok": True,
         "mode": "claude_executor_preview",
+        "output_mode": output_mode,
         "executor_provider": "claude",
         "executor_model": executor_result.get("model") or normalize_claude_console_model(requested_model),
         "executor_output": executor_output,
         "final_html": final_html,
-        "complete_html": ai_console_complete_html(final_html),
+        "complete_html": complete_html,
         "reviewer_provider": reviewer_provider,
         "review_status": review_status,
         "reviewer_output": reviewer_output,
+        "artifact": artifact,
+        "artifact_write_status": artifact_write_status,
+        "artifact_error": artifact_error,
         "providers_used": [
             {"provider": "claude", "source": claude_key.get("source"), "masked": claude_key.get("masked")},
         ] + ([reviewer_info] if reviewer_info else []),
@@ -8535,10 +8618,18 @@ def run_ai_console_claude_preview(payload):
         "safety_notes": [
             "Preview only.",
             "No API keys included in response.",
-            "No files were written.",
+            "No project repo files were written.",
+            "Sandbox artifact written only when requested and gated by complete HTML plus Gemini PASS.",
             "No deployment was triggered.",
             "No DNS or Telegram action was triggered.",
         ],
+        "safety": {
+            "project_repo_write": False,
+            "sandbox_write": artifact_write_status == "written",
+            "deploy": False,
+            "dns_write": False,
+            "telegram_send": False,
+        },
     }
 
 
@@ -10698,6 +10789,26 @@ def ai_console_page():
         flow_runs=flow_run_rows(limit=20),
         tasks=task_rows(limit=50),
         task_templates=task_template_rows(active_only=True),
+    )
+
+
+@app.route("/ai-console/sandbox/<artifact_id>")
+@require_roles("owner", "admin")
+def ai_console_sandbox_preview_page(artifact_id):
+    try:
+        path, html_content = read_ai_console_sandbox_artifact(artifact_id)
+    except ValueError:
+        return "Invalid sandbox artifact", 400
+    except FileNotFoundError:
+        return "Sandbox artifact not found", 404
+    return render_template(
+        "ai_console_sandbox_preview.html",
+        app_name=APP_NAME,
+        artifact_id=artifact_id,
+        filename=path.name,
+        size_bytes=path.stat().st_size,
+        html_content=html_content,
+        download_url=f"/api/ai-console/sandbox/{artifact_id}/download",
     )
 
 
@@ -15410,6 +15521,21 @@ def api_ai_provider_health():
 @require_api_roles("owner", "admin", "ai")
 def api_ai_console_run():
     return jsonify(run_ai_console_website_mvp())
+
+
+@app.route("/api/ai-console/sandbox/<artifact_id>/download", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_ai_console_sandbox_download(artifact_id):
+    try:
+        path, html_content = read_ai_console_sandbox_artifact(artifact_id)
+    except ValueError:
+        return jsonify({"ok": False, "error": "invalid_sandbox_artifact"}), 400
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "sandbox_artifact_not_found"}), 404
+    response = Response(html_content, mimetype="text/html; charset=utf-8")
+    response.headers["Content-Disposition"] = f'attachment; filename="{path.name}"'
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @app.route("/api/ai/messages", methods=["GET"])

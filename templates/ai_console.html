@@ -41,11 +41,11 @@
 <div class="card shadow-sm mb-3 border-info">
   <div class="card-header fw-bold d-flex justify-content-between align-items-center">
     <span>Claude Executor Preview</span>
-    <span class="badge text-bg-info">Preview only / No file write / No deploy / No DNS</span>
+    <span class="badge text-bg-info">Preview only / Sandbox optional / No deploy / No DNS</span>
   </div>
   <div class="card-body">
     <div class="alert alert-info small mb-3">
-      This preview calls the selected AI provider and returns text or HTML only. It does not write project files, deploy, restart services, call DNS, or send Telegram messages.
+      This preview calls the selected AI provider and returns text or HTML. Sandbox mode can write one gated HTML artifact to the AI Console sandbox only. It never writes project files, deploys, restarts services, calls DNS, or sends Telegram messages.
     </div>
     <form id="claudePreviewForm">
       <div class="row g-3">
@@ -72,17 +72,25 @@
           <label class="form-label">Max tokens</label>
           <input class="form-control" type="number" min="16" max="8192" name="max_tokens" value="4096">
         </div>
-        <div class="col-md-8 d-flex align-items-end">
-          <div class="small text-muted">Gemini review is advisory. Nothing is saved or applied from this preview.</div>
+        <div class="col-md-4">
+          <label class="form-label">Output mode</label>
+          <select class="form-select" name="output_mode">
+            <option value="preview_only" selected>Preview only</option>
+            <option value="sandbox_html">Sandbox HTML artifact</option>
+          </select>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <div class="small text-muted">Sandbox writes require complete HTML plus Gemini PASS.</div>
         </div>
       </div>
       <label class="form-label mt-3">Prompt</label>
-      <textarea class="form-control" name="prompt" rows="5" placeholder="Ask Claude to return text or a single-file HTML preview only." required>請只回覆 OK</textarea>
+      <textarea class="form-control" name="prompt" rows="5" placeholder="Ask Claude to return text or a single-file HTML preview only." required>Return exactly OK and nothing else.</textarea>
       <div class="d-flex gap-2 align-items-center mt-3">
         <button type="submit" class="btn btn-outline-primary" id="btnClaudePreview">Run preview</button>
         <span class="small text-muted" id="claudePreviewStatus">No preview run yet.</span>
       </div>
     </form>
+    <div class="mt-3 small" id="claudePreviewArtifact"></div>
     <div class="row g-3 mt-2">
       <div class="col-lg-7">
         <label class="form-label">Executor output</label>
@@ -455,15 +463,17 @@
     const status = document.getElementById('claudePreviewStatus');
     const output = document.getElementById('claudePreviewOutput');
     const review = document.getElementById('claudePreviewReview');
+    const artifact = document.getElementById('claudePreviewArtifact');
 
     form.addEventListener('submit', async function (event) {
       event.preventDefault();
       const original = button.textContent;
       button.disabled = true;
       button.textContent = 'Running...';
-      status.textContent = 'Preview running. No files are being written.';
+      status.textContent = 'Preview running. No project files are being written.';
       output.textContent = '-';
       review.textContent = '-';
+      artifact.textContent = '';
       const data = Object.fromEntries(new FormData(form).entries());
       data.mode = 'claude_preview';
       data.review_enabled = data.reviewer_provider === 'gemini';
@@ -481,6 +491,17 @@
         output.textContent = result.executor_output || result.final_html || '';
         review.textContent = result.reviewer_output || 'Reviewer not run.';
         status.textContent = `Done: ${result.executor_provider || 'provider'} / ${result.executor_model || '-'} / review ${result.review_status || 'not_run'}`;
+        if (result.artifact && result.artifact.preview_url) {
+          artifact.innerHTML = `
+            <span class="badge text-bg-success me-2">Sandbox artifact created</span>
+            <a href="${result.artifact.preview_url}">Preview</a>
+            <span class="mx-1">/</span>
+            <a href="${result.artifact.download_url}">Download</a>
+            <span class="text-muted ms-2">${result.artifact.filename} (${result.artifact.size_bytes} bytes)</span>
+          `;
+        } else if (result.output_mode === 'sandbox_html') {
+          artifact.innerHTML = `<span class="badge text-bg-warning me-2">No artifact written</span><span class="text-muted">${result.artifact_write_status || 'not_written'}</span>`;
+        }
       } catch (err) {
         status.textContent = 'Preview failed: ' + err.message;
       } finally {

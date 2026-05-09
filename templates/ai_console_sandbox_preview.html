@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Console Sandbox Preview</h1>
+    <div class="text-muted small">Read-only preview for a generated HTML artifact. It is not deployed or applied to any project.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/ai-console">Back to AI Console</a>
+    <a class="btn btn-outline-primary" href="{{ download_url }}">Download HTML</a>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  <span class="badge text-bg-info me-2">SANDBOX</span>
+  This artifact lives only in the AI Console sandbox directory. No project repo, DNS, deployment, or production app file was changed.
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Artifact</div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="small text-muted">Artifact ID</div>
+        <code>{{ artifact_id }}</code>
+      </div>
+      <div class="col-md-4">
+        <div class="small text-muted">Filename</div>
+        <code>{{ filename }}</code>
+      </div>
+      <div class="col-md-4">
+        <div class="small text-muted">Size</div>
+        <span>{{ size_bytes }} bytes</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Sandboxed Render</div>
+  <div class="card-body p-0">
+    <iframe
+      title="AI Console sandbox artifact"
+      sandbox
+      srcdoc="{{ html_content }}"
+      style="width: 100%; min-height: 520px; border: 0; background: #fff;"></iframe>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">HTML Source</div>
+  <pre class="bg-light border-0 rounded-0 p-3 mb-0 small text-wrap" style="max-height: 32rem; overflow: auto;">{{ html_content }}</pre>
+</div>
+{% endblock %}
