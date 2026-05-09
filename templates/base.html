@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="{{ ui_lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -22,49 +22,63 @@
     </button>
     <div class="collapse navbar-collapse" id="devpilotNav">
       <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-        <li class="nav-item"><a class="nav-link" href="/">Home</a></li>
+        <li class="nav-item"><a class="nav-link" href="/">{{ ui_t("Home") }}</a></li>
         <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Core</a>
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">{{ ui_t("Core") }}</a>
           <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/projects">Projects</a></li>
-            <li><a class="dropdown-item" href="/projects/new">New Project</a></li>
-            <li><a class="dropdown-item" href="/ai-console">AI Console</a></li>
-            <li><a class="dropdown-item" href="/ai-heartbeats">AI Heartbeats</a></li>
-            <li><a class="dropdown-item" href="/ai-costs">AI Costs</a></li>
-            <li><a class="dropdown-item" href="/api-keys">API Keys</a></li>
+            <li><a class="dropdown-item" href="/projects">{{ ui_t("Projects") }}</a></li>
+            <li><a class="dropdown-item" href="/projects/new">{{ ui_t("New Project") }}</a></li>
+            <li><a class="dropdown-item" href="/ai-console">{{ ui_t("AI Console") }}</a></li>
+            <li><a class="dropdown-item" href="/ai-heartbeats">{{ ui_t("AI Heartbeats") }}</a></li>
+            <li><a class="dropdown-item" href="/ai-costs">{{ ui_t("AI Costs") }}</a></li>
+            <li><a class="dropdown-item" href="/api-keys">{{ ui_t("API Keys") }}</a></li>
           </ul>
         </li>
         <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Safety</a>
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">{{ ui_t("Safety") }}</a>
           <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/approval-requests">Approval Requests</a></li>
-            <li><a class="dropdown-item" href="/cloudflare">Cloudflare</a></li>
-            <li><a class="dropdown-item" href="/domains">Domains</a></li>
-            <li><a class="dropdown-item" href="/domain-readiness">Domain Readiness</a></li>
-            <li><a class="dropdown-item" href="/domain-action-plan">Domain Action Plan</a></li>
+            <li><a class="dropdown-item" href="/approval-requests">{{ ui_t("Approval Requests") }}</a></li>
+            <li><a class="dropdown-item" href="/cloudflare">{{ ui_t("Cloudflare") }}</a></li>
+            <li><a class="dropdown-item" href="/domains">{{ ui_t("Domains") }}</a></li>
+            <li><a class="dropdown-item" href="/domain-readiness">{{ ui_t("Domain Readiness") }}</a></li>
+            <li><a class="dropdown-item" href="/domain-action-plan">{{ ui_t("Domain Action Plan") }}</a></li>
           </ul>
         </li>
         <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Operations</a>
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">{{ ui_t("Operations") }}</a>
           <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/release-dashboard">Release Dashboard</a></li>
-            <li><a class="dropdown-item" href="/production-release-note">Release Note / QA Report</a></li>
-            <li><a class="dropdown-item" href="/manual-operations-checklist">Manual Checklist</a></li>
-            <li><a class="dropdown-item" href="/operations-runbook">Runbooks</a></li>
+            <li><a class="dropdown-item" href="/release-dashboard">{{ ui_t("Release Dashboard") }}</a></li>
+            <li><a class="dropdown-item" href="/production-release-note">{{ ui_t("Release Note / QA Report") }}</a></li>
+            <li><a class="dropdown-item" href="/manual-operations-checklist">{{ ui_t("Manual Checklist") }}</a></li>
+            <li><a class="dropdown-item" href="/operations-runbook">{{ ui_t("Runbooks") }}</a></li>
             <li><hr class="dropdown-divider"></li>
-            <li><a class="dropdown-item" href="/deployment-targets">Deployment Targets</a></li>
-            <li><a class="dropdown-item" href="/deployment-board">Deployment Board</a></li>
-            <li><a class="dropdown-item" href="/docker-scan">NAS Docker Scan</a></li>
+            <li><a class="dropdown-item" href="/deployment-targets">{{ ui_t("Deployment Targets") }}</a></li>
+            <li><a class="dropdown-item" href="/deployment-board">{{ ui_t("Deployment Board") }}</a></li>
+            <li><a class="dropdown-item" href="/docker-scan">{{ ui_t("NAS Docker Scan") }}</a></li>
           </ul>
         </li>
       </ul>
+      <div class="dropdown me-2">
+        <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
+          {{ ui_t("Language") }}: {{ ui_language_label }}
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          {% for lang_code, lang_label in ui_languages.items() %}
+            <li>
+              <a class="dropdown-item {% if lang_code == ui_lang %}active{% endif %}" href="{{ ui_language_switch_url(lang_code) }}">
+                {{ lang_label }}
+              </a>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
       {% if current_user %}
         <span class="navbar-text small me-2">{{ current_user.username }} / {{ current_user.role }}</span>
         <form method="post" action="/logout" class="d-inline">
-          <button class="btn btn-sm btn-outline-light">Logout</button>
+          <button class="btn btn-sm btn-outline-light">{{ ui_t("Logout") }}</button>
         </form>
       {% else %}
-        <a class="btn btn-sm btn-outline-light" href="/login">Login</a>
+        <a class="btn btn-sm btn-outline-light" href="/login">{{ ui_t("Login") }}</a>
       {% endif %}
     </div>
   </div>
@@ -78,5 +92,40 @@
   {% block content %}{% endblock %}
 </main>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  window.DEVPILOT_UI_I18N = {
+    lang: {{ ui_lang|tojson }},
+    catalog: {{ ui_i18n_catalog|tojson }}
+  };
+  (function () {
+    const catalog = (window.DEVPILOT_UI_I18N && window.DEVPILOT_UI_I18N.catalog) || {};
+    const skipTags = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'PRE', 'CODE', 'KBD', 'SAMP']);
+    const translateExact = (value) => {
+      const raw = String(value || '');
+      const trimmed = raw.trim();
+      if (!trimmed || !Object.prototype.hasOwnProperty.call(catalog, trimmed)) return raw;
+      return raw.replace(trimmed, catalog[trimmed]);
+    };
+    document.title = translateExact(document.title);
+    document.querySelectorAll('[placeholder], [title], [aria-label]').forEach((node) => {
+      ['placeholder', 'title', 'aria-label'].forEach((attr) => {
+        if (node.hasAttribute(attr)) node.setAttribute(attr, translateExact(node.getAttribute(attr)));
+      });
+    });
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || skipTags.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach((node) => {
+      node.nodeValue = translateExact(node.nodeValue);
+    });
+  })();
+</script>
 </body>
 </html>

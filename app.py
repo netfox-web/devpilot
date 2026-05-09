@@ -97,6 +97,180 @@ ADMIN_SAFETY_RELEASE_STATUS = "frozen_read_only"
 ADMIN_SAFETY_RELEASE_SCOPE = "Admin UI, approval safety, DNS safety chain, release dashboards"
 ADMIN_SAFETY_RELEASE_COMMIT = "625c59e"
 ADMIN_SAFETY_RELEASE_COMMIT_MESSAGE = "chore: add DevPilot admin safety release label"
+DEFAULT_UI_LANGUAGE = "zh-Hant"
+SUPPORTED_UI_LANGUAGES = {
+    "zh-Hant": "繁中",
+    "en": "English",
+}
+UI_TRANSLATIONS = {
+    "zh-Hant": {
+        "Home": "首頁",
+        "Core": "核心",
+        "Projects": "專案",
+        "New Project": "新增專案",
+        "AI Console": "AI 控制台",
+        "AI Heartbeats": "AI 心跳",
+        "AI Costs": "AI 成本",
+        "API Keys": "API 金鑰",
+        "Safety": "安全",
+        "Approval Requests": "核准請求",
+        "Cloudflare": "Cloudflare",
+        "Domains": "網域",
+        "Domain Readiness": "網域就緒度",
+        "Domain Action Plan": "網域行動計畫",
+        "Operations": "營運",
+        "Release Dashboard": "發佈 / 備份儀表板",
+        "Release Note / QA Report": "發佈備註 / QA 報告",
+        "Manual Checklist": "人工檢查清單",
+        "Runbooks": "操作手冊",
+        "Deployment Targets": "部署目標",
+        "Deployment Board": "部署看板",
+        "NAS Docker Scan": "NAS Docker 掃描",
+        "Login": "登入",
+        "Logout": "登出",
+        "Language": "語言",
+        "Traditional Chinese": "繁體中文",
+        "English": "英文",
+        "Username": "使用者名稱",
+        "Password": "密碼",
+        "DevPilot Login": "DevPilot 登入",
+        "Use your administrator credentials.": "請使用管理員憑證登入。",
+        "DevPilot Operations Command Center": "DevPilot 營運指揮中心",
+        "Read-only production status, approval state, DNS safety, backend health, backups, and audit trail.": "唯讀檢視 production 狀態、核准狀態、DNS 安全鏈、後端健康、備份與稽核軌跡。",
+        "READ-ONLY": "唯讀",
+        "DNS WRITE DISABLED": "DNS 寫入停用",
+        "NO DEPLOY": "不部署",
+        "APPROVAL REQUIRED": "需要核准",
+        "Production Domain": "正式網域",
+        "Release Version": "發佈版本",
+        "Release / Backup": "發佈 / 備份",
+        "Approval Center": "核准中心",
+        "Cloudflare Flags": "Cloudflare 旗標",
+        "DNS Safety Chain": "DNS 安全鏈",
+        "Shopee AI Service": "Shopee AI 服務",
+        "Quick Links": "快速連結",
+        "Recent Backups": "近期備份",
+        "Recent DNS Audit": "近期 DNS 稽核",
+        "Status": "狀態",
+        "Backup mount": "備份掛載",
+        "Recent backups": "近期備份",
+        "Latest": "最新",
+        "Total": "總數",
+        "Pending": "待處理",
+        "Approved": "已核准",
+        "Rejected": "已拒絕",
+        "DNS write": "DNS 寫入",
+        "Toggle here": "此頁切換",
+        "Preflight read-only": "Preflight 唯讀",
+        "Real DNS write": "真實 DNS 寫入",
+        "Cloudflare API write": "Cloudflare API 寫入",
+        "Production Release Note / Admin QA Report": "正式發佈備註 / 後台 QA 報告",
+        "Completed Phases Summary": "已完成階段摘要",
+        "Production Acceptance Status": "Production 驗收狀態",
+        "Safety Chain Status": "安全鏈狀態",
+        "Known Limitations": "已知限制",
+        "Recommended Next Phases": "建議下一階段",
+        "Domain / Reverse Proxy Readiness": "網域 / Reverse Proxy 就緒度",
+        "Domain Action Plan Board": "網域行動計畫看板",
+        "Manual Operations Checklist Center": "人工操作檢查清單中心",
+        "Operations Runbook Center": "操作手冊中心",
+        "AI Console Sandbox Gallery": "AI 控制台 Sandbox 產物庫",
+        "AI Console Sandbox Preview": "AI 控制台 Sandbox 預覽",
+        "Cleanup Planning": "清理規劃",
+        "Retention Policy": "保留政策",
+        "Preview": "預覽",
+        "Download": "下載",
+        "Back to AI Console": "回到 AI 控制台",
+        "Export CSV": "匯出 CSV",
+        "Export Markdown": "匯出 Markdown",
+        "Rendered": "產生時間",
+    },
+    "en": {
+        "首頁": "Home",
+        "核心": "Core",
+        "專案": "Projects",
+        "新增專案": "New Project",
+        "AI 控制台": "AI Console",
+        "AI 心跳": "AI Heartbeats",
+        "AI 成本": "AI Costs",
+        "API 金鑰": "API Keys",
+        "安全": "Safety",
+        "核准請求": "Approval Requests",
+        "網域": "Domains",
+        "網域就緒度": "Domain Readiness",
+        "網域行動計畫": "Domain Action Plan",
+        "營運": "Operations",
+        "發佈 / 備份儀表板": "Release Dashboard",
+        "發佈備註 / QA 報告": "Release Note / QA Report",
+        "人工檢查清單": "Manual Checklist",
+        "操作手冊": "Runbooks",
+        "部署目標": "Deployment Targets",
+        "部署看板": "Deployment Board",
+        "NAS Docker 掃描": "NAS Docker Scan",
+        "登入": "Login",
+        "登出": "Logout",
+        "語言": "Language",
+        "繁體中文": "Traditional Chinese",
+        "英文": "English",
+        "使用者名稱": "Username",
+        "密碼": "Password",
+        "DevPilot 登入": "DevPilot Login",
+        "請使用管理員憑證登入。": "Use your administrator credentials.",
+        "唯讀": "READ-ONLY",
+        "DNS 寫入停用": "DNS WRITE DISABLED",
+        "不部署": "NO DEPLOY",
+        "需要核准": "APPROVAL REQUIRED",
+        "正式網域": "Production Domain",
+        "發佈版本": "Release Version",
+        "發佈 / 備份": "Release / Backup",
+        "核准中心": "Approval Center",
+        "Cloudflare 旗標": "Cloudflare Flags",
+        "DNS 安全鏈": "DNS Safety Chain",
+        "Shopee AI 服務": "Shopee AI Service",
+        "快速連結": "Quick Links",
+        "近期備份": "Recent Backups",
+        "近期 DNS 稽核": "Recent DNS Audit",
+        "狀態": "Status",
+        "備份掛載": "Backup mount",
+        "最新": "Latest",
+        "總數": "Total",
+        "待處理": "Pending",
+        "已核准": "Approved",
+        "已拒絕": "Rejected",
+        "DNS 寫入": "DNS write",
+        "此頁切換": "Toggle here",
+        "真實 DNS 寫入": "Real DNS write",
+        "Cloudflare API 寫入": "Cloudflare API write",
+        "正式發佈備註 / 後台 QA 報告": "Production Release Note / Admin QA Report",
+        "已完成階段摘要": "Completed Phases Summary",
+        "Production 驗收狀態": "Production Acceptance Status",
+        "安全鏈狀態": "Safety Chain Status",
+        "已知限制": "Known Limitations",
+        "建議下一階段": "Recommended Next Phases",
+        "網域 / Reverse Proxy 就緒度": "Domain / Reverse Proxy Readiness",
+        "網域行動計畫看板": "Domain Action Plan Board",
+        "人工操作檢查清單中心": "Manual Operations Checklist Center",
+        "操作手冊中心": "Operations Runbook Center",
+        "AI 控制台 Sandbox 產物庫": "AI Console Sandbox Gallery",
+        "AI 控制台 Sandbox 預覽": "AI Console Sandbox Preview",
+        "清理規劃": "Cleanup Planning",
+        "保留政策": "Retention Policy",
+        "預覽": "Preview",
+        "下載": "Download",
+        "回到 AI 控制台": "Back to AI Console",
+        "匯出 CSV": "Export CSV",
+        "匯出 Markdown": "Export Markdown",
+        "產生時間": "Rendered",
+        "建立預設 AI 流程": "Create default AI flow",
+        "安全自動跑流程": "Run safe AI flow",
+        "全自動跑流程": "Run full AI flow",
+        "部署 staging": "Deploy staging",
+        "核准 production": "Approve production",
+        "新增部署位置": "Add deployment target",
+        "新增部署": "Add deployment",
+        "儲存部署位置": "Save deployment target",
+    },
+}
 OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_HEALTH_URL", "http://211.75.219.184:3030/api/health")
 OPERATIONS_SHOPEE_STAGING_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_STAGING_HEALTH_URL", "http://211.75.219.184:3032/api/health")
 OPERATIONS_SHOPEE_PRODUCTION_DOMAIN = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_DOMAIN", "shopee.aichat.tw")
@@ -436,8 +610,58 @@ def close_db(exc):
         db.close()
 
 
+def normalize_ui_language(value):
+    text = str(value or "").strip()
+    aliases = {
+        "zh": "zh-Hant",
+        "zh-hant": "zh-Hant",
+        "zh_tw": "zh-Hant",
+        "zh-tw": "zh-Hant",
+        "tw": "zh-Hant",
+        "繁中": "zh-Hant",
+        "en-us": "en",
+        "en": "en",
+        "english": "en",
+    }
+    return aliases.get(text.lower(), text) if aliases.get(text.lower(), text) in SUPPORTED_UI_LANGUAGES else DEFAULT_UI_LANGUAGE
+
+
+def update_ui_language_from_request():
+    requested = request.args.get("lang")
+    if requested:
+        session["ui_lang"] = normalize_ui_language(requested)
+    g.ui_lang = normalize_ui_language(session.get("ui_lang"))
+
+
+def current_ui_language():
+    if not has_request_context():
+        return DEFAULT_UI_LANGUAGE
+    if not hasattr(g, "ui_lang"):
+        g.ui_lang = normalize_ui_language(session.get("ui_lang"))
+    return g.ui_lang
+
+
+def ui_t(text):
+    source = str(text or "")
+    return UI_TRANSLATIONS.get(current_ui_language(), {}).get(source, source)
+
+
+def ui_i18n_catalog():
+    return UI_TRANSLATIONS.get(current_ui_language(), {})
+
+
+def ui_language_switch_url(language):
+    if not has_request_context():
+        return "#"
+    args = request.args.to_dict(flat=True)
+    args["lang"] = normalize_ui_language(language)
+    query = urllib.parse.urlencode(args)
+    return f"{request.path}?{query}" if query else request.path
+
+
 @app.before_request
 def require_session_for_pages():
+    update_ui_language_from_request()
     if request.endpoint in ("login", "static"):
         return None
     if request.path.startswith("/api/"):
@@ -16682,6 +16906,12 @@ def inject_helpers():
         current_user=current_user(),
         current_role=current_role(),
         has_role=has_role,
+        ui_lang=current_ui_language(),
+        ui_language_label=SUPPORTED_UI_LANGUAGES.get(current_ui_language(), current_ui_language()),
+        ui_languages=SUPPORTED_UI_LANGUAGES,
+        ui_language_switch_url=ui_language_switch_url,
+        ui_t=ui_t,
+        ui_i18n_catalog=ui_i18n_catalog(),
     )
 
 
