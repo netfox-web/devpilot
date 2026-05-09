@@ -5461,6 +5461,284 @@ def domain_action_plan_csv_response():
     return response
 
 
+def manual_operations_checklist_sections():
+    return [
+        {
+            "key": "dns_real_write",
+            "title": "DNS Real Write Checklist",
+            "items": [
+                {
+                    "item": "Confirm the operation targets exactly one DNS record.",
+                    "required_before": "Any Cloudflare write phase",
+                    "risk_if_missing": "A broader change could affect unrelated hostnames.",
+                    "note": "Use single-record phases only.",
+                },
+                {
+                    "item": "Complete Cloudflare read-only final preflight.",
+                    "required_before": "Record create or update",
+                    "risk_if_missing": "The plan may be based on stale DNS state.",
+                    "note": "Preflight must identify create or update.",
+                },
+                {
+                    "item": "Confirm the record is missing, or preserve an update snapshot.",
+                    "required_before": "Record create or update",
+                    "risk_if_missing": "Rollback cannot restore the previous state.",
+                    "note": "Updates need previous id, type, name, content, proxied state, and ttl.",
+                },
+                {
+                    "item": "Confirm rollback payload and production DB backup path.",
+                    "required_before": "Record create or update",
+                    "risk_if_missing": "Recovery instructions may be incomplete.",
+                    "note": "Rollback remains a separate approval-controlled action.",
+                },
+                {
+                    "item": "Confirm feature flag state and final phrase.",
+                    "required_before": "Real write execution",
+                    "risk_if_missing": "Execution gate may be bypassed or ambiguous.",
+                    "note": "No UI toggle is available from DevPilot.",
+                },
+                {
+                    "item": "Confirm no release, backend restart, or deployment job is part of the DNS phase.",
+                    "required_before": "Real write execution",
+                    "risk_if_missing": "A DNS change could be mixed with unrelated rollout effects.",
+                    "note": "Keep DNS phases isolated.",
+                },
+            ],
+        },
+        {
+            "key": "nas_reverse_proxy",
+            "title": "NAS Reverse Proxy Checklist",
+            "items": [
+                {
+                    "item": "Confirm DNS resolves to the NAS public address.",
+                    "required_before": "Reverse proxy setup",
+                    "risk_if_missing": "The hostname may not reach the NAS at all.",
+                    "note": "Use public DNS and HTTP/HTTPS read-only checks.",
+                },
+                {
+                    "item": "Confirm backend local health is OK.",
+                    "required_before": "Reverse proxy setup",
+                    "risk_if_missing": "The proxy may route to a broken upstream.",
+                    "note": "Check the local port before touching NAS configuration.",
+                },
+                {
+                    "item": "Confirm source hostname, upstream host, and upstream port.",
+                    "required_before": "Reverse proxy setup",
+                    "risk_if_missing": "Traffic may be routed to the wrong service.",
+                    "note": "Preserve Host and forwarded protocol headers when needed.",
+                },
+                {
+                    "item": "Confirm whether WebSocket support is needed.",
+                    "required_before": "Reverse proxy setup",
+                    "risk_if_missing": "Realtime features may fail after routing.",
+                    "note": "Enable only when the backend requires it.",
+                },
+                {
+                    "item": "Confirm the backend will not be restarted.",
+                    "required_before": "Reverse proxy setup",
+                    "risk_if_missing": "Routing work could accidentally become a service outage.",
+                    "note": "NAS rule changes should not restart application containers.",
+                },
+                {
+                    "item": "Verify the HTTPS path after configuration.",
+                    "required_before": "Marking route ready",
+                    "risk_if_missing": "A rule may exist but still point to DSM or a default page.",
+                    "note": "Use the expected health path where available.",
+                },
+            ],
+        },
+        {
+            "key": "ssl_certificate",
+            "title": "SSL Certificate Checklist",
+            "items": [
+                {
+                    "item": "Confirm certificate CN or SAN includes the hostname.",
+                    "required_before": "Public HTTPS use",
+                    "risk_if_missing": "Browsers and strict clients will reject the connection.",
+                    "note": "Wildcard coverage is acceptable when it matches.",
+                },
+                {
+                    "item": "Confirm certificate expiry and trusted issuer.",
+                    "required_before": "Public HTTPS use",
+                    "risk_if_missing": "Traffic may fail immediately or expire without warning.",
+                    "note": "Prefer automated renewal where possible.",
+                },
+                {
+                    "item": "Confirm Cloudflare SSL mode is Full strict or Full.",
+                    "required_before": "Proxying through Cloudflare",
+                    "risk_if_missing": "Flexible mode can hide origin HTTPS problems.",
+                    "note": "Full strict is preferred when origin certificates are valid.",
+                },
+                {
+                    "item": "Confirm DNS proxied status matches the SSL plan.",
+                    "required_before": "Changing proxy mode",
+                    "risk_if_missing": "A hostname may show Cloudflare 52x or origin trust errors.",
+                    "note": "Do not change proxy mode from this checklist center.",
+                },
+                {
+                    "item": "Confirm HTTP port 80 behavior.",
+                    "required_before": "Public hostname handoff",
+                    "risk_if_missing": "Users may see DSM, a default page, or inconsistent redirects.",
+                    "note": "HTTPS readiness is the first priority.",
+                },
+            ],
+        },
+        {
+            "key": "release_deploy",
+            "title": "Release Deploy Checklist",
+            "items": [
+                {
+                    "item": "Confirm git status is clean and latest commit is expected.",
+                    "required_before": "Controlled production deploy",
+                    "risk_if_missing": "Unreviewed local changes may be shipped.",
+                    "note": "Use explicit file deployment only.",
+                },
+                {
+                    "item": "Confirm py_compile and diff check pass.",
+                    "required_before": "Controlled production deploy",
+                    "risk_if_missing": "Syntax or whitespace errors may break runtime.",
+                    "note": "Run checks before backup and copy.",
+                },
+                {
+                    "item": "Confirm production backup exists and SHA matches before copy.",
+                    "required_before": "Controlled production deploy",
+                    "risk_if_missing": "Rollback reference may not match the actual previous file.",
+                    "note": "Back up every modified production file.",
+                },
+                {
+                    "item": "Confirm only specified files are copied.",
+                    "required_before": "Controlled production deploy",
+                    "risk_if_missing": "Data, environment, or unrelated templates may be overwritten.",
+                    "note": "Never sync the whole folder for controlled deploys.",
+                },
+                {
+                    "item": "Confirm only the target container is recreated.",
+                    "required_before": "Controlled production deploy",
+                    "risk_if_missing": "Unrelated services may experience downtime.",
+                    "note": "Do not restart staging or backend containers.",
+                },
+                {
+                    "item": "Confirm smoke tests and logs pass after deploy.",
+                    "required_before": "Release close",
+                    "risk_if_missing": "A bad release may remain undetected.",
+                    "note": "Check routes, DB counts, and security logs.",
+                },
+            ],
+        },
+        {
+            "key": "rollback_readiness",
+            "title": "Rollback Readiness Checklist",
+            "items": [
+                {
+                    "item": "Confirm rollback target and scope are explicit.",
+                    "required_before": "Opening a rollback phase",
+                    "risk_if_missing": "Rollback could affect the wrong file, DNS record, or service.",
+                    "note": "Rollback must be scoped to one operation.",
+                },
+                {
+                    "item": "Confirm backup path exists and matches expected SHA.",
+                    "required_before": "Rollback execution",
+                    "risk_if_missing": "Rollback may restore the wrong state.",
+                    "note": "Verify before any restore action.",
+                },
+                {
+                    "item": "Confirm rollback payload is generated.",
+                    "required_before": "Rollback execution",
+                    "risk_if_missing": "The recovery action may be incomplete.",
+                    "note": "DNS rollback payloads must include record ids after write.",
+                },
+                {
+                    "item": "Confirm rollback is not automatic.",
+                    "required_before": "Any high-risk operation",
+                    "risk_if_missing": "A secondary write could happen without review.",
+                    "note": "Rollback requires its own approval phase.",
+                },
+                {
+                    "item": "Confirm post-rollback verification steps.",
+                    "required_before": "Rollback close",
+                    "risk_if_missing": "A rollback may be assumed successful without proof.",
+                    "note": "Use read-back, health, and log checks.",
+                },
+            ],
+        },
+        {
+            "key": "secret_safety",
+            "title": "Secret Safety Checklist",
+            "items": [
+                {
+                    "item": "Confirm credential values are never printed in pages, CSV exports, or logs.",
+                    "required_before": "Any verification report",
+                    "risk_if_missing": "Sensitive runtime credentials may leak.",
+                    "note": "Show only masked metadata when needed.",
+                },
+                {
+                    "item": "Confirm environment file contents are not displayed.",
+                    "required_before": "Any diagnostics step",
+                    "risk_if_missing": "Runtime configuration may leak.",
+                    "note": "Report presence or masked status only.",
+                },
+                {
+                    "item": "Confirm auth header values are not copied into output.",
+                    "required_before": "Any API or log review",
+                    "risk_if_missing": "Reusable credentials may leak.",
+                    "note": "Use sanitized status and error summaries.",
+                },
+                {
+                    "item": "Confirm browser login state values are never shown.",
+                    "required_before": "Any browser smoke test",
+                    "risk_if_missing": "Authenticated browser state may be exposed.",
+                    "note": "Do not print request headers or browser storage.",
+                },
+                {
+                    "item": "Confirm encrypted database fields are not rendered.",
+                    "required_before": "Any DB snapshot report",
+                    "risk_if_missing": "Protected values may be exposed even if encrypted.",
+                    "note": "Use counts and masked metadata only.",
+                },
+                {
+                    "item": "Confirm logs are scanned for sensitive-value leakage.",
+                    "required_before": "Release close",
+                    "risk_if_missing": "A leak could go unnoticed after deploy.",
+                    "note": "Scan recent production logs before closing.",
+                },
+            ],
+        },
+    ]
+
+
+def manual_operations_checklist_context():
+    sections = manual_operations_checklist_sections()
+    return {
+        "rendered_at": now_str(),
+        "sections": sections,
+        "summary": {
+            "categories": len(sections),
+            "items": sum(len(section.get("items") or []) for section in sections),
+        },
+    }
+
+
+def manual_operations_checklist_csv_response():
+    checklist = manual_operations_checklist_context()
+    output = io.StringIO()
+    fieldnames = ["category", "item", "required_before", "risk_if_missing", "note"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for section in checklist.get("sections", []):
+        for item in section.get("items", []):
+            writer.writerow({
+                "category": section.get("title") or "",
+                "item": item.get("item") or "",
+                "required_before": item.get("required_before") or "",
+                "risk_if_missing": item.get("risk_if_missing") or "",
+                "note": item.get("note") or "",
+            })
+    response = Response(output.getvalue(), mimetype="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=manual_operations_checklist.csv"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def operations_command_center_context():
     release = release_dashboard_context()
     backup_items = release.get("backups", {}).get("items", [])
@@ -9538,6 +9816,22 @@ def domain_action_plan_page():
 @require_roles("owner", "admin")
 def domain_action_plan_export_csv():
     return domain_action_plan_csv_response()
+
+
+@app.route("/manual-operations-checklist")
+@require_roles("owner", "admin")
+def manual_operations_checklist_page():
+    return render_template(
+        "manual_operations_checklist.html",
+        app_name=APP_NAME,
+        checklist=manual_operations_checklist_context(),
+    )
+
+
+@app.route("/api/manual-operations-checklist/export.csv")
+@require_roles("owner", "admin")
+def manual_operations_checklist_export_csv():
+    return manual_operations_checklist_csv_response()
 
 
 @app.route("/ai-console")

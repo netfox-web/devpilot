@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Manual Operations Checklist Center</h1>
+    <div class="text-muted small">Static read-only checklist library for high-risk manual operations.</div>
+  </div>
+  <div class="text-end">
+    <div><a href="/api/manual-operations-checklist/export.csv">Export CSV</a></div>
+    <div class="text-muted small">Rendered {{ checklist.rendered_at }}</div>
+  </div>
+</div>
+
+<div class="alert alert-info py-2">
+  These checklists are read-only. They do not save state, change DNS, edit NAS reverse proxy rules, modify certificates, deploy services, restart containers, or create deployment jobs.
+</div>
+
+<div class="row row-cols-2 row-cols-lg-4 g-3 mb-4">
+  <div class="col">
+    <div class="card shadow-sm h-100">
+      <div class="card-body text-center">
+        <div class="text-muted small">Categories</div>
+        <div class="fs-4 fw-semibold">{{ checklist.summary.categories }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card shadow-sm h-100">
+      <div class="card-body text-center">
+        <div class="text-muted small">Checklist Items</div>
+        <div class="fs-4 fw-semibold">{{ checklist.summary['items'] }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card shadow-sm h-100">
+      <div class="card-body text-center">
+        <div class="text-muted small">Saved State</div>
+        <div class="fs-6 fw-semibold text-secondary">Not stored</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card shadow-sm h-100">
+      <div class="card-body text-center">
+        <div class="text-muted small">Execution Controls</div>
+        <div class="fs-6 fw-semibold text-secondary">None</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  {% for section in checklist['sections'] %}
+    <div class="col-xl-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header">
+          <div class="fw-bold">{{ section.title }}</div>
+          <div class="text-muted small">{{ section['items']|length }} planning checks</div>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Required Before</th>
+                  <th>Risk If Missing</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in section['items'] %}
+                  <tr>
+                    <td>{{ item['item'] }}</td>
+                    <td>{{ item.required_before }}</td>
+                    <td>{{ item.risk_if_missing }}</td>
+                    <td class="text-muted">{{ item.note }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header fw-bold">Read-only Guardrails</div>
+  <div class="card-body small">
+    <div class="row row-cols-1 row-cols-md-3 g-3">
+      <div class="col">
+        <div class="fw-semibold">No state saving</div>
+        <div class="text-muted">The checklist does not store checkbox state or write to the database.</div>
+      </div>
+      <div class="col">
+        <div class="fw-semibold">No operations</div>
+        <div class="text-muted">There are no controls for DNS, NAS, certificates, releases, restarts, or rollback.</div>
+      </div>
+      <div class="col">
+        <div class="fw-semibold">No sensitive values</div>
+        <div class="text-muted">Only generalized safety language and planning notes are shown.</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
