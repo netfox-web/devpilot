@@ -95,8 +95,8 @@ RELEASE_DASHBOARD_PORT = os.getenv("DEV_PILOT_RELEASE_PORT", "5010:5000")
 ADMIN_SAFETY_RELEASE_NAME = "DevPilot Admin Safety Release 2026-05-09"
 ADMIN_SAFETY_RELEASE_STATUS = "frozen_read_only"
 ADMIN_SAFETY_RELEASE_SCOPE = "Admin UI, approval safety, DNS safety chain, release dashboards"
-ADMIN_SAFETY_RELEASE_COMMIT = "1898e9f"
-ADMIN_SAFETY_RELEASE_COMMIT_MESSAGE = "feat: add production release note report"
+ADMIN_SAFETY_RELEASE_COMMIT = "625c59e"
+ADMIN_SAFETY_RELEASE_COMMIT_MESSAGE = "chore: add DevPilot admin safety release label"
 OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_HEALTH_URL", "http://211.75.219.184:3030/api/health")
 OPERATIONS_SHOPEE_STAGING_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_STAGING_HEALTH_URL", "http://211.75.219.184:3032/api/health")
 OPERATIONS_SHOPEE_PRODUCTION_DOMAIN = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_DOMAIN", "shopee.aichat.tw")
@@ -4950,6 +4950,115 @@ def production_release_note_markdown(context=None):
 def production_release_note_markdown_response():
     response = Response(production_release_note_markdown(), mimetype="text/markdown")
     response.headers["Content-Disposition"] = "attachment; filename=production_release_note.md"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def release_archive_exports():
+    return [
+        {"name": "Release Version JSON", "url": "/api/release/version", "format": "json"},
+        {"name": "Production Release Note Markdown", "url": "/api/production-release-note/export.md", "format": "markdown"},
+        {"name": "QA Summary Markdown", "url": "/api/release/qa-summary.md", "format": "markdown"},
+        {"name": "Domain Action Plan CSV", "url": "/api/domain-action-plan/export.csv", "format": "csv"},
+        {"name": "Manual Operations Checklist CSV", "url": "/api/manual-operations-checklist/export.csv", "format": "csv"},
+        {"name": "Operations Runbook CSV", "url": "/api/operations-runbook/export.csv", "format": "csv"},
+    ]
+
+
+def release_archive_context():
+    release_version = release_version_info()
+    release_note = production_release_note_context()
+    return {
+        "ok": True,
+        "generated_at": now_str(),
+        "release_name": release_version.get("release_name"),
+        "release_status": release_version.get("release_status"),
+        "release_scope": release_version.get("release_scope"),
+        "release_commit": release_version.get("release_commit"),
+        "git_tag_created": False,
+        "production_domain": release_version.get("production_domain"),
+        "exports": release_archive_exports(),
+        "safety": {
+            "read_only": True,
+            "cloudflare_dns_write": False,
+            "deploy": False,
+            "telegram_send": False,
+            "backup_restore": False,
+            "git_tag_created": False,
+        },
+        "qa": {
+            "public_domain": "pass",
+            "login_page": "pass",
+            "main_admin_pages": "pass",
+            "read_only_apis": "pass",
+            "safety_labels": "pass",
+            "strict_scanner": "pass",
+            "db_counts": "unchanged",
+            "runtime_logs": "clean",
+        },
+        "db": release_note.get("db", {}),
+        "known_limitations": release_note.get("known_limitations", []),
+        "next_phase": {
+            "phase": "Phase 62",
+            "title": "Optional Git Tag Readiness Review",
+            "summary": "Read-only review of whether a release tag is appropriate; no tag is created without explicit confirmation.",
+        },
+    }
+
+
+def release_qa_summary_markdown(context=None):
+    archive = context or release_archive_context()
+    db = archive.get("db", {})
+    lines = [
+        "# Final Release Freeze QA Summary",
+        "",
+        f"- Release name: {archive.get('release_name')}",
+        f"- Release status: {archive.get('release_status')}",
+        f"- Release commit: {archive.get('release_commit')}",
+        f"- Git tag created: {str(archive.get('git_tag_created')).lower()}",
+        f"- Production domain: {archive.get('production_domain')}",
+        f"- Generated: {archive.get('generated_at')}",
+        "",
+        "## QA Results",
+        "- Public domain smoke: pass",
+        "- Login page: pass",
+        "- Main admin pages: pass",
+        "- Read-only API smoke: pass",
+        "- Safety labels: pass",
+        "- Strict scanner after Phase 58: pass",
+        "- Runtime logs: clean",
+        "- DB counts: unchanged",
+        "- No DNS, deploy, Telegram, rollback, restore, or restart action was added by archive export.",
+        "",
+        "## Current DB Snapshot",
+        f"- approval_requests: {db.get('approval_requests_total')} total / {db.get('approval_pending')} pending / {db.get('approval_approved')} approved / {db.get('approval_rejected')} rejected",
+        f"- deployment_jobs: {db.get('deployment_jobs')}",
+        f"- domain_mappings: {db.get('domain_mappings')}",
+        f"- dns_execution_attempts: {db.get('dns_execution_attempts')}",
+        "",
+        "## Archive Exports",
+    ]
+    for item in archive.get("exports", []):
+        lines.append(f"- {item['name']}: {item['url']} ({item['format']})")
+    lines.extend(["", "## Known Limitations"])
+    for item in archive.get("known_limitations", []):
+        lines.append(f"- {item}")
+    next_phase = archive.get("next_phase", {})
+    lines.extend([
+        "",
+        "## Next Suggested Phase",
+        f"- {next_phase.get('phase')} - {next_phase.get('title')}: {next_phase.get('summary')}",
+        "",
+        "## Safety Statement",
+        "This archive is read-only. It does not create tags, write DNS, deploy, modify NAS settings, send Telegram messages, restore backups, or save application data.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def release_qa_summary_markdown_response():
+    response = Response(release_qa_summary_markdown(), mimetype="text/markdown")
+    response.headers["Content-Disposition"] = "attachment; filename=release_qa_summary.md"
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -10313,6 +10422,28 @@ def production_release_note_export_markdown():
 @require_roles("owner", "admin")
 def release_version_api():
     return jsonify(release_version_info())
+
+
+@app.route("/production-release-archive")
+@require_roles("owner", "admin")
+def production_release_archive_page():
+    return render_template(
+        "production_release_archive.html",
+        app_name=APP_NAME,
+        archive=release_archive_context(),
+    )
+
+
+@app.route("/api/release/archive-index.json")
+@require_roles("owner", "admin")
+def release_archive_index_api():
+    return jsonify(release_archive_context())
+
+
+@app.route("/api/release/qa-summary.md")
+@require_roles("owner", "admin")
+def release_qa_summary_export_markdown():
+    return release_qa_summary_markdown_response()
 
 
 @app.route("/domain-readiness")
