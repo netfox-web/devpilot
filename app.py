@@ -5207,6 +5207,164 @@ def domain_readiness_context():
     }
 
 
+def domain_action_plan_item(hostname, current_status, recommended_action, risk_level, prerequisites, next_phase, manual_confirmation_phrase=""):
+    return {
+        "hostname": hostname,
+        "current_status": current_status,
+        "recommended_action": recommended_action,
+        "risk_level": risk_level,
+        "prerequisites": prerequisites,
+        "next_phase": next_phase,
+        "manual_confirmation_phrase": manual_confirmation_phrase,
+    }
+
+
+def domain_action_plan_context():
+    readiness = domain_readiness_context()
+    sections = [
+        {
+            "key": "ready_monitor",
+            "title": "Ready / Monitor",
+            "description": "Routes that are already usable. Keep checking status; no DNS or NAS change is needed.",
+            "items": [],
+        },
+        {
+            "key": "ssl_certificate_needed",
+            "title": "SSL / Certificate Needed",
+            "description": "DNS reaches the NAS, but the HTTPS layer still needs a matching certificate or proxy binding.",
+            "items": [],
+        },
+        {
+            "key": "backend_upstream_pending",
+            "title": "Backend / Upstream Pending",
+            "description": "DNS exists or is planned, but the upstream service, landing page, or widget route still needs a decision.",
+            "items": [],
+        },
+        {
+            "key": "dns_missing_future_create",
+            "title": "DNS Missing / Future Create",
+            "description": "Hostnames that should stay plan-only until the upstream and safety controls are ready.",
+            "items": [],
+        },
+        {
+            "key": "high_risk_hold",
+            "title": "High-risk / Do Not Touch First",
+            "description": "Records that should stay unchanged until the public entrypoint and protection model are ready.",
+            "items": [],
+        },
+    ]
+    section_map = {section["key"]: section for section in sections}
+    item_map = {item.get("hostname"): item for item in readiness.get("items", [])}
+
+    for item in readiness.get("items", []):
+        hostname = item.get("hostname") or ""
+        status = item.get("readiness") or "unknown"
+        current_status = status.replace("_", " ")
+        if status == "ready":
+            section_map["ready_monitor"]["items"].append(domain_action_plan_item(
+                hostname,
+                current_status,
+                "Keep monitoring. No DNS or NAS change is needed.",
+                "low",
+                ["Periodic HTTP/HTTPS health check", "Keep existing reverse proxy and certificate assignment unchanged"],
+                "Monitor in the readiness dashboard",
+            ))
+        elif status == "ssl_error":
+            phrase = ""
+            if hostname == "staging.aichat.tw":
+                phrase = "執行 NAS Reverse Proxy：staging.aichat.tw HTTPS 443 -> http://127.0.0.1:3032，不改 DNS、不重啟 backend"
+            section_map["ssl_certificate_needed"]["items"].append(domain_action_plan_item(
+                hostname,
+                current_status,
+                "Add or verify the NAS reverse proxy rule, then assign a certificate that includes this hostname.",
+                "medium",
+                [
+                    "Reverse proxy source is HTTPS 443 for the hostname",
+                    "Destination points to the intended local upstream",
+                    "Certificate SAN includes the hostname or a matching wildcard",
+                    "Strict HTTPS health check returns 200 before marking ready",
+                ],
+                "NAS reverse proxy and SSL controlled setup",
+                phrase,
+            ))
+        elif status in ("backend_unconfigured", "dns_ready_service_pending", "reverse_proxy_missing"):
+            action = "Decide the upstream service and root path behavior before exposing this hostname."
+            prerequisites = ["Chosen upstream service", "Expected route behavior", "HTTPS certificate plan"]
+            next_phase = "Service readiness planning"
+            risk = "medium"
+            if hostname == "widget.aichat.tw":
+                action = "Decide whether this should serve a widget static bundle, iframe endpoint, or backend placeholder."
+                prerequisites = ["Widget service or route selected", "CORS and iframe headers reviewed", "HTTPS endpoint plan"]
+                next_phase = "Widget service upstream design"
+            elif hostname == "www.aichat.tw":
+                action = "Keep the existing entrypoint unchanged until the landing page service is ready."
+                prerequisites = ["Landing page service selected", "Root path behavior defined", "Existing DNS snapshot preserved"]
+                next_phase = "Aichat landing page readiness"
+                risk = "high"
+            section_map["backend_upstream_pending"]["items"].append(domain_action_plan_item(
+                hostname,
+                current_status,
+                action,
+                risk,
+                prerequisites,
+                next_phase,
+            ))
+        elif status == "dns_missing":
+            action = "Run final DNS preflight before creating any record."
+            prerequisites = ["Upstream target selected", "Record payload drafted", "Rollback payload drafted"]
+            next_phase = "DNS final preflight"
+            risk = "medium"
+            phrase = f"執行 DNS：{hostname} A 211.75.219.184 proxied=false"
+            if hostname == "api.aichat.tw":
+                action = "Define API upstream, CORS, authentication, and rate limits before DNS creation."
+                prerequisites = ["API upstream selected", "CORS origin list reviewed", "Rate limit and auth expectations documented"]
+                next_phase = "API domain final preflight"
+            elif hostname == "admin.aichat.tw":
+                action = "Put Cloudflare Access or an IP allowlist in front of admin access before DNS creation."
+                prerequisites = ["Access policy selected", "Admin upstream selected", "Emergency lockout path documented"]
+                next_phase = "Admin access control design before DNS"
+                risk = "high"
+            section_map["dns_missing_future_create"]["items"].append(domain_action_plan_item(
+                hostname,
+                current_status,
+                action,
+                risk,
+                prerequisites,
+                next_phase,
+                phrase,
+            ))
+
+    www_item = item_map.get("www.aichat.tw") or {}
+    www_dns = www_item.get("dns") or {}
+    section_map["high_risk_hold"]["items"].append(domain_action_plan_item(
+        "www.aichat.tw",
+        (www_item.get("readiness") or "existing public entrypoint").replace("_", " "),
+        "Do not update the existing www record until the landing page is ready and the previous record snapshot is reviewed.",
+        "high",
+        [
+            f"Current DNS summary: {www_dns.get('type') or 'unknown'} {www_dns.get('content') or 'not confirmed'}",
+            "Landing page service ready",
+            "Rollback plan for the current www record documented",
+        ],
+        "Landing page readiness and separate single-record gate",
+    ))
+    section_map["high_risk_hold"]["items"].append(domain_action_plan_item(
+        "aichat.tw",
+        "root domain hold",
+        "Keep the root domain unchanged until the public site and DNS strategy are finalized.",
+        "high",
+        ["Root record snapshot", "Landing page ownership decision", "SSL and redirect strategy"],
+        "Root domain strategy review",
+    ))
+
+    return {
+        "rendered_at": now_str(),
+        "readiness": readiness,
+        "sections": sections,
+        "summary": {section["key"]: len(section["items"]) for section in sections},
+    }
+
+
 def operations_command_center_context():
     release = release_dashboard_context()
     backup_items = release.get("backups", {}).get("items", [])
@@ -9267,6 +9425,16 @@ def domain_readiness_page():
         "domain_readiness.html",
         app_name=APP_NAME,
         readiness=domain_readiness_context(),
+    )
+
+
+@app.route("/domain-action-plan")
+@require_roles("owner", "admin")
+def domain_action_plan_page():
+    return render_template(
+        "domain_action_plan.html",
+        app_name=APP_NAME,
+        board=domain_action_plan_context(),
     )
 
 
