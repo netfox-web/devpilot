@@ -91,6 +91,10 @@ RELEASE_DASHBOARD_CONTAINER = os.getenv("DEV_PILOT_RELEASE_CONTAINER", "devpilot
 RELEASE_DASHBOARD_PORT = os.getenv("DEV_PILOT_RELEASE_PORT", "5010:5000")
 OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_HEALTH_URL", "http://211.75.219.184:3030/api/health")
 OPERATIONS_SHOPEE_STAGING_HEALTH_URL = os.getenv("DEV_PILOT_SHOPEE_STAGING_HEALTH_URL", "http://211.75.219.184:3032/api/health")
+OPERATIONS_SHOPEE_PRODUCTION_DOMAIN = os.getenv("DEV_PILOT_SHOPEE_PRODUCTION_DOMAIN", "shopee.aichat.tw")
+OPERATIONS_SHOPEE_STAGING_DOMAIN = os.getenv("DEV_PILOT_SHOPEE_STAGING_DOMAIN", "staging.aichat.tw")
+OPERATIONS_SHOPEE_STAGING_LEGACY_DOMAIN = os.getenv("DEV_PILOT_SHOPEE_STAGING_LEGACY_DOMAIN", "staging-shopee.aichat.tw")
+OPERATIONS_AICHAT_NAS_IP = os.getenv("DEV_PILOT_AICHAT_NAS_IP", "211.75.219.184")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -4707,27 +4711,148 @@ def operations_http_health_check(name, environment, url, port):
         base["latency_ms"] = int((time.monotonic() - started) * 1000)
         base["detail"] = f"HTTP {exc.code}"
         return base
+    except urllib.error.URLError as exc:
+        base["latency_ms"] = int((time.monotonic() - started) * 1000)
+        reason = getattr(exc, "reason", None)
+        base["detail"] = type(reason).__name__ if reason else type(exc).__name__
+        return base
     except Exception as exc:
         base["latency_ms"] = int((time.monotonic() - started) * 1000)
         base["detail"] = type(exc).__name__
         return base
 
 
-def operations_shopee_health():
-    return [
-        operations_http_health_check(
+def operations_resolve_hostname(hostname):
+    result = {
+        "hostname": hostname,
+        "ok": False,
+        "addresses": [],
+        "points_to_expected_ip": False,
+        "expected_ip": OPERATIONS_AICHAT_NAS_IP,
+        "detail": "",
+    }
+    try:
+        info = socket.getaddrinfo(hostname, None)
+        addresses = sorted({item[4][0] for item in info if item and item[4]})
+        result["addresses"] = addresses[:8]
+        result["ok"] = bool(addresses)
+        result["points_to_expected_ip"] = OPERATIONS_AICHAT_NAS_IP in addresses
+        result["detail"] = "resolved" if addresses else "no records"
+    except Exception as exc:
+        result["detail"] = type(exc).__name__
+    return result
+
+
+def operations_domain_mapping_summary(hostname):
+    try:
+        row = row_to_dict(query_one(
+            """SELECT id, project_id, zone_name, record_name, record_type, record_content,
+                      environment, preview_url, status, notes
+               FROM domain_mappings
+               WHERE lower(COALESCE(record_name, ''))=lower(?)
+               ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, id DESC
+               LIMIT 1""",
+            (hostname,),
+        ))
+    except sqlite3.Error:
+        row = None
+    if not row:
+        return {"exists": False, "hostname": hostname}
+    return {
+        "exists": True,
+        "id": row.get("id"),
+        "project_id": row.get("project_id"),
+        "zone_name": row.get("zone_name"),
+        "record_name": row.get("record_name"),
+        "record_type": row.get("record_type"),
+        "record_content": row.get("record_content"),
+        "environment": row.get("environment"),
+        "preview_url": row.get("preview_url"),
+        "status": row.get("status"),
+    }
+
+
+def operations_shopee_project():
+    try:
+        row = row_to_dict(query_one(
+            """SELECT id, name, client_name, project_type, status, deploy_url
+               FROM projects
+               WHERE id=3
+                  OR lower(COALESCE(name, '') || ' ' || COALESCE(client_name, '') || ' ' || COALESCE(description, '')) LIKE '%shopee%'
+                  OR COALESCE(name, '') LIKE '%蝦皮%'
+               ORDER BY CASE WHEN id=3 THEN 0 ELSE 1 END, id
+               LIMIT 1"""
+        ))
+    except sqlite3.Error:
+        row = None
+    if not row:
+        return {"exists": False, "id": None, "name": "Shopee AI"}
+    return {
+        "exists": True,
+        "id": row.get("id"),
+        "name": row.get("name"),
+        "client_name": row.get("client_name"),
+        "project_type": row.get("project_type"),
+        "status": row.get("status"),
+        "deploy_url": row.get("deploy_url"),
+    }
+
+
+def operations_shopee_domain_readiness(hostname, environment, backend_port):
+    dns = operations_resolve_hostname(hostname)
+    https = operations_http_health_check(
+        f"{hostname} HTTPS health",
+        environment,
+        f"https://{hostname}/api/health",
+        "443",
+    )
+    mapping = operations_domain_mapping_summary(hostname)
+    ssl_status = "valid" if https.get("ok") else "pending_or_unknown"
+    reverse_proxy_status = "ready" if https.get("ok") else "pending_or_unknown"
+    if dns.get("ok") and not https.get("ok") and "SSLCert" in str(https.get("detail") or ""):
+        ssl_status = "certificate_check_needed"
+    if dns.get("ok") and https.get("status_code") == 404:
+        reverse_proxy_status = "rule_check_needed"
+    readiness = "ready" if https.get("ok") else ("dns_ready_service_pending" if dns.get("ok") else "dns_check_needed")
+    return {
+        "hostname": hostname,
+        "environment": environment,
+        "backend_port": backend_port,
+        "dns": dns,
+        "https_health": https,
+        "domain_mapping": mapping,
+        "ssl_status": ssl_status,
+        "reverse_proxy_status": reverse_proxy_status,
+        "readiness": readiness,
+    }
+
+
+def operations_shopee_status():
+    production_backend = operations_http_health_check(
             "Shopee AI production backend",
             "production",
             OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL,
             "3030",
-        ),
-        operations_http_health_check(
+    )
+    staging_backend = operations_http_health_check(
             "Shopee AI staging backend",
             "staging",
             OPERATIONS_SHOPEE_STAGING_HEALTH_URL,
             "3032",
-        ),
-    ]
+    )
+    return {
+        "project": operations_shopee_project(),
+        "backends": [production_backend, staging_backend],
+        "domains": [
+            operations_shopee_domain_readiness(OPERATIONS_SHOPEE_PRODUCTION_DOMAIN, "production", "3030"),
+            operations_shopee_domain_readiness(OPERATIONS_SHOPEE_STAGING_DOMAIN, "staging", "3032"),
+            operations_shopee_domain_readiness(OPERATIONS_SHOPEE_STAGING_LEGACY_DOMAIN, "staging", "3032"),
+        ],
+        "notes": [
+            "Read-only status only; no deploy, restart, DNS write, or backend mutation is available here.",
+            "DNS and HTTPS checks use short timeouts so failures cannot break dashboard rendering.",
+        ],
+    }
 
 
 def operations_command_center_context():
@@ -4735,6 +4860,9 @@ def operations_command_center_context():
     backup_items = release.get("backups", {}).get("items", [])
     cloudflare_flag = release.get("safety", {}).get("cloudflare_dns_write", {})
     mock_flag = release.get("safety", {}).get("mock_dns_execution", {})
+    shopee = operations_shopee_status()
+    shopee_project = shopee.get("project") or {}
+    shopee_project_link = f"/projects/{shopee_project.get('id')}" if shopee_project.get("exists") and shopee_project.get("id") else "/projects/18"
     return {
         "rendered_at": now_str(),
         "production_domain": {
@@ -4764,7 +4892,7 @@ def operations_command_center_context():
             "dns_write": cloudflare_flag,
             "mock_dns_execution": mock_flag,
         },
-        "shopee_health": operations_shopee_health(),
+        "shopee": shopee,
         "recent_backups": backup_items[:6],
         "recent_dns_attempts": release.get("dns_attempts", [])[:5],
         "quick_links": [
@@ -4773,7 +4901,7 @@ def operations_command_center_context():
             {"label": "Cloudflare", "href": "/cloudflare"},
             {"label": "Domains", "href": "/domains"},
             {"label": "AI Console", "href": "/ai-console"},
-            {"label": "Project 18", "href": "/projects/18"},
+            {"label": "Shopee AI Project", "href": shopee_project_link},
             {"label": "Deployment Board", "href": "/deployment-board"},
         ],
     }

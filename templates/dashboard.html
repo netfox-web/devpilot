@@ -117,23 +117,71 @@
 
   <div class="col-xl-4">
     <div class="card shadow-sm h-100">
-      <div class="card-header fw-bold">Shopee AI Health</div>
-      <div class="list-group list-group-flush">
-        {% for item in operations.shopee_health %}
-          <div class="list-group-item">
-            <div class="d-flex justify-content-between gap-2">
-              <div>
-                <div class="fw-semibold">{{ item.name }}</div>
-                <div class="small text-muted">{{ item.environment }} / port {{ item.port }}</div>
-                <div class="small text-muted">{{ item.url }}</div>
-              </div>
-              <div class="text-end">
-                <span class="badge text-bg-{{ 'success' if item.ok else 'danger' }}">{{ 'OK' if item.ok else 'Check' }}</span>
-                <div class="small text-muted mt-1">{{ item.status_code or item.detail }}</div>
-                {% if item.latency_ms is not none %}<div class="small text-muted">{{ item.latency_ms }} ms</div>{% endif %}
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>Shopee AI Service</span>
+        {% if operations.shopee.project.exists %}
+          <a class="small" href="/projects/{{ operations.shopee.project.id }}">Project #{{ operations.shopee.project.id }}</a>
+        {% endif %}
+      </div>
+      <div class="card-body small border-bottom">
+        <div class="mb-2">
+          <div class="text-muted">Project</div>
+          {% if operations.shopee.project.exists %}
+            <div class="fw-semibold">{{ operations.shopee.project.name }}</div>
+            <div class="text-muted">{{ operations.shopee.project.project_type or '-' }} / {{ operations.shopee.project.status or '-' }}</div>
+          {% else %}
+            <div class="text-muted">No Shopee AI project record detected.</div>
+          {% endif %}
+        </div>
+        <div class="row g-2">
+          {% for item in operations.shopee.backends %}
+            <div class="col-12">
+              <div class="border rounded p-2">
+                <div class="d-flex justify-content-between gap-2">
+                  <div>
+                    <div class="fw-semibold">{{ item.environment }} backend</div>
+                    <div class="text-muted">port {{ item.port }} / {{ item.url }}</div>
+                  </div>
+                  <div class="text-end">
+                    <span class="badge text-bg-{{ 'success' if item.ok else 'danger' }}">{{ 'OK' if item.ok else 'Check' }}</span>
+                    <div class="text-muted">{{ item.status_code or item.detail }}</div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Domain</th><th>DNS</th><th>HTTPS</th><th>Readiness</th></tr></thead>
+          <tbody>
+            {% for item in operations.shopee.domains %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ item.hostname }}</div>
+                  <div class="text-muted small">{{ item.environment }} -> {{ item.backend_port }}</div>
+                </td>
+                <td>
+                  <span class="badge text-bg-{{ 'success' if item.dns.ok else 'danger' }}">{{ 'exists' if item.dns.ok else 'check' }}</span>
+                  {% if item.dns.addresses %}<div class="small text-muted">{{ item.dns.addresses|join(', ') }}</div>{% endif %}
+                </td>
+                <td>
+                  <span class="badge text-bg-{{ 'success' if item.https_health.ok else 'secondary' }}">{{ item.https_health.status_code or item.https_health.detail }}</span>
+                  <div class="small text-muted">{{ item.reverse_proxy_status }} / {{ item.ssl_status }}</div>
+                </td>
+                <td>
+                  <code>{{ item.readiness }}</code>
+                  <div class="small text-muted">mapping: {{ 'yes' if item.domain_mapping.exists else 'not registered' }}</div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer small text-muted">
+        {% for note in operations.shopee.notes %}
+          <div>{{ note }}</div>
         {% endfor %}
       </div>
     </div>
