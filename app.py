@@ -85,6 +85,10 @@ DEPLOY_ROOT = os.getenv("DEV_PILOT_DEPLOY_ROOT", "/volume1/docker")
 PRODUCTION_ROOT = os.getenv("DEV_PILOT_PRODUCTION_ROOT", DEPLOY_ROOT)
 STAGING_ROOT = os.getenv("DEV_PILOT_STAGING_ROOT", "/volume1/docker-staging")
 BACKUP_ROOT = os.getenv("DEV_PILOT_BACKUP_ROOT", "/volume1/backups")
+RELEASE_DASHBOARD_BACKUP_DIR = Path(os.getenv("DEV_PILOT_RELEASE_BACKUP_DIR", "/volume1/docker/devpilot/backups"))
+RELEASE_DASHBOARD_DOMAIN = os.getenv("DEV_PILOT_RELEASE_DOMAIN", "https://devpilot.aicenter.com.tw/")
+RELEASE_DASHBOARD_CONTAINER = os.getenv("DEV_PILOT_RELEASE_CONTAINER", "devpilot-project-manager")
+RELEASE_DASHBOARD_PORT = os.getenv("DEV_PILOT_RELEASE_PORT", "5010:5000")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -4397,6 +4401,270 @@ def cloudflare_dns_write_flag_status():
     }
 
 
+def release_dashboard_format_size(size):
+    try:
+        value = float(size or 0)
+    except (TypeError, ValueError):
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{value:.1f} TB"
+
+
+def release_dashboard_file_sha256(path):
+    try:
+        digest = hashlib.sha256()
+        with Path(path).open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return ""
+
+
+def release_dashboard_git_head():
+    git_dir = BASE_DIR / ".git"
+    try:
+        if git_dir.is_file():
+            raw = git_dir.read_text(encoding="utf-8", errors="replace").strip()
+            if raw.startswith("gitdir:"):
+                git_dir = (BASE_DIR / raw.split(":", 1)[1].strip()).resolve()
+        head_path = git_dir / "HEAD"
+        if not head_path.exists():
+            return {"available": False, "commit": "", "short": "", "source": "not_available"}
+        head = head_path.read_text(encoding="utf-8", errors="replace").strip()
+        if head.startswith("ref:"):
+            ref_name = head.split(" ", 1)[1].strip()
+            ref_path = git_dir / ref_name
+            if ref_path.exists():
+                commit = ref_path.read_text(encoding="utf-8", errors="replace").strip()
+                return {"available": True, "commit": commit, "short": commit[:7], "source": ref_name}
+            packed_refs = git_dir / "packed-refs"
+            if packed_refs.exists():
+                for line in packed_refs.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.startswith("#") or not line.strip():
+                        continue
+                    parts = line.split()
+                    if len(parts) == 2 and parts[1] == ref_name:
+                        return {"available": True, "commit": parts[0], "short": parts[0][:7], "source": ref_name}
+            return {"available": False, "commit": "", "short": "", "source": ref_name}
+        return {"available": True, "commit": head, "short": head[:7], "source": "detached"}
+    except OSError:
+        return {"available": False, "commit": "", "short": "", "source": "read_error"}
+
+
+def release_dashboard_backup_type(filename):
+    name = str(filename or "").lower()
+    if name.startswith("project_manager.db.bak") or name.endswith(".db") or ".db.bak" in name:
+        return "DB backup"
+    if name.startswith("app.py.bak"):
+        return "app.py backup"
+    if name.endswith(".html") or ".html.bak" in name:
+        return "template backup"
+    if ".bak" in name:
+        return "file backup"
+    return "other"
+
+
+def release_dashboard_phase_tag(filename):
+    match = re.search(r"(phase[0-9a-z_-]+)", str(filename or ""), flags=re.IGNORECASE)
+    return match.group(1).lower() if match else ""
+
+
+def release_dashboard_recent_backups(limit=20):
+    root = RELEASE_DASHBOARD_BACKUP_DIR
+    result = {
+        "root": str(root),
+        "exists": False,
+        "items": [],
+        "error": "",
+    }
+    try:
+        if not root.exists() or not root.is_dir():
+            return result
+        result["exists"] = True
+        items = []
+        for child in root.iterdir():
+            try:
+                if child.is_symlink() or not child.is_file():
+                    continue
+                stat = child.stat()
+            except OSError:
+                continue
+            items.append({
+                "filename": child.name,
+                "type": release_dashboard_backup_type(child.name),
+                "phase_tag": release_dashboard_phase_tag(child.name),
+                "size_bytes": stat.st_size,
+                "size_label": release_dashboard_format_size(stat.st_size),
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "modified_ts": stat.st_mtime,
+            })
+        items.sort(key=lambda item: item["modified_ts"], reverse=True)
+        for item in items[:limit]:
+            item.pop("modified_ts", None)
+            result["items"].append(item)
+        return result
+    except OSError as exc:
+        result["error"] = type(exc).__name__
+        return result
+
+
+def release_dashboard_status_counts():
+    return {
+        (row["status"] or "unknown"): row["count"]
+        for row in query_all("SELECT COALESCE(status, 'unknown') AS status, COUNT(*) AS count FROM approval_requests GROUP BY COALESCE(status, 'unknown')")
+    }
+
+
+def release_dashboard_table_count(table_name):
+    allowed = {"approval_requests", "deployment_jobs", "domain_mappings", "dns_execution_attempts", "api_keys"}
+    if table_name not in allowed:
+        return 0
+    return query_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"]
+
+
+def release_dashboard_runtime_key(provider):
+    row = row_to_dict(query_one(
+        """SELECT id, name, provider, category, environment, status, masked_value, key_mask, last_used_at
+           FROM api_keys
+           WHERE lower(COALESCE(provider, ''))=?
+             AND lower(COALESCE(category, ''))='third-party'
+             AND lower(COALESCE(environment, ''))='staging'
+             AND lower(COALESCE(status, ''))='active'
+           ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, id DESC
+           LIMIT 1""",
+        (str(provider or "").lower(),),
+    ))
+    if not row:
+        return {"present": False, "provider": provider}
+    return {
+        "present": True,
+        "id": row.get("id"),
+        "provider": row.get("provider"),
+        "category": row.get("category"),
+        "environment": row.get("environment"),
+        "status": row.get("status"),
+        "masked": row.get("masked_value") or row.get("key_mask") or "************",
+        "last_used_at": row.get("last_used_at"),
+    }
+
+
+def release_dashboard_dns_attempts(limit=10):
+    rows = query_all(
+        """SELECT id, approval_request_id, actor, attempted_action, feature_flag_state,
+                  result, http_status, planned_action_json, created_at
+           FROM dns_execution_attempts
+           ORDER BY id DESC
+           LIMIT ?""",
+        (int(limit),),
+    )
+    items = []
+    for row in rows:
+        item = row_to_dict(row)
+        planned_summary = ""
+        try:
+            planned = json.loads(item.pop("planned_action_json") or "{}")
+            record_name = planned.get("name") or planned.get("record_name")
+            record_type = planned.get("record_type") or planned.get("type")
+            target = planned.get("target") or planned.get("content")
+            if record_name or record_type or target:
+                planned_summary = " ".join(str(part) for part in [record_type, record_name, "->", target] if part)
+        except Exception:
+            item.pop("planned_action_json", None)
+        item["planned_summary"] = planned_summary
+        items.append(item)
+    return items
+
+
+def release_dashboard_recent_approvals(limit=10):
+    rows = query_all(
+        """SELECT ar.id, ar.request_type, ar.status, ar.project_id, p.name AS project_name,
+                  ar.title, ar.summary, ar.approved_via, ar.created_at, ar.approved_at,
+                  ar.rejected_at, ar.payload_json
+           FROM approval_requests ar
+           LEFT JOIN projects p ON p.id=ar.project_id
+           ORDER BY datetime(COALESCE(ar.created_at, ar.updated_at)) DESC, ar.id DESC
+           LIMIT ?""",
+        (int(limit),),
+    )
+    items = []
+    for row in rows:
+        public = approval_request_public(row_to_dict(row)) or {}
+        items.append({
+            "id": public.get("id"),
+            "request_type": public.get("request_type"),
+            "status": public.get("status"),
+            "project_id": public.get("project_id"),
+            "project_name": public.get("project_name"),
+            "title": public.get("title"),
+            "summary": public.get("summary"),
+            "approved_via": public.get("approved_via"),
+            "created_at": public.get("created_at"),
+            "approved_at": public.get("approved_at"),
+            "rejected_at": public.get("rejected_at"),
+            "execution_state": public.get("execution_state"),
+        })
+    return items
+
+
+def release_dashboard_mock_flag_status():
+    raw_value = os.getenv(MOCK_DNS_EXECUTION_FEATURE_FLAG)
+    normalized = str(raw_value or "").strip().lower()
+    return {
+        "feature_flag": MOCK_DNS_EXECUTION_FEATURE_FLAG,
+        "effective_enabled": mock_dns_execution_feature_enabled(),
+        "raw_value_present": bool(normalized),
+        "raw_value_masked": mask_feature_flag_value(raw_value),
+        "source": "environment",
+        "can_toggle_here": False,
+        "actual_dns_write_still_disabled": True,
+    }
+
+
+def release_dashboard_context():
+    app_sha = release_dashboard_file_sha256(BASE_DIR / "app.py")
+    approval_counts = release_dashboard_status_counts()
+    db_snapshot = {
+        "approval_requests_total": release_dashboard_table_count("approval_requests"),
+        "approval_requests_by_status": approval_counts,
+        "approval_pending": approval_counts.get("pending", 0),
+        "approval_approved": approval_counts.get("approved", 0),
+        "approval_rejected": approval_counts.get("rejected", 0),
+        "deployment_jobs": release_dashboard_table_count("deployment_jobs"),
+        "domain_mappings": release_dashboard_table_count("domain_mappings"),
+        "dns_execution_attempts": release_dashboard_table_count("dns_execution_attempts"),
+        "api_keys": release_dashboard_table_count("api_keys"),
+    }
+    cloudflare_flag = cloudflare_dns_write_flag_status()
+    mock_flag = release_dashboard_mock_flag_status()
+    return {
+        "identity": {
+            "domain": RELEASE_DASHBOARD_DOMAIN,
+            "container": RELEASE_DASHBOARD_CONTAINER,
+            "port": RELEASE_DASHBOARD_PORT,
+            "app_path": str(BASE_DIR / "app.py"),
+            "app_sha256": app_sha,
+            "git": release_dashboard_git_head(),
+        },
+        "backups": release_dashboard_recent_backups(),
+        "db": db_snapshot,
+        "dns_attempts": release_dashboard_dns_attempts(),
+        "approvals": release_dashboard_recent_approvals(),
+        "safety": {
+            "cloudflare_dns_write": cloudflare_flag,
+            "mock_dns_execution": mock_flag,
+            "dns_write_disabled": not bool(cloudflare_flag.get("dns_write_enabled")),
+            "cloudflare_api_write_disabled": not bool(cloudflare_flag.get("cloudflare_api_call_enabled")),
+            "telegram_runtime_key": release_dashboard_runtime_key("telegram"),
+            "cloudflare_runtime_key": release_dashboard_runtime_key("cloudflare"),
+        },
+    }
+
+
 def record_dns_execution_attempt(
     request_id,
     confirmation,
@@ -8380,6 +8648,16 @@ def dashboard():
         daily_report=daily_report,
         recent_ai_messages=recent_ai_messages(limit=5),
         api_token=API_TOKEN,
+    )
+
+
+@app.route("/release-dashboard")
+@require_roles("owner", "admin")
+def release_dashboard_page():
+    return render_template(
+        "release_dashboard.html",
+        app_name=APP_NAME,
+        dashboard=release_dashboard_context(),
     )
 
 
