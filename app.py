@@ -8509,6 +8509,63 @@ def read_ai_console_sandbox_artifact(artifact_id):
     return path, path.read_text(encoding="utf-8", errors="replace")
 
 
+def list_ai_console_sandbox_artifacts(limit=50):
+    root = ai_console_sandbox_dir()
+    result = {
+        "ok": True,
+        "exists": False,
+        "root_label": "data/ai_console_sandbox",
+        "items": [],
+        "error": "",
+    }
+    try:
+        if not root.exists() or not root.is_dir():
+            return result
+        result["exists"] = True
+        items = []
+        for child in root.iterdir():
+            try:
+                if child.is_symlink() or not child.is_file() or child.suffix.lower() != ".html":
+                    continue
+                artifact_id = child.stem
+                if not AI_CONSOLE_SANDBOX_ID_RE.fullmatch(artifact_id):
+                    continue
+                path = ai_console_sandbox_artifact_path(artifact_id)
+                if path != child.resolve():
+                    continue
+                stat = child.stat()
+            except (OSError, ValueError):
+                continue
+            items.append({
+                "artifact_id": artifact_id,
+                "filename": child.name,
+                "size_bytes": stat.st_size,
+                "size_label": release_dashboard_format_size(stat.st_size),
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "modified_ts": stat.st_mtime,
+                "preview_url": f"/ai-console/sandbox/{artifact_id}",
+                "download_url": f"/api/ai-console/sandbox/{artifact_id}/download",
+                "is_html": True,
+                "safety": {
+                    "sandbox_only": True,
+                    "project_repo_write": False,
+                    "deploy": False,
+                    "dns_write": False,
+                    "telegram_send": False,
+                },
+            })
+        items.sort(key=lambda item: item["modified_ts"], reverse=True)
+        result["items"] = [
+            {key: value for key, value in item.items() if key != "modified_ts"}
+            for item in items[:coerce_int(limit, 50)]
+        ]
+        return result
+    except OSError as exc:
+        result["ok"] = False
+        result["error"] = type(exc).__name__
+        return result
+
+
 def run_ai_console_claude_preview(payload):
     prompt = str((payload or {}).get("prompt") or (payload or {}).get("task_prompt") or "").strip()
     if not prompt:
@@ -10789,6 +10846,17 @@ def ai_console_page():
         flow_runs=flow_run_rows(limit=20),
         tasks=task_rows(limit=50),
         task_templates=task_template_rows(active_only=True),
+    )
+
+
+@app.route("/ai-console/sandbox")
+@require_roles("owner", "admin")
+def ai_console_sandbox_gallery_page():
+    artifacts = list_ai_console_sandbox_artifacts(limit=50)
+    return render_template(
+        "ai_console_sandbox_gallery.html",
+        app_name=APP_NAME,
+        artifacts=artifacts,
     )
 
 
@@ -15521,6 +15589,31 @@ def api_ai_provider_health():
 @require_api_roles("owner", "admin", "ai")
 def api_ai_console_run():
     return jsonify(run_ai_console_website_mvp())
+
+
+@app.route("/api/ai-console/sandbox", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_ai_console_sandbox_list():
+    limit = min(max(coerce_int(request.args.get("limit"), 50), 1), 50)
+    artifacts = list_ai_console_sandbox_artifacts(limit=limit)
+    return jsonify({
+        "ok": artifacts.get("ok", True),
+        "mode": "read_only_sandbox_gallery",
+        "root_label": artifacts.get("root_label"),
+        "exists": artifacts.get("exists"),
+        "count": len(artifacts.get("items") or []),
+        "items": artifacts.get("items") or [],
+        "error": artifacts.get("error") or "",
+        "safety": {
+            "read_only": True,
+            "delete": False,
+            "apply_to_project": False,
+            "project_repo_write": False,
+            "deploy": False,
+            "dns_write": False,
+            "telegram_send": False,
+        },
+    })
 
 
 @app.route("/api/ai-console/sandbox/<artifact_id>/download", methods=["GET"])
