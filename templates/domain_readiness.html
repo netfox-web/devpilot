@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Domain / Reverse Proxy Readiness</h1>
+    <div class="text-muted small">Read-only DNS, HTTP, HTTPS, TLS, backend, and reverse proxy status for DevPilot and Aichat hostnames.</div>
+  </div>
+  <div class="text-muted small">Rendered {{ readiness.rendered_at }}</div>
+</div>
+
+<div class="alert alert-info py-2">
+  This dashboard only reads status. It does not change DNS, NAS reverse proxy, certificates, backend services, or deployment jobs.
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-8">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Readiness Summary</div>
+      <div class="card-body">
+        <div class="row row-cols-2 row-cols-md-4 g-3 text-center">
+          <div><div class="text-muted small">Ready</div><div class="fs-4 fw-semibold text-success">{{ readiness.summary.get('ready', 0) }}</div></div>
+          <div><div class="text-muted small">DNS Missing</div><div class="fs-4 fw-semibold text-danger">{{ readiness.summary.get('dns_missing', 0) }}</div></div>
+          <div><div class="text-muted small">SSL Issue</div><div class="fs-4 fw-semibold text-warning">{{ readiness.summary.get('ssl_error', 0) }}</div></div>
+          <div><div class="text-muted small">Service Pending</div><div class="fs-4 fw-semibold text-secondary">{{ readiness.summary.get('dns_ready_service_pending', 0) + readiness.summary.get('backend_unconfigured', 0) + readiness.summary.get('reverse_proxy_missing', 0) }}</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">DNS Snapshot</div>
+      <div class="card-body small">
+        <div class="d-flex justify-content-between mb-2">
+          <span>Cloudflare read</span>
+          <span class="badge text-bg-{{ 'success' if readiness.cloudflare_snapshot.ok else 'secondary' }}">{{ 'available' if readiness.cloudflare_snapshot.ok else 'fallback' }}</span>
+        </div>
+        <div class="text-muted">Source: {{ readiness.cloudflare_snapshot.source }}</div>
+        {% if readiness.cloudflare_snapshot.error %}
+          <div class="text-muted">Fallback reason: {{ readiness.cloudflare_snapshot.error }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">Hostname Matrix</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Hostname</th>
+          <th>DNS</th>
+          <th>HTTP</th>
+          <th>HTTPS / TLS</th>
+          <th>Backend</th>
+          <th>Readiness</th>
+          <th>Suggested Next Step</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in readiness['items'] %}
+          <tr>
+            <td style="min-width: 220px">
+              <div class="fw-semibold">{{ item.hostname }}</div>
+              <div class="small text-muted">{{ item.group }}</div>
+              <div class="small text-muted">{{ item.notes }}</div>
+            </td>
+            <td style="min-width: 210px">
+              <span class="badge text-bg-{{ 'success' if item.dns.exists else 'danger' }}">{{ 'exists' if item.dns.exists else 'missing' }}</span>
+              <div class="small mt-1">
+                <div>type: <code>{{ item.dns.type or '-' }}</code></div>
+                <div>content: <code class="text-break">{{ item.dns.content or '-' }}</code></div>
+                <div>proxied: <code>{{ item.dns.proxied if item.dns.proxied is not none else 'unknown' }}</code></div>
+                <div>ttl: <code>{{ item.dns.ttl if item.dns.ttl is not none else '-' }}</code></div>
+                {% if item.dns.record_id_masked %}<div>record: <code>{{ item.dns.record_id_masked }}</code></div>{% endif %}
+                <div class="text-muted">{{ item.dns.note }}</div>
+              </div>
+            </td>
+            <td>
+              <span class="badge text-bg-{{ 'success' if item.http.ok else 'secondary' }}">{{ item.http.status_code or item.http.detail }}</span>
+              <div class="small text-muted">{{ item.http.classification or '-' }}</div>
+              {% if item.http.final_url and item.http.final_url != item.http.url %}
+                <div class="small text-muted text-break">to {{ item.http.final_url }}</div>
+              {% endif %}
+            </td>
+            <td style="min-width: 210px">
+              <span class="badge text-bg-{{ 'success' if item.https.ok else 'secondary' }}">{{ item.https.status_code or item.https.detail }}</span>
+              <div class="small text-muted">{{ item.https.classification or '-' }}</div>
+              <div class="small mt-1">
+                <div>TLS: <span class="badge text-bg-{{ 'success' if item.tls.valid else 'warning' }}">{{ 'valid' if item.tls.valid else item.tls.error or 'check' }}</span></div>
+                {% if item.tls.common_name %}<div>CN: <code>{{ item.tls.common_name }}</code></div>{% endif %}
+                {% if item.tls.san %}<div>SAN: <code class="text-break">{{ item.tls.san|join(', ') }}</code></div>{% endif %}
+                {% if item.tls.not_after %}<div>expires: {{ item.tls.not_after }}</div>{% endif %}
+              </div>
+            </td>
+            <td style="min-width: 190px">
+              <div class="fw-semibold">{{ item.expected_upstream }}</div>
+              {% if item.backend.url %}
+                <span class="badge text-bg-{{ 'success' if item.backend.ok else 'danger' }}">{{ item.backend.status_code or item.backend.detail }}</span>
+                {% if item.backend.latency_ms is not none %}<span class="small text-muted">{{ item.backend.latency_ms }} ms</span>{% endif %}
+              {% else %}
+                <span class="badge text-bg-secondary">not configured</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge text-bg-{{ 'success' if item.readiness == 'ready' else ('danger' if item.readiness == 'dns_missing' else 'warning') }}">{{ item.readiness }}</span>
+            </td>
+            <td class="small">{{ item.next_step }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

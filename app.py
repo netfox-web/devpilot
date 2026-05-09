@@ -11,6 +11,7 @@ import shlex
 import shutil
 import sqlite3
 import socket
+import ssl
 import subprocess
 import threading
 import time
@@ -4855,6 +4856,357 @@ def operations_shopee_status():
     }
 
 
+def domain_readiness_targets():
+    return [
+        {
+            "group": "DevPilot",
+            "hostname": "devpilot.aicenter.com.tw",
+            "zone_name": "aicenter.com.tw",
+            "expected_upstream": "devpilot-project-manager :5010",
+            "backend_label": "DevPilot production",
+            "backend_health_url": "",
+            "https_path": "/",
+            "http_path": "/",
+            "notes": "Production DevPilot domain should redirect unauthenticated users to login.",
+        },
+        {
+            "group": "Aichat / Shopee AI",
+            "hostname": OPERATIONS_SHOPEE_PRODUCTION_DOMAIN,
+            "zone_name": "aichat.tw",
+            "expected_upstream": "Shopee AI production :3030",
+            "backend_label": "Shopee AI production",
+            "backend_health_url": OPERATIONS_SHOPEE_PRODUCTION_HEALTH_URL,
+            "https_path": "/api/health",
+            "http_path": "/api/health",
+            "notes": "Production Shopee AI hostname.",
+        },
+        {
+            "group": "Aichat / Shopee AI",
+            "hostname": OPERATIONS_SHOPEE_STAGING_LEGACY_DOMAIN,
+            "zone_name": "aichat.tw",
+            "expected_upstream": "Shopee AI staging :3032",
+            "backend_label": "Shopee AI staging",
+            "backend_health_url": OPERATIONS_SHOPEE_STAGING_HEALTH_URL,
+            "https_path": "/api/health",
+            "http_path": "/api/health",
+            "notes": "Existing staging Shopee hostname.",
+        },
+        {
+            "group": "Aichat / Shopee AI",
+            "hostname": OPERATIONS_SHOPEE_STAGING_DOMAIN,
+            "zone_name": "aichat.tw",
+            "expected_upstream": "Shopee AI staging :3032 planned",
+            "backend_label": "Shopee AI staging",
+            "backend_health_url": OPERATIONS_SHOPEE_STAGING_HEALTH_URL,
+            "https_path": "/api/health",
+            "http_path": "/api/health",
+            "notes": "DNS exists; reverse proxy and certificate readiness are still being validated.",
+        },
+        {
+            "group": "Aichat",
+            "hostname": "widget.aichat.tw",
+            "zone_name": "aichat.tw",
+            "expected_upstream": "widget service pending",
+            "backend_label": "Widget service",
+            "backend_health_url": "",
+            "https_path": "/",
+            "http_path": "/",
+            "notes": "Widget upstream is not finalized.",
+        },
+        {
+            "group": "Aichat",
+            "hostname": "api.aichat.tw",
+            "zone_name": "aichat.tw",
+            "expected_upstream": "API service pending",
+            "backend_label": "API service",
+            "backend_health_url": "",
+            "https_path": "/api/health",
+            "http_path": "/api/health",
+            "notes": "API DNS/reverse-proxy plan is pending.",
+        },
+        {
+            "group": "Aichat",
+            "hostname": "admin.aichat.tw",
+            "zone_name": "aichat.tw",
+            "expected_upstream": "admin service pending",
+            "backend_label": "Admin service",
+            "backend_health_url": "",
+            "https_path": "/",
+            "http_path": "/",
+            "notes": "Admin should stay gated behind access controls before public use.",
+        },
+        {
+            "group": "Aichat",
+            "hostname": "www.aichat.tw",
+            "zone_name": "aichat.tw",
+            "expected_upstream": "landing page pending",
+            "backend_label": "Main website",
+            "backend_health_url": "",
+            "https_path": "/",
+            "http_path": "/",
+            "notes": "Existing public entry should not be changed until landing page service is ready.",
+        },
+    ]
+
+
+def domain_readiness_probe_url(url, verify_tls=True):
+    started = time.monotonic()
+    result = {
+        "url": url,
+        "ok": False,
+        "status_code": None,
+        "final_url": "",
+        "server": "",
+        "latency_ms": None,
+        "detail": "",
+        "classification": "",
+    }
+    try:
+        context = ssl.create_default_context() if verify_tls else ssl._create_unverified_context()
+        req = urllib.request.Request(
+            url,
+            method="GET",
+            headers={"User-Agent": "DevPilot domain readiness/1.0", "Accept": "text/html,application/json,text/plain,*/*"},
+        )
+        with urllib.request.urlopen(req, timeout=operations_health_timeout_seconds(), context=context) as resp:
+            body = resp.read(4096).decode("utf-8", errors="replace")
+            result["status_code"] = resp.status
+            result["final_url"] = resp.geturl()
+            result["server"] = resp.headers.get("Server", "")
+            result["ok"] = 200 <= int(resp.status) < 500
+            result["latency_ms"] = int((time.monotonic() - started) * 1000)
+            result["classification"] = domain_readiness_classify_http(body, result["server"], resp.status)
+            result["detail"] = "responded"
+            return result
+    except urllib.error.HTTPError as exc:
+        body = exc.read(4096).decode("utf-8", errors="replace")
+        result["status_code"] = exc.code
+        result["final_url"] = url
+        result["server"] = exc.headers.get("Server", "") if exc.headers else ""
+        result["ok"] = exc.code < 500
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        result["classification"] = domain_readiness_classify_http(body, result["server"], exc.code)
+        result["detail"] = f"HTTP {exc.code}"
+        return result
+    except urllib.error.URLError as exc:
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        reason = getattr(exc, "reason", None)
+        result["detail"] = type(reason).__name__ if reason else type(exc).__name__
+        return result
+    except Exception as exc:
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        result["detail"] = type(exc).__name__
+        return result
+
+
+def domain_readiness_classify_http(body, server, status_code):
+    text = f"{server or ''}\n{body or ''}".lower()
+    if "synology" in text or "diskstation" in text or "dsm" in text:
+        return "synology_default_or_dsm"
+    if "devpilot" in text:
+        return "devpilot"
+    if "cannot get" in text:
+        return "node_default"
+    if int(status_code or 0) == 404:
+        return "http_404"
+    if int(status_code or 0) in (301, 302, 303, 307, 308):
+        return "redirect"
+    return "application_response"
+
+
+def domain_readiness_tls_certificate(hostname):
+    result = {
+        "checked": True,
+        "valid": False,
+        "common_name": "",
+        "san": [],
+        "not_after": "",
+        "issuer": "",
+        "error": "",
+    }
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, 443), timeout=operations_health_timeout_seconds()) as raw_sock:
+            with context.wrap_socket(raw_sock, server_hostname=hostname) as tls_sock:
+                cert = tls_sock.getpeercert() or {}
+        subject = cert.get("subject") or []
+        for group in subject:
+            for key, value in group:
+                if key == "commonName":
+                    result["common_name"] = value
+                    break
+            if result["common_name"]:
+                break
+        result["san"] = [value for key, value in cert.get("subjectAltName", []) if key.lower() == "dns"][:8]
+        issuer = []
+        for group in cert.get("issuer") or []:
+            for key, value in group:
+                if key in ("organizationName", "commonName"):
+                    issuer.append(value)
+        result["issuer"] = " / ".join(issuer[:3])
+        result["not_after"] = cert.get("notAfter", "")
+        result["valid"] = True
+    except ssl.SSLCertVerificationError as exc:
+        result["error"] = type(exc).__name__
+    except Exception as exc:
+        result["error"] = type(exc).__name__
+    return result
+
+
+def domain_readiness_cloudflare_records(targets):
+    snapshot = {
+        "ok": False,
+        "source": "cloudflare_read_only",
+        "error": "",
+        "records": {},
+    }
+    try:
+        key_info = get_active_cloudflare_api_key()
+        if not key_info.get("ok"):
+            snapshot["error"] = "cloudflare_read_unavailable"
+            return snapshot
+        token = key_info["token"]
+        zone_names = sorted({target.get("zone_name") for target in targets if target.get("zone_name")})
+        zone_ids = {}
+        for zone_name in zone_names:
+            zones_result = cloudflare_request("GET", "/zones", token, query={"name": zone_name, "page": 1, "per_page": 50}, timeout=5)
+            if not zones_result.get("ok"):
+                snapshot["error"] = "cloudflare_zone_read_error"
+                continue
+            zones = ((zones_result.get("data") or {}).get("result") or [])
+            for zone in zones:
+                if str(zone.get("name") or "").casefold() == str(zone_name).casefold():
+                    zone_ids[zone_name] = zone.get("id")
+                    break
+        for target in targets:
+            hostname = target.get("hostname")
+            zone_id = zone_ids.get(target.get("zone_name"))
+            if not hostname or not zone_id:
+                continue
+            records_result = cloudflare_request(
+                "GET",
+                f"/zones/{urllib.parse.quote(str(zone_id), safe='')}/dns_records",
+                token,
+                query={"name": hostname, "page": 1, "per_page": 20},
+                timeout=5,
+            )
+            if not records_result.get("ok"):
+                snapshot["error"] = "cloudflare_record_read_error"
+                continue
+            records = ((records_result.get("data") or {}).get("result") or [])
+            public_records = []
+            for record in records:
+                public = cloudflare_dns_record_public(record)
+                public_records.append({
+                    "id_masked": mask_identifier(public.get("id")),
+                    "type": public.get("type"),
+                    "name": public.get("name"),
+                    "content": mask_dns_record_content(public),
+                    "ttl": public.get("ttl"),
+                    "proxied": public.get("proxied"),
+                    "created_on": public.get("created_on"),
+                    "modified_on": public.get("modified_on"),
+                })
+            snapshot["records"][hostname.casefold()] = public_records
+        snapshot["ok"] = True
+        return snapshot
+    except Exception as exc:
+        snapshot["error"] = type(exc).__name__
+        return snapshot
+
+
+def domain_readiness_dns_summary(target, cloudflare_snapshot):
+    hostname = target.get("hostname")
+    records = (cloudflare_snapshot.get("records") or {}).get(str(hostname or "").casefold()) or []
+    public_dns = operations_resolve_hostname(hostname)
+    mapping = operations_domain_mapping_summary(hostname)
+    if records:
+        first = records[0]
+        return {
+            "exists": True,
+            "source": "cloudflare_read_only",
+            "type": first.get("type"),
+            "content": first.get("content"),
+            "proxied": first.get("proxied"),
+            "ttl": first.get("ttl"),
+            "record_id_masked": first.get("id_masked"),
+            "records": records,
+            "public_dns": public_dns,
+            "domain_mapping": mapping,
+            "note": f"{len(records)} matching Cloudflare record(s)",
+        }
+    return {
+        "exists": public_dns.get("ok"),
+        "source": "public_dns",
+        "type": "A/AAAA" if public_dns.get("addresses") else "",
+        "content": ", ".join(public_dns.get("addresses") or []),
+        "proxied": None,
+        "ttl": None,
+        "record_id_masked": "",
+        "records": [],
+        "public_dns": public_dns,
+        "domain_mapping": mapping,
+        "note": "Cloudflare record not found by read-only snapshot" if cloudflare_snapshot.get("ok") else "Cloudflare snapshot unavailable; using public DNS",
+    }
+
+
+def domain_readiness_status(target, dns, http, https, tls, backend):
+    if not dns.get("exists"):
+        return "dns_missing", "create DNS record"
+    if tls.get("checked") and not tls.get("valid"):
+        return "ssl_error", "assign or renew matching TLS certificate"
+    if target.get("expected_upstream", "").endswith("pending"):
+        return "backend_unconfigured", "define upstream service before exposing"
+    if https.get("ok") and int(https.get("status_code") or 0) < 500:
+        if backend.get("ok") or not target.get("backend_health_url"):
+            return "ready", "no action"
+    if https.get("classification") in ("synology_default_or_dsm", "http_404") or https.get("status_code") == 404:
+        return "reverse_proxy_missing", "add or verify NAS reverse proxy rule"
+    return "dns_ready_service_pending", "verify reverse proxy and upstream health"
+
+
+def domain_readiness_context():
+    targets = domain_readiness_targets()
+    cloudflare_snapshot = domain_readiness_cloudflare_records(targets)
+    items = []
+    for target in targets:
+        hostname = target["hostname"]
+        http_url = f"http://{hostname}{target.get('http_path') or '/'}"
+        https_url = f"https://{hostname}{target.get('https_path') or '/'}"
+        dns = domain_readiness_dns_summary(target, cloudflare_snapshot)
+        http = domain_readiness_probe_url(http_url, verify_tls=False)
+        https = domain_readiness_probe_url(https_url, verify_tls=True)
+        tls = domain_readiness_tls_certificate(hostname)
+        backend = operations_http_health_check(target.get("backend_label") or hostname, target.get("group") or "", target.get("backend_health_url") or "", target.get("expected_upstream") or "")
+        readiness, next_step = domain_readiness_status(target, dns, http, https, tls, backend)
+        items.append({
+            "group": target.get("group"),
+            "hostname": hostname,
+            "expected_upstream": target.get("expected_upstream"),
+            "notes": target.get("notes"),
+            "dns": dns,
+            "http": http,
+            "https": https,
+            "tls": tls,
+            "backend": backend,
+            "readiness": readiness,
+            "next_step": next_step,
+        })
+    summary = {}
+    for item in items:
+        summary[item["readiness"]] = summary.get(item["readiness"], 0) + 1
+    return {
+        "rendered_at": now_str(),
+        "cloudflare_snapshot": {
+            "ok": cloudflare_snapshot.get("ok"),
+            "source": cloudflare_snapshot.get("source"),
+            "error": cloudflare_snapshot.get("error"),
+        },
+        "items": items,
+        "summary": summary,
+    }
+
+
 def operations_command_center_context():
     release = release_dashboard_context()
     backup_items = release.get("backups", {}).get("items", [])
@@ -8905,6 +9257,16 @@ def release_dashboard_page():
         "release_dashboard.html",
         app_name=APP_NAME,
         dashboard=release_dashboard_context(),
+    )
+
+
+@app.route("/domain-readiness")
+@require_roles("owner", "admin")
+def domain_readiness_page():
+    return render_template(
+        "domain_readiness.html",
+        app_name=APP_NAME,
+        readiness=domain_readiness_context(),
     )
 
 
