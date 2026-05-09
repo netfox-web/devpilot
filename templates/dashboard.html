@@ -4,11 +4,17 @@
   <div>
     <h1 class="h3 mb-1">DevPilot Operations Command Center</h1>
     <div class="text-muted small">Read-only production status, approval state, DNS safety, backend health, backups, and audit trail.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-secondary">DNS WRITE DISABLED</span>
+      <span class="badge text-bg-secondary">NO DEPLOY</span>
+      <span class="badge text-bg-warning">APPROVAL REQUIRED</span>
+    </div>
   </div>
   <div class="text-muted small">Rendered {{ operations.rendered_at }}</div>
 </div>
 
-<div class="alert alert-info py-2">
+<div class="alert alert-info page-note py-2">
   This page is read-only. It has no restore, delete, rollback, deploy, DNS execute, restart, or feature-flag toggle controls.
 </div>
 
@@ -34,6 +40,7 @@
     <div class="card shadow-sm h-100">
       <div class="card-header fw-bold">Release / Backup</div>
       <div class="card-body small">
+        <div class="mb-2"><span class="badge text-bg-info">BACKUPS READ-ONLY</span></div>
         <div class="d-flex justify-content-between mb-2">
           <span>Backup mount</span>
           <span class="badge text-bg-success">read-only</span>
@@ -102,6 +109,11 @@
     <div class="card shadow-sm h-100">
       <div class="card-header fw-bold">DNS Safety Chain</div>
       <div class="card-body">
+        <div class="safety-badge-strip mb-3 mt-0">
+          <span class="badge text-bg-secondary">REAL WRITE DISABLED</span>
+          <span class="badge text-bg-info">PLAN ONLY</span>
+          <span class="badge text-bg-warning">MANUAL ONLY</span>
+        </div>
         <div class="row row-cols-1 row-cols-sm-2 g-3 small">
           <div class="d-flex justify-content-between"><span>Prepare dry-run</span><span class="badge text-bg-success">enabled</span></div>
           <div class="d-flex justify-content-between"><span>Preflight read-only</span><span class="badge text-bg-success">enabled</span></div>
@@ -119,6 +131,7 @@
     <div class="card shadow-sm h-100">
       <div class="card-header fw-bold d-flex justify-content-between align-items-center">
         <span>Shopee AI Service</span>
+        <span class="badge text-bg-info">HEALTH CHECK ONLY</span>
         {% if operations.shopee.project.exists %}
           <a class="small" href="/projects/{{ operations.shopee.project.id }}">Project #{{ operations.shopee.project.id }}</a>
         {% endif %}

@@ -4,6 +4,12 @@
   <div>
     <h1 class="h3 mb-1">Domain Action Plan Board</h1>
     <div class="text-muted small">Read-only planning board generated from the Domain / Reverse Proxy Readiness results.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-warning">MANUAL ONLY</span>
+      <span class="badge text-bg-secondary">NO DNS CHANGE</span>
+      <span class="badge text-bg-secondary">NO NAS CHANGE</span>
+    </div>
   </div>
   <div class="text-end">
     <div><a href="/api/domain-action-plan/export.csv">Export CSV</a></div>
@@ -11,7 +17,7 @@
   </div>
 </div>
 
-<div class="alert alert-info py-2">
+<div class="alert alert-info page-note py-2">
   This board is planning-only. It does not change DNS, NAS reverse proxy, certificates, backend services, or deployment jobs.
 </div>
 

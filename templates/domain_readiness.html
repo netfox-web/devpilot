@@ -4,11 +4,17 @@
   <div>
     <h1 class="h3 mb-1">Domain / Reverse Proxy Readiness</h1>
     <div class="text-muted small">Read-only DNS, HTTP, HTTPS, TLS, backend, and reverse proxy status for DevPilot and Aichat hostnames.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-secondary">NO DNS CHANGE</span>
+      <span class="badge text-bg-secondary">NO NAS CHANGE</span>
+      <span class="badge text-bg-secondary">NO DEPLOY</span>
+    </div>
   </div>
   <div class="text-muted small">Rendered {{ readiness.rendered_at }}</div>
 </div>
 
-<div class="alert alert-info py-2">
+<div class="alert alert-info page-note py-2">
   This dashboard only reads status. It does not change DNS, NAS reverse proxy, certificates, backend services, or deployment jobs.
 </div>
 

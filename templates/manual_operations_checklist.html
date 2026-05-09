@@ -4,6 +4,12 @@
   <div>
     <h1 class="h3 mb-1">Manual Operations Checklist Center</h1>
     <div class="text-muted small">Static read-only checklist library for high-risk manual operations.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-warning">MANUAL ONLY</span>
+      <span class="badge text-bg-secondary">NO SAVED STATE</span>
+      <span class="badge text-bg-secondary">NO EXECUTION</span>
+    </div>
   </div>
   <div class="text-end">
     <div><a href="/api/manual-operations-checklist/export.csv">Export CSV</a></div>
@@ -11,7 +17,7 @@
   </div>
 </div>
 
-<div class="alert alert-info py-2">
+<div class="alert alert-info page-note py-2">
   These checklists are read-only. They do not save state, change DNS, edit NAS reverse proxy rules, modify certificates, deploy services, restart containers, or create deployment jobs.
 </div>
 

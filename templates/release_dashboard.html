@@ -4,6 +4,12 @@
   <div>
     <h1 class="h3 mb-1">Release & Backup Dashboard</h1>
     <div class="text-muted small">Read-only production status, backup inventory, approval state, and DNS audit trail.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-info">BACKUPS READ-ONLY</span>
+      <span class="badge text-bg-secondary">NO RESTORE</span>
+      <span class="badge text-bg-secondary">NO DEPLOY</span>
+    </div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <a class="btn btn-outline-secondary" href="/approval-requests">Approval Requests</a>
@@ -14,7 +20,7 @@
   </div>
 </div>
 
-<div class="alert alert-info py-2">
+<div class="alert alert-info page-note py-2">
   This page only reads metadata and counts. It does not provide backup download, restore, rollback, deploy, DNS execution, or delete controls.
 </div>
 
