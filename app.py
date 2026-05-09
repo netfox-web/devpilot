@@ -85,7 +85,7 @@ DEPLOY_ROOT = os.getenv("DEV_PILOT_DEPLOY_ROOT", "/volume1/docker")
 PRODUCTION_ROOT = os.getenv("DEV_PILOT_PRODUCTION_ROOT", DEPLOY_ROOT)
 STAGING_ROOT = os.getenv("DEV_PILOT_STAGING_ROOT", "/volume1/docker-staging")
 BACKUP_ROOT = os.getenv("DEV_PILOT_BACKUP_ROOT", "/volume1/backups")
-RELEASE_DASHBOARD_BACKUP_DIR = Path(os.getenv("DEV_PILOT_RELEASE_BACKUP_DIR", "/volume1/docker/devpilot/backups"))
+RELEASE_DASHBOARD_BACKUP_DIR = Path(os.getenv("DEV_PILOT_RELEASE_BACKUP_DIR") or os.getenv("BACKUP_DIR") or "/app/backups")
 RELEASE_DASHBOARD_DOMAIN = os.getenv("DEV_PILOT_RELEASE_DOMAIN", "https://devpilot.aicenter.com.tw/")
 RELEASE_DASHBOARD_CONTAINER = os.getenv("DEV_PILOT_RELEASE_CONTAINER", "devpilot-project-manager")
 RELEASE_DASHBOARD_PORT = os.getenv("DEV_PILOT_RELEASE_PORT", "5010:5000")
@@ -4474,7 +4474,7 @@ def release_dashboard_phase_tag(filename):
     return match.group(1).lower() if match else ""
 
 
-def release_dashboard_recent_backups(limit=20):
+def release_dashboard_recent_backups(limit=80):
     root = RELEASE_DASHBOARD_BACKUP_DIR
     result = {
         "root": str(root),

@@ -13,9 +13,11 @@ services:
       - GIT_CONFIG_VALUE_0=*
       - DEVPILOT_CODEX_RUNNER_MODE=external
       - DEVPILOT_CODEX_RUNNER_COMMAND=/volume1/docker/devpilot/scripts/run_codex_job.sh
+      - BACKUP_DIR=/app/backups
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
+      - ./backups:/app/backups:ro
       - ./scripts:/volume1/docker/devpilot/scripts:ro
       - /var/services/homes/chaokun/.ssh:/root/.ssh:ro
       - /volume1/repos:/volume1/repos
