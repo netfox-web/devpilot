@@ -35,6 +35,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import docker_ssh
 from services import ai_tasks as ai_task_services
 from services import flow_runs as flow_run_services
+from services import product_domains as product_domain_services
 from services import reports as report_services
 
 load_dotenv()
@@ -12538,6 +12539,30 @@ def domains_center():
     )
 
 
+@app.route("/product-domains")
+@require_roles("owner", "admin")
+def product_domains_page():
+    filters = {
+        "role": request.args.get("role", ""),
+        "suite": request.args.get("suite", ""),
+        "product": request.args.get("product", ""),
+        "q": request.args.get("q", ""),
+    }
+    export_links = {}
+    for export_format in ["json", "csv", "nginx", "cloudflare-bulk"]:
+        params = {key: value for key, value in filters.items() if str(value or "").strip()}
+        params["format"] = export_format
+        export_links[export_format] = "/api/product-domains/redirect-plan/export?" + urllib.parse.urlencode(params)
+    return render_template(
+        "product_domains.html",
+        app_name=APP_NAME,
+        catalog=product_domain_services.product_domain_tree(filters),
+        redirect_plan=product_domain_services.product_domain_redirect_plan(filters),
+        redirect_export_links=export_links,
+        filter_options=product_domain_services.product_domain_options(),
+    )
+
+
 @app.route("/domains/bind", methods=["POST"])
 @require_roles("owner", "admin")
 def domains_bind():
@@ -12597,6 +12622,71 @@ def api_cloudflare_test_connection():
 @require_api_roles("owner", "admin")
 def api_cloudflare_dns_write_flag():
     return jsonify(cloudflare_dns_write_flag_status())
+
+
+@app.route("/api/product-domains", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_product_domains():
+    filters = {
+        "role": request.args.get("role", ""),
+        "suite": request.args.get("suite", ""),
+        "product": request.args.get("product", ""),
+        "q": request.args.get("q", ""),
+    }
+    return jsonify({
+        "ok": True,
+        "catalog": product_domain_services.product_domain_tree(filters),
+        "redirect_plan": product_domain_services.product_domain_redirect_plan(filters),
+    })
+
+
+@app.route("/api/product-domains/validate", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_product_domains_validate():
+    return jsonify({"ok": True, "validation": product_domain_services.validate_product_domain_catalog()})
+
+
+@app.route("/api/product-domains/redirect-plan", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_product_domains_redirect_plan():
+    filters = {
+        "role": request.args.get("role", ""),
+        "suite": request.args.get("suite", ""),
+        "product": request.args.get("product", ""),
+        "q": request.args.get("q", ""),
+    }
+    return jsonify({"ok": True, "redirect_plan": product_domain_services.product_domain_redirect_plan(filters)})
+
+
+@app.route("/api/product-domains/redirect-plan/export", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_product_domains_redirect_plan_export():
+    filters = {
+        "role": request.args.get("role", ""),
+        "suite": request.args.get("suite", ""),
+        "product": request.args.get("product", ""),
+        "q": request.args.get("q", ""),
+    }
+    result = product_domain_services.product_domain_redirect_plan_export(request.args.get("format", "json"), filters)
+    if not result.get("ok"):
+        return jsonify({
+            "ok": False,
+            "error": result.get("error"),
+            "validation": result.get("validation"),
+        }), int(result.get("status_code") or 400)
+    response = Response(result["body"], mimetype=result["mimetype"])
+    response.headers["Content-Disposition"] = f"attachment; filename={result['filename']}"
+    return response
+
+
+@app.route("/api/product-domains/lookup", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_product_domain_lookup():
+    domain = request.args.get("domain") or ""
+    result = product_domain_services.product_domain_lookup(domain)
+    if not result:
+        return jsonify({"ok": False, "error": "domain_not_found", "domain": domain}), 404
+    return jsonify({"ok": True, "domain": domain, "result": result})
 
 
 @app.route("/api/cloudflare/zones", methods=["GET"])

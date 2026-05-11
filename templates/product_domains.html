@@ -1,0 +1,331 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">Product Domain Management</h1>
+    <div class="text-muted small">Brand → Suite → Product → Module → Domain. This page is a read-only product architecture map.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-secondary">NO DNS WRITE</span>
+      <span class="badge text-bg-secondary">NO DEPLOY</span>
+      <span class="badge text-bg-warning">PRODUCT MODEL ONLY</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="/domains">Domain Center</a>
+    <a class="btn btn-outline-secondary btn-sm" href="/api/product-domains">JSON</a>
+  </div>
+</div>
+
+<div class="alert alert-info page-note py-2">
+  <div class="fw-semibold">AI Office brand rule</div>
+  <div class="small">Each product has exactly one official domain. Extra domains are redirect, campaign, infra, or reserved. <code>aioffice.com.tw</code> is the Brand Hub, not a separate product website.</div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="/product-domains">
+  <div class="card-header fw-bold">Search / Filter</div>
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-4">
+        <label class="form-label small">Search domain / product / suite</label>
+        <input class="form-control" type="search" name="q" value="{{ catalog.filters.q }}" placeholder="aicrm, Business AI, crmai.tw">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">Role</label>
+        <select class="form-select" name="role">
+          {% for role in filter_options.roles %}
+            <option value="{{ role }}" {% if (catalog.filters.role or 'all') == role %}selected{% endif %}>{{ role }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Suite</label>
+        <select class="form-select" name="suite">
+          <option value="">all</option>
+          {% for suite in filter_options.suites %}
+            <option value="{{ suite.key }}" {% if catalog.filters.suite == suite.key %}selected{% endif %}>{{ suite.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Product</label>
+        <select class="form-select" name="product">
+          <option value="">all</option>
+          {% for product in filter_options.products %}
+            <option value="{{ product.key }}" {% if catalog.filters.product == product.key %}selected{% endif %}>{{ product.name }} / {{ product.suite_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-12 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Apply filters</button>
+        <a class="btn btn-outline-secondary" href="/product-domains">Reset</a>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Brand</div>
+        <div class="h5 mb-1">{{ catalog.brand.name }}</div>
+        <code>{{ catalog.brand.key }}</code>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Brand Hub</div>
+        <div class="h5 mb-1">{{ catalog.brand.hub_domain }}</div>
+        <span class="badge text-bg-success">official</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Suite count</div>
+        <div class="display-6">{{ catalog.summary.suite_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Product count</div>
+        <div class="display-6">{{ catalog.summary.product_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Domain count</div>
+        <div class="display-6">{{ catalog.summary.domain_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Official count</div>
+        <div class="display-6">{{ catalog["summary"]["role_counts"]["official"]|default(0) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Redirect count</div>
+        <div class="display-6">{{ catalog["summary"]["role_counts"]["redirect"]|default(0) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Campaign count</div>
+        <div class="display-6">{{ catalog["summary"]["role_counts"]["campaign"]|default(0) }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if catalog.validation.ok %}
+  <div class="alert alert-success py-2">
+    Product domain rules passed: unique official domains, one official domain per product, and redirect targets are present.
+  </div>
+{% else %}
+  <div class="alert alert-danger">
+    <div class="fw-semibold">Product domain validation failed</div>
+    <ul class="mb-0">
+      {% for error in catalog.validation.errors %}
+        <li>{{ error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Role Summary</div>
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-2">
+      {% for role, count in catalog["summary"]["role_counts"]|dictsort %}
+        <span class="badge text-bg-{{ 'success' if role == 'official' else ('primary' if role == 'redirect' else ('warning' if role == 'campaign' else 'secondary')) }}">
+          {{ role }}: {{ count }}
+        </span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <div class="fw-bold">Redirect Plan</div>
+      <div class="small text-muted">Read-only source to target plan generated from the product-domain catalog. No Cloudflare rule is created here.</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ redirect_export_links.json }}">JSON</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ redirect_export_links.csv }}">CSV</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ redirect_export_links.nginx }}">Nginx</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ redirect_export_links['cloudflare-bulk'] }}">Cloudflare Bulk JSON</a>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="row g-2 mb-3">
+      <div class="col-md-3">
+        <div class="border rounded p-2 h-100">
+          <div class="text-muted small">Total redirect rules</div>
+          <div class="h4 mb-0">{{ redirect_plan.summary.total_redirect_rules }}</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="border rounded p-2 h-100">
+          <div class="text-muted small">Redirect count</div>
+          <div class="h4 mb-0">{{ redirect_plan.summary.redirect_count }}</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="border rounded p-2 h-100">
+          <div class="text-muted small">Campaign count</div>
+          <div class="h4 mb-0">{{ redirect_plan.summary.campaign_count }}</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="border rounded p-2 h-100">
+          <div class="text-muted small">Brand Hub redirect count</div>
+          <div class="h4 mb-0">{{ redirect_plan.summary.brand_hub_redirect_count }}</div>
+        </div>
+      </div>
+    </div>
+
+    {% if redirect_plan.validation.ok %}
+      <div class="alert alert-success py-2">Redirect plan validation passed. Sources and targets are catalog-backed and no official domains are included as redirect sources.</div>
+    {% else %}
+      <div class="alert alert-danger">
+        <div class="fw-semibold">Redirect plan validation failed</div>
+        <ul class="mb-0">
+          {% for error in redirect_plan.validation.errors %}
+            <li>{{ error }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Source domain</th>
+            <th>Target domain</th>
+            <th>Role</th>
+            <th>Product</th>
+            <th>Suite</th>
+            <th>Redirect type</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in redirect_plan["items"] %}
+            <tr>
+              <td class="fw-semibold">{{ item.source_domain }}</td>
+              <td><code>{{ item.target_domain }}</code></td>
+              <td><span class="badge text-bg-{{ 'warning' if item.role == 'campaign' else 'primary' }}">{{ item.role }}</span></td>
+              <td>{{ item.product or "-" }}</td>
+              <td>{{ item.suite or "-" }}</td>
+              <td>{{ item.redirect_type }}</td>
+              <td><span class="badge text-bg-{{ 'success' if item.status == 'ready' else 'danger' }}">{{ item.status }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="text-muted py-3">No redirect plan rows match the current filters.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Brand Hub Domains</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Domain</th>
+          <th>Role</th>
+          <th>Target domain</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for domain in catalog.brand.domains %}
+          <tr>
+            <td class="fw-semibold">{{ domain.domain }}</td>
+            <td><span class="badge text-bg-{{ 'success' if domain.role == 'official' else 'primary' }}">{{ domain.role }}</span></td>
+            <td>{% if domain.target_domain %}<code>{{ domain.target_domain }}</code>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td class="text-muted small">{{ domain.note or "-" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% for suite in catalog.suites %}
+  <div class="card shadow-sm mb-3">
+    <div class="card-header">
+      <div class="fw-bold">{{ suite.name }}</div>
+      <div class="small text-muted">{{ suite.key }}</div>
+    </div>
+    <div class="card-body">
+      {% for product in suite.products %}
+        <div class="border rounded p-3 mb-3">
+          <div class="d-flex justify-content-between align-items-start gap-3">
+            <div>
+              <div class="fw-semibold">{{ product.name }}</div>
+              <div class="small text-muted">{{ product.key }}</div>
+            </div>
+            <div class="text-end">
+              <div class="small text-muted">Official domain</div>
+              <code>{{ product.official_domain }}</code>
+            </div>
+          </div>
+          {% for module in product.modules %}
+            <div class="mt-3">
+              <div class="small text-muted mb-1">Module: {{ module.name }} / {{ module.key }}</div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>Domain</th>
+                      <th>Role</th>
+                      <th>Target domain</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for domain in module.domains %}
+                      <tr>
+                        <td class="fw-semibold">{{ domain.domain }}</td>
+                        <td>
+                          <span class="badge text-bg-{{ 'success' if domain.role == 'official' else ('primary' if domain.role == 'redirect' else ('warning' if domain.role == 'campaign' else 'secondary')) }}">{{ domain.role }}</span>
+                        </td>
+                        <td>{% if domain.target_domain %}<code>{{ domain.target_domain }}</code>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endfor %}
+{% endblock %}
