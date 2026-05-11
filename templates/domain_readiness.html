@@ -11,7 +11,14 @@
       <span class="badge text-bg-secondary">NO DEPLOY</span>
     </div>
   </div>
-  <div class="text-muted small">Rendered {{ readiness.rendered_at }}</div>
+  <div class="text-end text-muted small">
+    <div>Generated {{ readiness.cache.generated_at or readiness.generated_at }}</div>
+    <div>
+      <span class="badge text-bg-{{ 'secondary' if readiness.cache.cached else 'success' }}">{{ 'cached' if readiness.cache.cached else 'live' }}</span>
+      <span>TTL {{ readiness.cache.ttl_seconds }}s</span>
+      <a href="/domain-readiness?refresh=1">Refresh live check</a>
+    </div>
+  </div>
 </div>
 
 <div class="alert alert-info page-note py-2">

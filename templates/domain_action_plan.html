@@ -13,7 +13,12 @@
   </div>
   <div class="text-end">
     <div><a href="/api/domain-action-plan/export.csv">Export CSV</a></div>
-    <div class="text-muted small">Rendered {{ board.rendered_at }}</div>
+    <div class="text-muted small">Generated {{ board.cache.generated_at or board.generated_at }}</div>
+    <div class="text-muted small">
+      <span class="badge text-bg-{{ 'secondary' if board.cache.cached else 'success' }}">{{ 'cached' if board.cache.cached else 'live' }}</span>
+      <span>TTL {{ board.cache.ttl_seconds }}s</span>
+      <a href="/domain-action-plan?refresh=1">Refresh live check</a>
+    </div>
   </div>
 </div>
 

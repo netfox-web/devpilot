@@ -2,8 +2,8 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h1 class="h3 mb-1">Domain Center / 網域管理中心</h1>
-    <div class="text-muted small">Read-only Cloudflare zone and DNS overview. DNS changes are not available in this MVP.</div>
+    <h1 class="h3 mb-1">Domain Center / Domain Management Center</h1>
+    <div class="text-muted small">Read-only Cloudflare zone overview. DNS records are loaded on demand to keep this page fast.</div>
     <div class="safety-badge-strip">
       <span class="badge text-bg-info">READ-ONLY</span>
       <span class="badge text-bg-secondary">DNS WRITE DISABLED</span>
@@ -55,8 +55,8 @@
     <div class="col-md-3">
       <div class="card shadow-sm">
         <div class="card-body">
-          <div class="text-muted small">DNS Write API</div>
-          <div class="h5 mb-0 text-success">Disabled</div>
+          <div class="text-muted small">DNS Records</div>
+          <div class="h5 mb-0">Lazy load</div>
         </div>
       </div>
     </div>
@@ -112,19 +112,15 @@
   </div>
 
   {% for zone in domain_data.zones %}
-    <div class="card shadow-sm mb-3">
+    <div class="card shadow-sm mb-3" data-zone-card data-zone-id="{{ zone.id }}">
       <div class="card-header d-flex justify-content-between align-items-center">
         <div>
           <div class="fw-bold">{{ zone.name }}</div>
-          <div class="small text-muted">Zone ID: {{ zone.id_masked }}{% if zone.account_name %} · {{ zone.account_name }}{% endif %}</div>
+          <div class="small text-muted">Zone ID: {{ zone.id_masked }}{% if zone.account_name %} / {{ zone.account_name }}{% endif %}</div>
         </div>
         <div class="text-end">
           <span class="badge text-bg-{{ 'success' if zone.status == 'active' else 'secondary' }}">{{ zone.status or "-" }}</span>
-          {% if zone.checklist.all_core_checks_passed %}
-            <span class="badge text-bg-success">上線檢查通過</span>
-          {% else %}
-            <span class="badge text-bg-warning">需要確認</span>
-          {% endif %}
+          <span class="badge text-bg-secondary" data-zone-checklist-badge>records on demand</span>
         </div>
       </div>
       <div class="card-body">
@@ -132,143 +128,52 @@
           <div class="col-md-2">
             <div class="border rounded p-2 h-100">
               <div class="small text-muted">Records</div>
-              <div class="h5 mb-0">{{ zone.records_count }}</div>
+              <div class="h5 mb-0" data-zone-records-count>Unknown</div>
             </div>
           </div>
           <div class="col-md-2">
             <div class="border rounded p-2 h-100">
               <div class="small text-muted">Root A</div>
-              <div class="{{ 'text-success' if zone.checklist.root_a_points_to_nas else 'text-warning' }}">
-                {{ "OK" if zone.checklist.root_a_points_to_nas else ("Exists" if zone.checklist.root_a_exists else "Missing") }}
-              </div>
+              <div class="text-muted" data-zone-root-a>Deferred</div>
             </div>
           </div>
           <div class="col-md-2">
             <div class="border rounded p-2 h-100">
               <div class="small text-muted">www CNAME</div>
-              <div class="{{ 'text-success' if zone.checklist.www_cname_exists else 'text-warning' }}">{{ "OK" if zone.checklist.www_cname_exists else "Missing" }}</div>
+              <div class="text-muted" data-zone-www-cname>Deferred</div>
             </div>
           </div>
           <div class="col-md-2">
             <div class="border rounded p-2 h-100">
               <div class="small text-muted">A Records</div>
-              <div>{{ "Yes" if zone.checklist.has_a_record else "No" }}</div>
+              <div class="text-muted" data-zone-a-records>Deferred</div>
             </div>
           </div>
           <div class="col-md-2">
             <div class="border rounded p-2 h-100">
               <div class="small text-muted">CNAME Records</div>
-              <div>{{ "Yes" if zone.checklist.has_cname_record else "No" }}</div>
+              <div class="text-muted" data-zone-cname-records>Deferred</div>
             </div>
           </div>
           <div class="col-md-2">
             <div class="border rounded p-2 h-100">
               <div class="small text-muted">Proxy On</div>
-              <div>{{ zone.checklist.proxied_record_count }}</div>
+              <div class="text-muted" data-zone-proxy-on>Deferred</div>
             </div>
           </div>
         </div>
 
-        {% if zone.records_error %}
-          <div class="alert alert-warning small">{{ zone.records_error }}</div>
-        {% else %}
-          <div class="table-responsive">
-            <table class="table table-sm align-middle mb-0">
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Name</th>
-                  <th>Content</th>
-                  <th>Proxy</th>
-                  <th>NAS IP</th>
-                  <th>TTL</th>
-                  <th>Project</th>
-                  <th>Bind</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for record in zone.records %}
-                  <tr>
-                    <td><span class="badge text-bg-light">{{ record.type }}</span></td>
-                    <td class="fw-semibold">{{ record.name }}</td>
-                    <td><code>{{ record.content }}</code></td>
-                    <td>
-                      {% if record.proxied %}
-                        <span class="badge text-bg-warning">proxied</span>
-                      {% else %}
-                        <span class="text-muted small">dns only</span>
-                      {% endif %}
-                    </td>
-                    <td>
-                      {% if record.points_to_nas %}
-                        <span class="badge text-bg-success">{{ nas_ip }}</span>
-                      {% else %}
-                        <span class="text-muted small">-</span>
-                      {% endif %}
-                    </td>
-                    <td>{{ record.ttl }}</td>
-                    <td style="min-width: 12rem;">
-                      {% if record.project_bindings %}
-                        {% for binding in record.project_bindings %}
-                          <div class="small">
-                            <a href="/projects/{{ binding.project_id }}">{{ binding.project_name }}</a>
-                            <span class="text-muted">({{ binding.environment or binding.endpoint_type or binding.source }})</span>
-                          </div>
-                          {% if binding.status %}
-                            <div class="small text-muted">status: {{ binding.status }}</div>
-                          {% endif %}
-                          {% if binding.preview_url %}
-                            <div class="small text-break"><a href="{{ binding.preview_url }}" target="_blank" rel="noreferrer">{{ binding.preview_url }}</a></div>
-                          {% endif %}
-                        {% endfor %}
-                      {% else %}
-                        <span class="text-muted small">尚未綁定 project</span>
-                      {% endif %}
-                    </td>
-                    <td style="min-width: 26rem;">
-                      <form class="row g-1 align-items-end" method="post" action="/domains/bind">
-                        <input type="hidden" name="zone_name" value="{{ zone.name }}">
-                        <input type="hidden" name="zone_id_masked" value="{{ zone.id_masked }}">
-                        <input type="hidden" name="record_name" value="{{ record.name }}">
-                        <input type="hidden" name="record_type" value="{{ record.type }}">
-                        <input type="hidden" name="record_content" value="{{ record.content }}">
-                        <div class="col-5">
-                          <label class="form-label small mb-1">Project</label>
-                          <select class="form-select form-select-sm" name="project_id" required>
-                            <option value="">Select project</option>
-                            {% for project_option in projects %}
-                              <option value="{{ project_option.id }}">{{ project_option.name }}</option>
-                            {% endfor %}
-                          </select>
-                        </div>
-                        <div class="col-3">
-                          <label class="form-label small mb-1">Env</label>
-                          <select class="form-select form-select-sm" name="environment">
-                            {% for env in domain_mapping_environments %}
-                              <option value="{{ env }}">{{ env }}</option>
-                            {% endfor %}
-                          </select>
-                        </div>
-                        <div class="col-4">
-                          <label class="form-label small mb-1">Preview URL</label>
-                          <input class="form-control form-control-sm" name="preview_url" placeholder="https://...">
-                        </div>
-                        <div class="col-9">
-                          <input class="form-control form-control-sm" name="notes" placeholder="notes">
-                        </div>
-                        <div class="col-3">
-                          <button class="btn btn-sm btn-outline-primary w-100">Bind</button>
-                        </div>
-                      </form>
-                    </td>
-                  </tr>
-                {% else %}
-                  <tr><td colspan="8" class="text-muted py-3">No DNS records returned.</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% endif %}
+        <div class="d-flex gap-2 align-items-center mb-3">
+          <button
+            class="btn btn-sm btn-outline-primary"
+            type="button"
+            data-load-zone-records
+            data-zone-id="{{ zone.id }}"
+            data-zone-name="{{ zone.name }}"
+          >View records</button>
+          <span class="small text-muted" data-zone-records-status>DNS records are loaded only after clicking this button.</span>
+        </div>
+        <div data-zone-records-table></div>
       </div>
     </div>
   {% else %}
@@ -281,8 +186,8 @@
   const resultBox = document.getElementById("preview-domain-plan-result");
   const purposeSelect = document.getElementById("preview-domain-plan-purpose");
   const baseDomainSelect = document.getElementById("preview-domain-plan-base-domain");
-  if (!form || !resultBox) return;
-  let latestPreviewPlan = null;
+  const projects = {{ projects|tojson }};
+  const environments = {{ domain_mapping_environments|tojson }};
 
   const escapeHtml = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -290,6 +195,147 @@
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+
+  const projectOptions = () => [
+    '<option value="">Select project</option>',
+    ...projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`)
+  ].join("");
+
+  const environmentOptions = () => environments
+    .map((env) => `<option value="${escapeHtml(env)}">${escapeHtml(env)}</option>`)
+    .join("");
+
+  const renderRecordsTable = (zone, records) => {
+    const rows = records.map((record) => `
+      <tr>
+        <td><span class="badge text-bg-light">${escapeHtml(record.type)}</span></td>
+        <td class="fw-semibold">${escapeHtml(record.name)}</td>
+        <td><code>${escapeHtml(record.content)}</code></td>
+        <td>${record.proxied ? '<span class="badge text-bg-warning">proxied</span>' : '<span class="text-muted small">dns only</span>'}</td>
+        <td>${record.points_to_nas ? `<span class="badge text-bg-success">${escapeHtml(zone.nas_ip || "")}</span>` : '<span class="text-muted small">-</span>'}</td>
+        <td>${escapeHtml(record.ttl)}</td>
+        <td style="min-width: 12rem;">
+          ${(record.project_bindings || []).length
+            ? record.project_bindings.map((binding) => `
+              <div class="small">
+                <a href="/projects/${escapeHtml(binding.project_id)}">${escapeHtml(binding.project_name)}</a>
+                <span class="text-muted">(${escapeHtml(binding.environment || binding.endpoint_type || binding.source)})</span>
+              </div>
+              ${binding.status ? `<div class="small text-muted">status: ${escapeHtml(binding.status)}</div>` : ""}
+              ${binding.preview_url ? `<div class="small text-break"><a href="${escapeHtml(binding.preview_url)}" target="_blank" rel="noreferrer">${escapeHtml(binding.preview_url)}</a></div>` : ""}
+            `).join("")
+            : '<span class="text-muted small">not bound to a project</span>'}
+        </td>
+        <td style="min-width: 26rem;">
+          <form class="row g-1 align-items-end" method="post" action="/domains/bind">
+            <input type="hidden" name="zone_name" value="${escapeHtml(zone.name)}">
+            <input type="hidden" name="zone_id_masked" value="${escapeHtml(zone.id_masked)}">
+            <input type="hidden" name="record_name" value="${escapeHtml(record.name)}">
+            <input type="hidden" name="record_type" value="${escapeHtml(record.type)}">
+            <input type="hidden" name="record_content" value="${escapeHtml(record.content)}">
+            <div class="col-5">
+              <label class="form-label small mb-1">Project</label>
+              <select class="form-select form-select-sm" name="project_id" required>${projectOptions()}</select>
+            </div>
+            <div class="col-3">
+              <label class="form-label small mb-1">Env</label>
+              <select class="form-select form-select-sm" name="environment">${environmentOptions()}</select>
+            </div>
+            <div class="col-4">
+              <label class="form-label small mb-1">Preview URL</label>
+              <input class="form-control form-control-sm" name="preview_url" placeholder="https://...">
+            </div>
+            <div class="col-9">
+              <input class="form-control form-control-sm" name="notes" placeholder="notes">
+            </div>
+            <div class="col-3">
+              <button class="btn btn-sm btn-outline-primary w-100">Bind</button>
+            </div>
+          </form>
+        </td>
+      </tr>
+    `).join("");
+
+    return `
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Name</th>
+              <th>Content</th>
+              <th>Proxy</th>
+              <th>NAS IP</th>
+              <th>TTL</th>
+              <th>Project</th>
+              <th>Bind</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || '<tr><td colspan="8" class="text-muted py-3">No DNS records returned.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+  };
+
+  const setMetric = (card, selector, text, className = "text-muted") => {
+    const node = card.querySelector(selector);
+    if (!node) return;
+    node.textContent = text;
+    node.className = className;
+  };
+
+  const updateZoneSummary = (card, payload) => {
+    const checklist = (payload.zone && payload.zone.checklist) || {};
+    setMetric(card, "[data-zone-records-count]", payload.count ?? "0", "h5 mb-0");
+    setMetric(card, "[data-zone-root-a]", checklist.root_a_points_to_nas ? "OK" : (checklist.root_a_exists ? "Exists" : "Missing"), checklist.root_a_points_to_nas ? "text-success" : "text-warning");
+    setMetric(card, "[data-zone-www-cname]", checklist.www_cname_exists ? "OK" : "Missing", checklist.www_cname_exists ? "text-success" : "text-warning");
+    setMetric(card, "[data-zone-a-records]", checklist.has_a_record ? "Yes" : "No", checklist.has_a_record ? "text-success" : "text-warning");
+    setMetric(card, "[data-zone-cname-records]", checklist.has_cname_record ? "Yes" : "No", checklist.has_cname_record ? "text-success" : "text-warning");
+    setMetric(card, "[data-zone-proxy-on]", checklist.proxied_record_count ?? "0", "text-muted");
+    const badge = card.querySelector("[data-zone-checklist-badge]");
+    if (badge) {
+      badge.className = `badge text-bg-${checklist.all_core_checks_passed ? "success" : "warning"}`;
+      badge.textContent = checklist.all_core_checks_passed ? "core checks passed" : "review records";
+    }
+  };
+
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-load-zone-records]");
+    if (!button) return;
+    const card = button.closest("[data-zone-card]");
+    const status = card ? card.querySelector("[data-zone-records-status]") : null;
+    const table = card ? card.querySelector("[data-zone-records-table]") : null;
+    if (!card || !status || !table) return;
+    button.disabled = true;
+    status.textContent = "Loading DNS records read-only...";
+    try {
+      const response = await fetch(`/api/domains/${encodeURIComponent(button.dataset.zoneId)}/records`);
+      const payload = await response.json();
+      if (!payload.ok) {
+        status.textContent = payload.error || "DNS records could not be loaded.";
+        status.className = "small text-danger";
+        button.disabled = false;
+        return;
+      }
+      updateZoneSummary(card, payload);
+      table.innerHTML = renderRecordsTable({
+        ...payload.zone,
+        nas_ip: payload.nas_ip
+      }, payload.records || []);
+      status.textContent = `Loaded ${payload.count || 0} records (${payload.cache && payload.cache.cached ? "cached" : "live"}, TTL ${payload.cache ? payload.cache.ttl_seconds : 60}s).`;
+      status.className = "small text-muted";
+      button.textContent = "Reload records";
+      button.disabled = false;
+    } catch (error) {
+      status.textContent = "DNS records request failed.";
+      status.className = "small text-danger";
+      button.disabled = false;
+    }
+  });
+
+  if (!form || !resultBox) return;
+  let latestPreviewPlan = null;
 
   const syncBaseDomain = () => {
     if (!purposeSelect || !baseDomainSelect) return;

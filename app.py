@@ -20,6 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from copy import deepcopy
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from html.parser import HTMLParser
@@ -6322,7 +6323,38 @@ def domain_readiness_status(target, dns, http, https, tls, backend):
     return "dns_ready_service_pending", "verify reverse proxy and upstream health"
 
 
-def domain_readiness_context():
+DOMAIN_READINESS_CACHE_TTL_SECONDS = 60
+DOMAIN_RECORDS_CACHE_TTL_SECONDS = 60
+_domain_readiness_context_cache = {"value": None, "stored_at": 0.0}
+_domain_center_records_cache = {}
+
+
+def clear_domain_page_caches():
+    _domain_readiness_context_cache["value"] = None
+    _domain_readiness_context_cache["stored_at"] = 0.0
+    _domain_center_records_cache.clear()
+
+
+def cache_entry_is_fresh(entry, ttl_seconds):
+    if not entry or entry.get("value") is None:
+        return False
+    return (time.monotonic() - float(entry.get("stored_at") or 0.0)) < ttl_seconds
+
+
+def attach_cache_metadata(payload, cached, ttl_seconds):
+    result = deepcopy(payload)
+    generated_at = result.get("generated_at") or result.get("rendered_at") or now_str()
+    result["generated_at"] = generated_at
+    result["rendered_at"] = generated_at
+    result["cache"] = {
+        "cached": bool(cached),
+        "generated_at": generated_at,
+        "ttl_seconds": ttl_seconds,
+    }
+    return result
+
+
+def domain_readiness_context_live():
     targets = domain_readiness_targets()
     cloudflare_snapshot = domain_readiness_cloudflare_records(targets)
     items = []
@@ -6352,8 +6384,10 @@ def domain_readiness_context():
     summary = {}
     for item in items:
         summary[item["readiness"]] = summary.get(item["readiness"], 0) + 1
+    generated_at = now_str()
     return {
-        "rendered_at": now_str(),
+        "rendered_at": generated_at,
+        "generated_at": generated_at,
         "cloudflare_snapshot": {
             "ok": cloudflare_snapshot.get("ok"),
             "source": cloudflare_snapshot.get("source"),
@@ -6362,6 +6396,15 @@ def domain_readiness_context():
         "items": items,
         "summary": summary,
     }
+
+
+def domain_readiness_context(refresh=False):
+    if not refresh and cache_entry_is_fresh(_domain_readiness_context_cache, DOMAIN_READINESS_CACHE_TTL_SECONDS):
+        return attach_cache_metadata(_domain_readiness_context_cache["value"], True, DOMAIN_READINESS_CACHE_TTL_SECONDS)
+    context = attach_cache_metadata(domain_readiness_context_live(), False, DOMAIN_READINESS_CACHE_TTL_SECONDS)
+    _domain_readiness_context_cache["value"] = deepcopy(context)
+    _domain_readiness_context_cache["stored_at"] = time.monotonic()
+    return context
 
 
 def domain_action_plan_item(hostname, current_status, recommended_action, risk_level, prerequisites, next_phase, manual_confirmation_phrase=""):
@@ -6432,8 +6475,8 @@ def domain_action_plan_manual_checklists():
     ]
 
 
-def domain_action_plan_context():
-    readiness = domain_readiness_context()
+def domain_action_plan_context(refresh=False):
+    readiness = domain_readiness_context(refresh=refresh)
     sections = [
         {
             "key": "ready_monitor",
@@ -6572,6 +6615,8 @@ def domain_action_plan_context():
 
     return {
         "rendered_at": now_str(),
+        "generated_at": readiness.get("generated_at") or readiness.get("rendered_at"),
+        "cache": readiness.get("cache") or {},
         "readiness": readiness,
         "sections": sections,
         "manual_checklists": domain_action_plan_manual_checklists(),
@@ -8276,8 +8321,22 @@ def domain_zone_checklist(zone_name, records):
     }
 
 
+def deferred_domain_zone_checklist():
+    return {
+        "root_a_exists": None,
+        "root_a_points_to_nas": None,
+        "www_cname_exists": None,
+        "has_a_record": None,
+        "has_cname_record": None,
+        "nas_record_count": None,
+        "proxied_record_count": None,
+        "all_core_checks_passed": None,
+    }
+
+
 def domain_zone_summary(zone, records=None, records_error=None):
     public = cloudflare_zone_public(zone)
+    records_loaded = records is not None
     record_items = []
     for item in (records or []):
         public_record = cloudflare_dns_record_public(item)
@@ -8292,14 +8351,16 @@ def domain_zone_summary(zone, records=None, records_error=None):
         "paused": public.get("paused"),
         "type": public.get("type"),
         "account_name": public.get("account_name"),
-        "records_count": len(record_summaries),
+        "records_count": len(record_summaries) if records_loaded else None,
         "records": record_summaries,
+        "records_loaded": records_loaded,
+        "records_deferred": not records_loaded,
         "records_error": records_error,
-        "checklist": domain_zone_checklist(public.get("name"), record_items),
+        "checklist": domain_zone_checklist(public.get("name"), record_items) if records_loaded else deferred_domain_zone_checklist(),
     }
 
 
-def fetch_domain_center_zones():
+def fetch_domain_center_zones(include_records=False):
     if has_request_context():
         g.domain_mapping_lookup = domain_mapping_lookup()
     key_info = get_active_cloudflare_api_key()
@@ -8312,9 +8373,9 @@ def fetch_domain_center_zones():
     summaries = []
     for zone in zones_data.get("result") or []:
         zone_id = str(zone.get("id") or "")
-        records = []
+        records = None
         records_error = None
-        if zone_id:
+        if include_records and zone_id:
             records_result = cloudflare_request(
                 "GET",
                 f"/zones/{urllib.parse.quote(zone_id, safe='')}/dns_records",
@@ -8331,41 +8392,50 @@ def fetch_domain_center_zones():
         "nas_ip": DOMAIN_CENTER_NAS_IP,
         "zones": summaries,
         "count": len(summaries),
+        "records_deferred": not include_records,
         "result_info": zones_data.get("result_info") or {},
     }
 
 
-def fetch_domain_center_records(zone_id):
+def fetch_domain_center_records(zone_id, refresh=False):
     if has_request_context():
         g.domain_mapping_lookup = domain_mapping_lookup()
     key_info = get_active_cloudflare_api_key()
     if not key_info.get("ok"):
         return {"ok": False, "error": key_info.get("error")}
+    try:
+        per_page = min(100, max(1, int(request.args.get("per_page") or 100))) if has_request_context() else 100
+    except (TypeError, ValueError):
+        per_page = 100
+    page = (request.args.get("page") or 1) if has_request_context() else 1
+    cache_key = (str(zone_id), str(page), int(per_page))
+    cache_entry = _domain_center_records_cache.get(cache_key)
+    if not refresh and cache_entry_is_fresh(cache_entry, DOMAIN_RECORDS_CACHE_TTL_SECONDS):
+        return attach_cache_metadata(cache_entry["value"], True, DOMAIN_RECORDS_CACHE_TTL_SECONDS)
     zone_result = cloudflare_request("GET", f"/zones/{urllib.parse.quote(zone_id, safe='')}", key_info["token"])
     if not zone_result.get("ok"):
         return {"ok": False, "error": zone_result.get("error"), "status_code": zone_result.get("status_code")}
-    try:
-        per_page = min(100, max(1, int(request.args.get("per_page") or 100)))
-    except (TypeError, ValueError):
-        per_page = 100
     records_result = cloudflare_request(
         "GET",
         f"/zones/{urllib.parse.quote(zone_id, safe='')}/dns_records",
         key_info["token"],
-        query={"page": request.args.get("page") or 1, "per_page": per_page},
+        query={"page": page, "per_page": per_page},
     )
     if not records_result.get("ok"):
         return {"ok": False, "error": records_result.get("error"), "status_code": records_result.get("status_code")}
     zone = ((zone_result.get("data") or {}).get("result") or {})
     records = ((records_result.get("data") or {}).get("result") or [])
     summary = domain_zone_summary(zone, records)
-    return {
+    result = {
         "ok": True,
         "nas_ip": DOMAIN_CENTER_NAS_IP,
         "zone": {key: summary[key] for key in ("id", "id_masked", "name", "status", "paused", "type", "account_name", "records_count", "checklist")},
         "records": summary["records"],
         "count": summary["records_count"],
     }
+    result = attach_cache_metadata(result, False, DOMAIN_RECORDS_CACHE_TTL_SECONDS)
+    _domain_center_records_cache[cache_key] = {"value": deepcopy(result), "stored_at": time.monotonic()}
+    return result
 
 
 def detect_api_key_anomalies(api_key_id, ip_address):
@@ -11904,7 +11974,7 @@ def domain_readiness_page():
     return render_template(
         "domain_readiness.html",
         app_name=APP_NAME,
-        readiness=domain_readiness_context(),
+        readiness=domain_readiness_context(refresh=request.args.get("refresh") == "1"),
     )
 
 
@@ -11914,7 +11984,7 @@ def domain_action_plan_page():
     return render_template(
         "domain_action_plan.html",
         app_name=APP_NAME,
-        board=domain_action_plan_context(),
+        board=domain_action_plan_context(refresh=request.args.get("refresh") == "1"),
     )
 
 
@@ -12760,7 +12830,7 @@ def api_cloudflare_dns_records(zone_id):
 @app.route("/api/domains", methods=["GET"])
 @require_api_roles("owner", "admin")
 def api_domains():
-    result = fetch_domain_center_zones()
+    result = fetch_domain_center_zones(include_records=request.args.get("include_records") == "1")
     if not result.get("ok"):
         return jsonify(result), 502
     return jsonify(result)
@@ -12769,7 +12839,7 @@ def api_domains():
 @app.route("/api/domains/<zone_id>/records", methods=["GET"])
 @require_api_roles("owner", "admin")
 def api_domain_records(zone_id):
-    result = fetch_domain_center_records(zone_id)
+    result = fetch_domain_center_records(zone_id, refresh=request.args.get("refresh") == "1")
     if not result.get("ok"):
         return jsonify(result), 502
     return jsonify(result)
