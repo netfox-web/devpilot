@@ -1,0 +1,4 @@
+domain,type,target,main_target,app_target,api_target,proxied,ssl_mode,category,note
+product-alpha.example.test,main,,origin.example.test,app-origin.example.test,api-origin.example.test,true,full,sample,Sample official product domain
+product-alpha-alt.example.test,redirect,product-alpha.example.test,,,,true,full,sample,Sample redirect domain
+campaign-alpha.example.test,parking,product-alpha.example.test,,,,true,full,sample,Sample campaign or parking domain

@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 backups/
+domains.csv
 cloudflare-result.csv
 nameserver-registrar-dry-run.csv
 nameserver-update-list.csv

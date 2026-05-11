@@ -30,7 +30,7 @@ Local runtime backup artifacts:
 
 - `backups/*`
 
-Manual review item:
+Ignored local input/scratch item:
 
 - `domains.csv`
 
@@ -46,7 +46,13 @@ docs/reports/
 
 Registrar and nameserver dry-run reports may be preserved as governance evidence only if they are reviewed for secrets and moved to `docs/reports/` with a clear date, source, and purpose. They should not be committed from the repository root.
 
-`domains.csv` is not automatically treated as generated output. If it is the human-maintained source of truth for batch tooling, handle it in a separate Cloudflare tooling commit after encoding and data review. If it is only a batch input/output scratch file, keep it local or move a reviewed copy into `docs/reports/`.
+Root-level `domains.csv` is ignored by default and must not be committed. Formal domain input must be regenerated from a clean source, reviewed for encoding and CSV structure, and handled in a separate Cloudflare tooling review. If a domain CSV is only a batch input/output scratch file, keep it local. If it is a report, move a reviewed and redacted copy into `docs/reports/`.
+
+Use this template for safe examples:
+
+```text
+docs/templates/domains.sample.csv
+```
 
 All CSV files that contain execution results, external account status, Cloudflare zone/status data, nameserver status, or registrar workflow results are report artifacts. Do not commit them with tooling code unless they have been intentionally reviewed and relocated.
 
@@ -62,19 +68,18 @@ Ignored by default:
 
 ```text
 backups/
+domains.csv
 cloudflare-result.csv
 nameserver-registrar-dry-run.csv
 nameserver-update-list.csv
 nameserver-update-result.csv
 ```
 
-Not ignored by this policy:
+The sample template is not ignored:
 
 ```text
-domains.csv
+docs/templates/domains.sample.csv
 ```
-
-`domains.csv` remains visible so a future Cloudflare tooling review can decide whether it is a source-of-truth input file, a local scratch file, or a report artifact.
 
 ## Future Commit Guidance
 
@@ -88,7 +93,8 @@ Suggested separate commit packages:
    - Cloudflare CLI/tooling files
    - reviewed README changes
    - reviewed dependency changes
-   - reviewed `domains.csv` only if it is source-of-truth input
+   - a clean reviewed domain input generated from source, not root-level `domains.csv`
+   - `docs/templates/domains.sample.csv`
 
 3. Optional report archive after manual review:
    - reviewed and redacted CSV reports under `docs/reports/`
