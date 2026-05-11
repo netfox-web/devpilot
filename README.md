@@ -1066,3 +1066,151 @@ curl http://211.75.219.184:5010/api/reports/daily/latest \
 首頁會顯示「今日早報」卡片；尚未產生時會提示可呼叫 `POST /api/reports/daily/generate`。
 
 若 `TELEGRAM_BOT_TOKEN` 或 `TELEGRAM_CHAT_ID` 未設定，產生早報仍會成功，Telegram 傳送結果會標記為 skipped，不會讓 API 報錯。所有時間使用 DevPilot 的 `now_str()`，在 NAS Docker 內應為 `Asia/Taipei`。
+# Cloudflare Batch Domain Setup Tool
+
+`cf_batch.py` is a standalone Cloudflare API Token based batch tool for managing an AI service provider domain matrix from `domains.csv`.
+
+Safety status:
+
+- Default mode is dry-run. Omitting `--apply` will not write to Cloudflare.
+- Real execution requires separate approval and both `--apply` and `--confirm-real-write` for write-capable commands.
+- Do not run this tooling as part of a production deploy flow.
+- `all` is highest-risk because it can create zones, DNS records, redirect rules, and SSL setting changes.
+- Generated CSV files must follow `docs/generated_artifacts_policy.md` and must not be committed from the repo root.
+- `domains.csv` is not yet approved as a commit-ready source of truth; fix encoding and CSV quoting in a separate review first.
+
+## Files
+
+- `cf_batch.py`: batch CLI tool
+- `domains.csv`: domain matrix
+- `.env.example`: environment variable template
+- `cloudflare-result.csv`: generated execution or dry-run report
+- `nameserver-update-list.csv`: registrar nameserver change checklist
+- `requirements.txt`: Python dependencies
+
+## Install
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Required packages for this tool:
+
+```txt
+requests
+python-dotenv
+pandas
+dnspython
+```
+
+## Configure environment values
+
+The tool reads system environment variables first. If those values are already set in the shell, CI, or host environment, no `.env` file is required.
+
+Use `.env` only as a local fallback. To use it, copy `.env.example` to `.env` and fill only the Cloudflare API Token values needed for real execution:
+
+```env
+CLOUDFLARE_API_TOKEN=
+CLOUDFLARE_ACCOUNT_ID=
+
+DEFAULT_MAIN_TARGET=
+DEFAULT_APP_TARGET=
+DEFAULT_API_TARGET=
+
+DEFAULT_PARKING_TARGET=aioffice.com.tw
+DEFAULT_SSL_MODE=full
+DEFAULT_PROXIED=true
+```
+
+Use a Cloudflare API Token, not a Global API Key. The token should be scoped for zone creation, DNS edit, zone settings edit, and rulesets edit as needed. If required values are missing from both system environment variables and `.env`, real execution stops with a configuration error.
+
+At startup, the CLI prints an environment preflight summary. It shows only `present` / `missing` and masks `CLOUDFLARE_ACCOUNT_ID`; it never prints the Cloudflare API Token.
+
+## Edit `domains.csv`
+
+CSV columns:
+
+```csv
+domain,type,target,main_target,app_target,api_target,proxied,ssl_mode,category,note
+```
+
+`type` can be:
+
+- `main`: creates or updates `@`, `www`, `app`, and `api` CNAME records.
+- `redirect`: creates basic DNS and a 301 redirect to `target`.
+- `parking`: same as redirect; if `target` is empty, uses `DEFAULT_PARKING_TARGET`.
+
+`category` is optional and backward compatible. It is used only for the AI Office Brand Matrix classification and report visibility; it does not change Cloudflare API behavior.
+
+## Dry-run
+
+Dry-run is the default and never writes to Cloudflare:
+
+```bash
+python cf_batch.py all
+```
+
+Other dry-run commands:
+
+```bash
+python cf_batch.py add-zone
+python cf_batch.py setup-dns
+python cf_batch.py setup-redirects
+python cf_batch.py setup-ssl
+python cf_batch.py verify
+```
+
+`--dry-run` may still be passed explicitly for clarity.
+
+## Real execution
+
+Real execution is not part of production deploy. It requires a separate approval for the exact command and target domains.
+
+After reviewing `cloudflare-result.csv`, run real commands explicitly with both `--apply` and `--confirm-real-write`:
+
+```bash
+python cf_batch.py add-zone --apply --confirm-real-write
+python cf_batch.py setup-dns --apply --confirm-real-write
+python cf_batch.py setup-redirects --apply --confirm-real-write
+python cf_batch.py setup-ssl --apply --confirm-real-write
+python cf_batch.py verify --apply
+```
+
+Or run everything:
+
+```bash
+python cf_batch.py all --apply --confirm-real-write
+```
+
+`all` is highest-risk and can create Cloudflare zones, create or update DNS records, create or update redirect rules, and update SSL mode. The tool does not delete DNS records by default. Existing matching records are updated; missing records are created.
+
+## Report
+
+`cloudflare-result.csv` columns:
+
+```csv
+domain,category,type,target,zone_id,zone_status,cloudflare_nameserver_1,cloudflare_nameserver_2,cloudflare_nameservers,current_nameservers,nameserver_status,dns_status,redirect_status,ssl_status,proxied_status,error_message
+```
+
+The tool also writes `nameserver-update-list.csv` for registrar work:
+
+```csv
+domain,cloudflare_nameserver_1,cloudflare_nameserver_2,status,note
+```
+
+If `nameserver_status=pending_nameserver_update`, Cloudflare has not yet become authoritative for that domain. Update nameservers at the registrar to the Cloudflare assigned nameservers shown in `cloudflare_nameserver_1` and `cloudflare_nameserver_2`, then re-run:
+
+```bash
+python cf_batch.py verify
+```
+
+## Safety
+
+- API Token is read from system environment variables or `.env`; it is never hard-coded.
+- Real-write commands require both `--apply` and `--confirm-real-write`.
+- `verify --apply` is read-only against Cloudflare but still uses a token and writes local report CSV files.
+- Dry-run writes only the local result CSV files.
+- Generated CSV files should not be committed directly; follow `docs/generated_artifacts_policy.md`.
+- No DNS record deletion is implemented.
+- Cloudflare API errors are recorded in `cloudflare-result.csv`.
+- Missing required environment values stop real execution.
