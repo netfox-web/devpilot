@@ -85,6 +85,7 @@ class AiManualHandoffTest(unittest.TestCase):
             phase = self.app_module.row_to_dict(self.app_module.query_one("SELECT * FROM project_phases WHERE id=?", (self.phase_id,)))
             task = self.app_module.task_row(self.task["id"])
         return {
+            "project_status": project["status"],
             "project_next_steps": project["next_steps"],
             "project_progress": project["progress"],
             "phase_status": phase["status"],
@@ -236,6 +237,24 @@ class AiManualHandoffTest(unittest.TestCase):
         )
         self.client().post(f"/api/handoffs/{match['id']}/accept", json={})
 
+        response = self.client().get("/api/ai-handoffs?q=searchable")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.get_json()["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/api/ai-handoffs?status=accepted")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.get_json()["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/api/ai-handoffs?to_agent=executor-search")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.get_json()["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
         response = self.client().get("/api/ai-handoffs?q=searchable&status=accepted&risk_level=medium&from_agent=planner-search&to_agent=executor-search")
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
@@ -243,13 +262,119 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn(match["id"], ids)
         self.assertNotIn(other["id"], ids)
 
-        response = self.client().get("/ai-handoffs?q=searchable&status=accepted&from_agent=planner-search&to_agent=executor-search")
+        response = self.client().get("/ai-handoffs?q=searchable&status=accepted&risk_level=medium&from_agent=planner-search&to_agent=executor-search")
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
         self.assertIn("Searchable follow-up step", body)
         self.assertIn("planner-search", body)
         self.assertIn('name="q"', body)
         self.assertIn('name="from_agent"', body)
+        self.assertIn('name="to_agent"', body)
+        self.assertIn('value="medium" selected', body)
+
+    def test_ai_handoff_detail_endpoint_and_board_detail_are_read_only(self):
+        before = self.state_snapshot()
+        created = self.create_handoff(
+            from_agent="detail-planner",
+            to_agent="detail-reviewer",
+            reason="Detailed handoff reason",
+            next_step="Detailed handoff next step",
+            risk_level="medium",
+        )
+        response = self.client().post(f"/api/handoffs/{created['id']}/reject", json={"reason": "Detailed rejection reason"})
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client().get(f"/api/handoffs/{created['id']}")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["read_only"] is False)
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(payload["api_payload_parse_error"])
+        handoff = payload["handoff"]
+        self.assertEqual(handoff["id"], created["id"])
+        self.assertEqual(handoff["task_id"], self.task["id"])
+        self.assertEqual(handoff["task_title"], self.task["title"])
+        self.assertEqual(handoff["project_id"], self.project_id)
+        self.assertEqual(handoff["from_agent"], "detail-planner")
+        self.assertEqual(handoff["to_agent"], "detail-reviewer")
+        self.assertEqual(handoff["handoff_status"], "rejected")
+        self.assertEqual(handoff["rejection_reason"], "Detailed rejection reason")
+        self.assertEqual(payload["api_payload"]["reason"], "Detailed handoff reason")
+        self.assertEqual(payload["api_payload"]["next_step"], "Detailed handoff next step")
+        self.assertTrue(payload["api_payload"]["rejected_at"])
+
+        response = self.client().get("/ai-handoffs?q=Detailed")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn(f"Details for handoff #{created['id']}", body)
+        self.assertIn("Conversation ref", body)
+        self.assertIn(f"ai-task:{self.task['id']}", body)
+        self.assertIn("API payload summary", body)
+        self.assertIn("Detailed rejection reason", body)
+
+        response = self.client().get(f"/api/tasks/{self.task['id']}/timeline")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Reject reason: Detailed rejection reason", response.get_data(as_text=True))
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_ai_handoff_detail_handles_invalid_or_missing_api_payload(self):
+        with self.app.app_context():
+            now = self.app_module.now_str()
+            invalid_id = self.app_module.execute(
+                """INSERT INTO handoff_logs
+                   (project_id, source, agent_name, work_mode, conversation_ref, risk_level, summary, next_steps, warnings, api_payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.project_id,
+                    "legacy-invalid",
+                    "legacy-invalid",
+                    "ai-task-handoff",
+                    f"ai-task:{self.task['id']}",
+                    "low",
+                    "Invalid payload fallback reason",
+                    "Invalid payload fallback next step",
+                    "",
+                    "{not-json",
+                    now,
+                ),
+            ).lastrowid
+            missing_id = self.app_module.execute(
+                """INSERT INTO handoff_logs
+                   (project_id, source, agent_name, work_mode, conversation_ref, risk_level, summary, next_steps, warnings, api_payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.project_id,
+                    "legacy-missing",
+                    "legacy-missing",
+                    "ai-task-handoff",
+                    f"ai-task:{self.task['id']}",
+                    "low",
+                    "Missing payload fallback reason",
+                    "Missing payload fallback next step",
+                    "",
+                    "",
+                    now,
+                ),
+            ).lastrowid
+
+        response = self.client().get(f"/api/handoffs/{invalid_id}")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["api_payload_parse_error"])
+        self.assertEqual(payload["handoff"]["task_id"], self.task["id"])
+        self.assertEqual(payload["handoff"]["handoff_status"], "pending")
+        self.assertEqual(payload["handoff"]["reason"], "Invalid payload fallback reason")
+
+        response = self.client().get(f"/api/handoffs/{missing_id}")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["api_payload_parse_error"])
+        self.assertEqual(payload["handoff"]["task_id"], self.task["id"])
+        self.assertEqual(payload["handoff"]["handoff_status"], "pending")
+        self.assertEqual(payload["handoff"]["reason"], "Missing payload fallback reason")
 
 
 if __name__ == "__main__":

@@ -163,6 +163,7 @@
             {% if handoff.approval_required %}<span class="badge text-bg-warning mt-2">pending approval</span>{% endif %}
             <div class="mt-2">{{ handoff.reason or handoff.summary or '-' }}</div>
             {% if handoff.next_step or handoff.next_steps %}<div class="text-muted mt-1">Next: {{ handoff.next_step or handoff.next_steps }}</div>{% endif %}
+            {% if handoff.rejection_reason %}<div class="text-muted mt-1">Reject reason: {{ handoff.rejection_reason }}</div>{% endif %}
             {% if handoff.accepted_at or handoff.completed_at or handoff.rejected_at %}
               <div class="text-muted mt-1">
                 accepted: {{ handoff.accepted_at or '-' }} /

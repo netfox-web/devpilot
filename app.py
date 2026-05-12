@@ -10364,6 +10364,26 @@ AI_TASK_HANDOFF_TRANSITIONS = {
     "completed": set(),
     "rejected": set(),
 }
+AI_TASK_HANDOFF_RISK_LEVELS = ["low", "medium", "high", "critical", "deploy", "production", "dns", "cloudflare", "ssl", "redirect", "nginx", "registrar"]
+AI_TASK_HANDOFF_PAYLOAD_SUMMARY_KEYS = [
+    "record_type",
+    "task_id",
+    "from_agent",
+    "to_agent",
+    "reason",
+    "next_step",
+    "risk_level",
+    "status",
+    "handoff_status",
+    "approval_required",
+    "pending_approval",
+    "created_at",
+    "accepted_at",
+    "completed_at",
+    "rejected_at",
+    "rejection_reason",
+    "safety",
+]
 AI_TASK_HANDOFF_HIGH_RISK_LEVELS = {
     "high",
     "critical",
@@ -10396,6 +10416,42 @@ def ai_handoff_approval_required(risk_level):
     return normalize_ai_handoff_risk_level(risk_level) in AI_TASK_HANDOFF_HIGH_RISK_LEVELS
 
 
+def parse_ai_handoff_payload(value):
+    if isinstance(value, dict):
+        return value, False
+    if not value:
+        return {}, False
+    try:
+        parsed = json.loads(value)
+        return (parsed, False) if isinstance(parsed, dict) else ({}, True)
+    except (TypeError, ValueError):
+        return {}, True
+
+
+def safe_ai_handoff_payload_value(value, limit=320):
+    if isinstance(value, dict):
+        return {str(key): safe_ai_handoff_payload_value(item, limit=limit) for key, item in value.items() if not approval_payload_contains_secret({key: item})}
+    if isinstance(value, list):
+        return [safe_ai_handoff_payload_value(item, limit=limit) for item in value[:20]]
+    return preview_text(value, limit=limit)
+
+
+def ai_handoff_payload_summary(payload):
+    summary = {}
+    source = payload if isinstance(payload, dict) else {}
+    for key in AI_TASK_HANDOFF_PAYLOAD_SUMMARY_KEYS:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if value in (None, ""):
+            continue
+        if approval_payload_contains_secret({key: value}):
+            summary[key] = "[redacted secret-like content]"
+        else:
+            summary[key] = safe_ai_handoff_payload_value(value)
+    return summary
+
+
 def ai_handoff_task_id(item, payload):
     task_id = coerce_int(payload.get("task_id"), None)
     if task_id is not None:
@@ -10407,7 +10463,8 @@ def ai_handoff_task_id(item, payload):
 
 def ai_task_handoff_public(row):
     item = row_to_dict(row) if not isinstance(row, dict) else dict(row)
-    payload = parse_json_object(item.get("api_payload"))
+    payload, payload_parse_error = parse_ai_handoff_payload(item.get("api_payload"))
+    payload_summary = ai_handoff_payload_summary(payload)
     task_id = ai_handoff_task_id(item, payload)
     risk_level = normalize_ai_handoff_risk_level(payload.get("risk_level") or item.get("risk_level"))
     status = normalize_ai_handoff_status(payload.get("handoff_status") or payload.get("status"))
@@ -10442,9 +10499,13 @@ def ai_task_handoff_public(row):
         "accepted_at": payload.get("accepted_at"),
         "completed_at": payload.get("completed_at"),
         "rejected_at": payload.get("rejected_at"),
+        "rejection_reason": preview_text(payload.get("rejection_reason")),
         "created_at": item.get("created_at") or payload.get("created_at"),
         "updated_at": payload.get("updated_at"),
         "record_type": payload.get("record_type") or "legacy_handoff",
+        "api_payload_summary": payload_summary,
+        "api_payload_summary_text": json.dumps(payload_summary, ensure_ascii=False, indent=2) if payload_summary else "",
+        "api_payload_parse_error": payload_parse_error,
         "execution_allowed": False,
     }
 
@@ -10822,6 +10883,8 @@ def ai_task_timeline(task_id):
         handoff_detail = handoff.get("reason") or handoff.get("summary")
         if handoff.get("next_step"):
             handoff_detail = f"{handoff_detail} / Next: {handoff.get('next_step')}" if handoff_detail else f"Next: {handoff.get('next_step')}"
+        if handoff.get("rejection_reason"):
+            handoff_detail = f"{handoff_detail} / Reject reason: {handoff.get('rejection_reason')}" if handoff_detail else f"Reject reason: {handoff.get('rejection_reason')}"
         timeline_add_event(
             events,
             "handoff",
@@ -12759,6 +12822,7 @@ def ai_handoffs_page():
         handoffs=ai_handoff_rows(**filters),
         filters=filters,
         statuses=sorted(AI_TASK_HANDOFF_STATUSES),
+        risk_levels=AI_TASK_HANDOFF_RISK_LEVELS,
         projects=query_all("SELECT id, name FROM projects ORDER BY updated_at DESC, id DESC LIMIT 100"),
     )
 
@@ -17728,6 +17792,29 @@ def api_ai_handoffs():
         "items": items,
         "handoffs": items,
         "count": len(items),
+        "read_only": True,
+        "execution_allowed": False,
+    })
+
+
+@app.route("/api/handoffs/<int:handoff_id>", methods=["GET"])
+@require_api_roles("owner", "admin", "ai")
+def api_ai_handoff_detail(handoff_id):
+    handoff = ai_task_handoff_row(handoff_id)
+    if not handoff:
+        return jsonify({"ok": False, "error": "handoff not found"}), 404
+    task = task_row(handoff["task_id"]) if handoff.get("task_id") else None
+    project = None
+    if handoff.get("project_id"):
+        project_row = query_one("SELECT id, name, status, progress, next_steps FROM projects WHERE id=?", (handoff["project_id"],))
+        project = row_to_dict(project_row)
+    return jsonify({
+        "ok": True,
+        "handoff": handoff,
+        "api_payload": handoff.get("api_payload_summary") or {},
+        "api_payload_parse_error": bool(handoff.get("api_payload_parse_error")),
+        "task": task,
+        "project": project,
         "read_only": True,
         "execution_allowed": False,
     })
