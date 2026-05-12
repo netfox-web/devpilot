@@ -10357,6 +10357,280 @@ def ai_message_thread_summaries(limit=50, project_id=None):
     return ordered[:limit]
 
 
+AI_TASK_HANDOFF_STATUSES = {"pending", "accepted", "completed", "rejected"}
+AI_TASK_HANDOFF_HIGH_RISK_LEVELS = {
+    "high",
+    "critical",
+    "deploy",
+    "production",
+    "dns",
+    "cloudflare",
+    "ssl",
+    "redirect",
+    "nginx",
+    "registrar",
+}
+
+
+def normalize_ai_handoff_status(value, default="pending"):
+    text = str(value or "").strip().lower()
+    return text if text in AI_TASK_HANDOFF_STATUSES else default
+
+
+def normalize_ai_handoff_risk_level(value):
+    text = str(value or "low").strip().lower()
+    return text or "low"
+
+
+def boolish(value):
+    return value in (True, 1, "1", "true", "yes", "on")
+
+
+def ai_handoff_approval_required(risk_level):
+    return normalize_ai_handoff_risk_level(risk_level) in AI_TASK_HANDOFF_HIGH_RISK_LEVELS
+
+
+def ai_handoff_task_id(item, payload):
+    task_id = coerce_int(payload.get("task_id"), None)
+    if task_id is not None:
+        return task_id
+    ref = str(item.get("conversation_ref") or "")
+    match = re.match(r"^ai-task:(\d+)$", ref)
+    return coerce_int(match.group(1), None) if match else None
+
+
+def ai_task_handoff_public(row):
+    item = row_to_dict(row) if not isinstance(row, dict) else dict(row)
+    payload = parse_json_object(item.get("api_payload"))
+    task_id = ai_handoff_task_id(item, payload)
+    risk_level = normalize_ai_handoff_risk_level(payload.get("risk_level") or item.get("risk_level"))
+    status = normalize_ai_handoff_status(payload.get("handoff_status") or payload.get("status"))
+    from_agent = str(payload.get("from_agent") or item.get("agent_name") or item.get("source") or "").strip()
+    to_agent = str(payload.get("to_agent") or "").strip()
+    reason = payload.get("reason") or item.get("summary") or ""
+    next_step = payload.get("next_step") or item.get("next_steps") or ""
+    approval_required = boolish(payload.get("approval_required")) or ai_handoff_approval_required(risk_level)
+    return {
+        "id": item.get("id"),
+        "project_id": item.get("project_id"),
+        "project_name": item.get("project_name"),
+        "task_id": task_id,
+        "task_title": item.get("task_title") or "",
+        "source": item.get("source") or "",
+        "agent_name": item.get("agent_name") or "",
+        "from_agent": from_agent,
+        "to_agent": to_agent,
+        "work_mode": item.get("work_mode") or "",
+        "conversation_ref": item.get("conversation_ref") or "",
+        "risk_level": risk_level,
+        "handoff_status": status,
+        "status": status,
+        "approval_required": approval_required,
+        "pending_approval": boolish(payload.get("pending_approval")) or (approval_required and status == "pending"),
+        "reason": preview_text(reason),
+        "summary": preview_text(reason),
+        "next_step": preview_text(next_step),
+        "next_steps": preview_text(next_step),
+        "test_result": preview_text(item.get("test_result")),
+        "warnings": preview_text(item.get("warnings")),
+        "accepted_at": payload.get("accepted_at"),
+        "completed_at": payload.get("completed_at"),
+        "rejected_at": payload.get("rejected_at"),
+        "created_at": item.get("created_at") or payload.get("created_at"),
+        "updated_at": payload.get("updated_at"),
+        "record_type": payload.get("record_type") or "legacy_handoff",
+        "execution_allowed": False,
+    }
+
+
+def ai_task_handoff_row(handoff_id):
+    row = query_one(
+        """SELECT h.*, p.name AS project_name
+           FROM handoff_logs h
+           LEFT JOIN projects p ON p.id=h.project_id
+           WHERE h.id=?""",
+        (handoff_id,),
+    )
+    if not row:
+        return None
+    item = ai_task_handoff_public(row)
+    if item.get("task_id") and not item.get("task_title"):
+        task = task_row(item["task_id"])
+        item["task_title"] = (task or {}).get("title") or ""
+    return item
+
+
+def ai_handoff_rows(limit=100, project_id=None, task_id=None, status=None, risk_level=None, from_agent=None, to_agent=None):
+    limit = max(1, min(coerce_int(limit, 100), 300))
+    clauses = [
+        "COALESCE(h.is_hidden, 0)=0",
+        """(
+            COALESCE(h.conversation_ref, '') LIKE 'ai-task:%'
+            OR COALESCE(h.api_payload, '') LIKE '%\"record_type\": \"ai_task_handoff\"%'
+            OR COALESCE(h.api_payload, '') LIKE '%\"record_type\":\"ai_task_handoff\"%'
+        )""",
+    ]
+    params = []
+    if project_id not in (None, ""):
+        clauses.append("h.project_id=?")
+        params.append(coerce_int(project_id, 0))
+    if risk_level not in (None, ""):
+        clauses.append("LOWER(COALESCE(h.risk_level, ''))=?")
+        params.append(normalize_ai_handoff_risk_level(risk_level))
+    if task_id not in (None, ""):
+        task_id_int = coerce_int(task_id, None)
+        clauses.append("(h.conversation_ref=? OR COALESCE(h.api_payload, '') LIKE ? OR COALESCE(h.api_payload, '') LIKE ?)")
+        params.extend([f"ai-task:{task_id_int}", f"%\"task_id\": {task_id_int}%", f"%\"task_id\":{task_id_int}%"])
+    params.append(limit)
+    rows = query_all(
+        f"""SELECT h.*, p.name AS project_name
+            FROM handoff_logs h
+            LEFT JOIN projects p ON p.id=h.project_id
+            WHERE {' AND '.join(clauses)}
+            ORDER BY h.created_at DESC, h.id DESC
+            LIMIT ?""",
+        tuple(params),
+    )
+    items = [ai_task_handoff_public(row) for row in rows]
+    status_filter = normalize_ai_handoff_status(status, None) if status not in (None, "") else None
+    if status_filter:
+        items = [item for item in items if item.get("handoff_status") == status_filter]
+    if from_agent not in (None, ""):
+        needle = str(from_agent).strip().lower()
+        items = [item for item in items if str(item.get("from_agent") or "").strip().lower() == needle]
+    if to_agent not in (None, ""):
+        needle = str(to_agent).strip().lower()
+        items = [item for item in items if str(item.get("to_agent") or "").strip().lower() == needle]
+    task_ids = {item.get("task_id") for item in items if item.get("task_id")}
+    task_map = {task_id: task_row(task_id) for task_id in task_ids}
+    for item in items:
+        task = task_map.get(item.get("task_id")) or {}
+        item["task_title"] = task.get("title") or item.get("task_title") or ""
+    return items
+
+
+def ai_handoff_payload_from_request():
+    return request.get_json(silent=True) or request.form.to_dict()
+
+
+def save_ai_task_handoff(task_id, payload):
+    task = task_row(task_id)
+    if not task:
+        raise LookupError("AI task not found")
+    if task.get("project_id") in (None, ""):
+        raise ValueError("task must belong to a project before handoff can be recorded")
+    from_agent = str(payload.get("from_agent") or payload.get("source") or "").strip()
+    to_agent = str(payload.get("to_agent") or "").strip()
+    reason = str(payload.get("reason") or payload.get("summary") or "").strip()
+    next_step = str(payload.get("next_step") or payload.get("next_steps") or "").strip()
+    if not from_agent:
+        raise ValueError("from_agent is required")
+    if not to_agent:
+        raise ValueError("to_agent is required")
+    if not reason:
+        raise ValueError("reason is required")
+    if not next_step:
+        raise ValueError("next_step is required")
+    risk_level = normalize_ai_handoff_risk_level(payload.get("risk_level"))
+    approval_required = ai_handoff_approval_required(risk_level)
+    created_at = now_str()
+    api_payload = {
+        "record_type": "ai_task_handoff",
+        "task_id": task["id"],
+        "from_agent": from_agent,
+        "to_agent": to_agent,
+        "reason": reason,
+        "next_step": next_step,
+        "risk_level": risk_level,
+        "status": "pending",
+        "handoff_status": "pending",
+        "approval_required": approval_required,
+        "pending_approval": approval_required,
+        "created_at": created_at,
+        "accepted_at": None,
+        "completed_at": None,
+        "rejected_at": None,
+        "safety": {
+            "provider_call_executed": False,
+            "worker_executed": False,
+            "repo_write_executed": False,
+            "deploy_executed": False,
+            "external_write_executed": False,
+        },
+    }
+    cur = execute(
+        """INSERT INTO handoff_logs
+           (project_id, source, agent_name, work_mode, conversation_ref, risk_level, summary, next_steps, warnings, api_payload, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            task["project_id"],
+            from_agent,
+            from_agent,
+            "ai-task-handoff",
+            f"ai-task:{task['id']}",
+            risk_level,
+            reason,
+            next_step,
+            "approval_required" if approval_required else "",
+            json.dumps(api_payload, ensure_ascii=False),
+            created_at,
+        ),
+    )
+    return ai_task_handoff_row(cur.lastrowid)
+
+
+def update_ai_task_handoff_status(handoff_id, status, payload=None):
+    next_status = normalize_ai_handoff_status(status, None)
+    if not next_status:
+        raise ValueError("invalid handoff status")
+    row = query_one("SELECT * FROM handoff_logs WHERE id=? AND COALESCE(is_hidden, 0)=0", (handoff_id,))
+    if not row:
+        raise LookupError("handoff not found")
+    public = ai_task_handoff_public(row)
+    if not public.get("task_id"):
+        raise ValueError("handoff is not linked to an AI task")
+    data = parse_json_object(row["api_payload"])
+    now = now_str()
+    data.update({
+        "record_type": "ai_task_handoff",
+        "task_id": public.get("task_id"),
+        "from_agent": data.get("from_agent") or public.get("from_agent"),
+        "to_agent": data.get("to_agent") or public.get("to_agent"),
+        "reason": data.get("reason") or row["summary"] or "",
+        "next_step": data.get("next_step") or row["next_steps"] or "",
+        "risk_level": normalize_ai_handoff_risk_level(data.get("risk_level") or row["risk_level"]),
+        "status": next_status,
+        "handoff_status": next_status,
+        "approval_required": boolish(data.get("approval_required")) or public.get("approval_required"),
+        "pending_approval": boolish(data.get("pending_approval")) or public.get("pending_approval"),
+        "updated_at": now,
+    })
+    data.setdefault("created_at", row["created_at"])
+    data.setdefault("accepted_at", None)
+    data.setdefault("completed_at", None)
+    data.setdefault("rejected_at", None)
+    data.setdefault("safety", {
+        "provider_call_executed": False,
+        "worker_executed": False,
+        "repo_write_executed": False,
+        "deploy_executed": False,
+        "external_write_executed": False,
+    })
+    if next_status == "accepted" and not data.get("accepted_at"):
+        data["accepted_at"] = now
+    if next_status == "completed":
+        data["completed_at"] = now
+    if next_status == "rejected":
+        data["rejected_at"] = now
+        if payload and payload.get("reason"):
+            data["rejection_reason"] = str(payload.get("reason")).strip()
+    execute(
+        "UPDATE handoff_logs SET api_payload=? WHERE id=?",
+        (json.dumps(data, ensure_ascii=False), handoff_id),
+    )
+    return ai_task_handoff_row(handoff_id)
+
+
 def task_thread_handoffs(task):
     project_id = task.get("project_id")
     if project_id in (None, ""):
@@ -10374,34 +10648,21 @@ def task_thread_handoffs(task):
     for pattern in patterns:
         like_clauses.extend(["COALESCE(raw_text, '') LIKE ?", "COALESCE(summary, '') LIKE ?", "COALESCE(api_payload, '') LIKE ?"])
         params.extend([f"%{pattern}%", f"%{pattern}%", f"%{pattern}%"])
-    return [
-        {
-            "id": row["id"],
-            "source": row["source"],
-            "agent_name": row["agent_name"],
-            "work_mode": row["work_mode"],
-            "conversation_ref": row["conversation_ref"],
-            "risk_level": row["risk_level"],
-            "summary": preview_text(row["summary"]),
-            "test_result": preview_text(row["test_result"]),
-            "warnings": preview_text(row["warnings"]),
-            "next_steps": preview_text(row["next_steps"]),
-            "created_at": row["created_at"],
-        }
-        for row in query_all(
-            f"""SELECT *
-                FROM handoff_logs
-                WHERE project_id=?
-                  AND COALESCE(is_hidden, 0)=0
+    rows = query_all(
+        f"""SELECT h.*, p.name AS project_name
+                FROM handoff_logs h
+                LEFT JOIN projects p ON p.id=h.project_id
+                WHERE h.project_id=?
+                  AND COALESCE(h.is_hidden, 0)=0
                   AND (
-                    conversation_ref IN (?, ?)
+                    h.conversation_ref IN (?, ?)
                     OR {' OR '.join(like_clauses)}
                   )
-                ORDER BY created_at ASC, id ASC
+                ORDER BY h.created_at ASC, h.id ASC
                 LIMIT 50""",
-            tuple(params),
-        )
-    ]
+        tuple(params),
+    )
+    return [ai_task_handoff_public(row) for row in rows]
 
 
 def task_thread_dispatch_jobs(task):
@@ -10532,7 +10793,19 @@ def ai_task_timeline(task_id):
             f"/tasks/{message.get('task_id')}/thread" if message.get("task_id") else "/ai-messages",
         )
     for handoff in handoffs:
-        timeline_add_event(events, "handoff", handoff.get("created_at"), f"Handoff #{handoff.get('id')}", handoff.get("summary"), handoff.get("risk_level"), handoff.get("agent_name") or handoff.get("source"))
+        handoff_source = " -> ".join([item for item in [handoff.get("from_agent"), handoff.get("to_agent")] if item]) or handoff.get("agent_name") or handoff.get("source")
+        handoff_detail = handoff.get("reason") or handoff.get("summary")
+        if handoff.get("next_step"):
+            handoff_detail = f"{handoff_detail} / Next: {handoff.get('next_step')}" if handoff_detail else f"Next: {handoff.get('next_step')}"
+        timeline_add_event(
+            events,
+            "handoff",
+            handoff.get("created_at"),
+            f"Handoff #{handoff.get('id')} / {handoff.get('handoff_status') or 'pending'}",
+            handoff_detail,
+            handoff.get("risk_level"),
+            handoff_source,
+        )
     for job in dispatch_jobs:
         timeline_add_event(events, "dispatch_job", job.get("created_at"), f"Dispatch job #{job.get('id')}", job.get("task"), job.get("status"), job.get("agent") or job.get("provider"))
         for run in job.get("agent_runs") or []:
@@ -12442,6 +12715,28 @@ def ai_messages_page():
     )
 
 
+@app.route("/ai-handoffs")
+@require_login
+def ai_handoffs_page():
+    filters = {
+        "project_id": coerce_int(request.args.get("project_id"), None) if request.args.get("project_id") else None,
+        "task_id": coerce_int(request.args.get("task_id"), None) if request.args.get("task_id") else None,
+        "status": request.args.get("status") or "",
+        "risk_level": request.args.get("risk_level") or "",
+        "from_agent": request.args.get("from_agent") or "",
+        "to_agent": request.args.get("to_agent") or "",
+        "limit": max(1, min(coerce_int(request.args.get("limit"), 100), 300)),
+    }
+    return render_template(
+        "ai_handoffs.html",
+        app_name=APP_NAME,
+        handoffs=ai_handoff_rows(**filters),
+        filters=filters,
+        statuses=sorted(AI_TASK_HANDOFF_STATUSES),
+        projects=query_all("SELECT id, name FROM projects ORDER BY updated_at DESC, id DESC LIMIT 100"),
+    )
+
+
 @app.route("/ai-console/sandbox")
 @require_roles("owner", "admin")
 def ai_console_sandbox_gallery_page():
@@ -12527,6 +12822,23 @@ def ai_task_thread_page(task_id):
         app_name=APP_NAME,
         timeline=timeline,
         task_id=task_id,
+    )
+
+
+@app.route("/tasks/<int:task_id>/handoff")
+@require_login
+def ai_task_handoff_page(task_id):
+    task = task_row(task_id)
+    if not task:
+        return "AI task not found", 404
+    project = row_to_dict(query_one("SELECT * FROM projects WHERE id=?", (task["project_id"],))) if task.get("project_id") else None
+    return render_template(
+        "ai_task_handoff.html",
+        app_name=APP_NAME,
+        task=task,
+        project=project,
+        handoffs=task_thread_handoffs(task),
+        risk_levels=["low", "medium", "high", "critical"],
     )
 
 
@@ -17372,6 +17684,28 @@ def api_ai_messages_thread_board():
     })
 
 
+@app.route("/api/ai-handoffs", methods=["GET"])
+@require_api_roles("owner", "admin", "ai")
+def api_ai_handoffs():
+    items = ai_handoff_rows(
+        limit=coerce_int(request.args.get("limit"), 100),
+        project_id=coerce_int(request.args.get("project_id"), None) if request.args.get("project_id") else None,
+        task_id=coerce_int(request.args.get("task_id"), None) if request.args.get("task_id") else None,
+        status=request.args.get("status"),
+        risk_level=request.args.get("risk_level"),
+        from_agent=request.args.get("from_agent"),
+        to_agent=request.args.get("to_agent"),
+    )
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "handoffs": items,
+        "count": len(items),
+        "read_only": True,
+        "execution_allowed": False,
+    })
+
+
 @app.route("/api/ai/dispatch", methods=["POST"])
 @app.route("/api/ai-dispatch", methods=["POST"])
 @require_api_token
@@ -17410,6 +17744,23 @@ def api_tasks():
             project_id=coerce_int(project_id, None) if project_id else None,
         ),
     })
+
+
+@app.route("/api/tasks/<int:task_id>/handoff", methods=["POST"])
+@require_api_roles("owner", "admin", "ai")
+def api_ai_task_handoff_create(task_id):
+    try:
+        handoff = save_ai_task_handoff(task_id, ai_handoff_payload_from_request())
+        return jsonify({
+            "ok": True,
+            "handoff": handoff,
+            "handoff_id": handoff["id"],
+            "execution_allowed": False,
+        }), 201
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.route("/api/ai-tasks/<int:task_id>", methods=["GET"])
@@ -17511,6 +17862,39 @@ def api_task_timeline(task_id):
     if not timeline:
         return jsonify({"ok": False, "error": "AI task not found"}), 404
     return jsonify({"ok": True, **timeline})
+
+
+def api_ai_handoff_transition_response(handoff_id, status):
+    try:
+        handoff = update_ai_task_handoff_status(handoff_id, status, ai_handoff_payload_from_request())
+        return jsonify({
+            "ok": True,
+            "handoff": handoff,
+            "handoff_id": handoff["id"],
+            "execution_allowed": False,
+        })
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/handoffs/<int:handoff_id>/accept", methods=["POST"])
+@require_api_roles("owner", "admin", "ai")
+def api_ai_handoff_accept(handoff_id):
+    return api_ai_handoff_transition_response(handoff_id, "accepted")
+
+
+@app.route("/api/handoffs/<int:handoff_id>/complete", methods=["POST"])
+@require_api_roles("owner", "admin", "ai")
+def api_ai_handoff_complete(handoff_id):
+    return api_ai_handoff_transition_response(handoff_id, "completed")
+
+
+@app.route("/api/handoffs/<int:handoff_id>/reject", methods=["POST"])
+@require_api_roles("owner", "admin", "ai")
+def api_ai_handoff_reject(handoff_id):
+    return api_ai_handoff_transition_response(handoff_id, "rejected")
 
 
 @app.route("/api/tasks/<int:task_id>/run-flow", methods=["POST"])

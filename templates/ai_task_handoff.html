@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Manual AI Handoff</h1>
+    <div class="text-muted small">Task #{{ task.id }} / {{ task.title or 'Untitled AI task' }}</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">COORDINATION ONLY</span>
+      <span class="badge text-bg-secondary">NO PROVIDER CALL</span>
+      <span class="badge text-bg-secondary">NO WORKER EXECUTION</span>
+      <span class="badge text-bg-secondary">NO TASK STATUS CHANGE</span>
+      <span class="badge text-bg-secondary">NO PROJECT PROGRESS CHANGE</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/tasks/{{ task.id }}/thread">Thread</a>
+    <a class="btn btn-outline-secondary" href="/ai-handoffs">AI Handoffs</a>
+  </div>
+</div>
+
+{% if not project %}
+  <div class="alert alert-warning">This task is not linked to a project, so a handoff cannot be stored in the existing project-scoped handoff log.</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-xl-5">
+    <form class="card shadow-sm h-100" id="handoffForm">
+      <div class="card-header fw-bold">Create Handoff</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">From agent</label>
+          <input class="form-control" name="from_agent" value="planner" required {% if not project %}disabled{% endif %}>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">To agent</label>
+          <input class="form-control" name="to_agent" value="executor" required {% if not project %}disabled{% endif %}>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Risk level</label>
+          <select class="form-select" name="risk_level" {% if not project %}disabled{% endif %}>
+            {% for risk_level in risk_levels %}
+              <option value="{{ risk_level }}">{{ risk_level }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Reason</label>
+          <textarea class="form-control" name="reason" rows="3" required {% if not project %}disabled{% endif %}></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Next step</label>
+          <textarea class="form-control" name="next_step" rows="3" required {% if not project %}disabled{% endif %}></textarea>
+        </div>
+        <button class="btn btn-primary" type="submit" {% if not project %}disabled{% endif %}>Create Handoff</button>
+        <span class="small text-muted ms-2" id="handoffFormStatus"></span>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Existing Handoffs</div>
+      <div class="list-group list-group-flush">
+        {% for handoff in handoffs %}
+          <div class="list-group-item">
+            <div class="d-flex justify-content-between gap-2">
+              <div>
+                <span class="fw-semibold">#{{ handoff.id }} {{ handoff.from_agent or '-' }} -> {{ handoff.to_agent or '-' }}</span>
+                {% if handoff.approval_required %}<span class="badge text-bg-warning">approval required</span>{% endif %}
+              </div>
+              <span class="badge text-bg-{{ 'success' if handoff.handoff_status == 'completed' else ('primary' if handoff.handoff_status == 'accepted' else ('danger' if handoff.handoff_status == 'rejected' else 'warning')) }}">{{ handoff.handoff_status or 'pending' }}</span>
+            </div>
+            <div class="small text-muted mt-1">{{ handoff.created_at or '-' }} / {{ handoff.risk_level or 'low' }}</div>
+            <div class="mt-2">{{ handoff.reason or handoff.summary or '-' }}</div>
+            <div class="small text-muted mt-1">Next: {{ handoff.next_step or handoff.next_steps or '-' }}</div>
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No handoff chain yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const form = document.getElementById('handoffForm');
+const statusNode = document.getElementById('handoffFormStatus');
+if (form) {
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    statusNode.textContent = 'Saving...';
+    const formData = new FormData(form);
+    const payload = Object.fromEntries(formData.entries());
+    const response = await fetch('/api/tasks/{{ task.id }}/handoff', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      statusNode.textContent = body.error || 'Save failed';
+      return;
+    }
+    window.location.href = '/tasks/{{ task.id }}/thread';
+  });
+}
+</script>
+{% endblock %}

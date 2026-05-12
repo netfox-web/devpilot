@@ -29,6 +29,8 @@
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary" href="/ai-messages">AI Messages</a>
+    <a class="btn btn-outline-secondary" href="/ai-handoffs">AI Handoffs</a>
+    <a class="btn btn-outline-primary" href="/tasks/{{ task.id }}/handoff">New Handoff</a>
     <a class="btn btn-outline-primary" href="/ai-tasks/{{ task.id }}">Task Detail</a>
     <a class="btn btn-outline-secondary" href="/ai-console">AI Console</a>
   </div>
@@ -153,10 +155,21 @@
       <div class="list-group list-group-flush">
         {% for handoff in timeline.handoffs %}
           <div class="list-group-item small">
-            <div class="fw-semibold">#{{ handoff.id }} {{ handoff.agent_name or handoff.source }}</div>
+            <div class="d-flex justify-content-between gap-2">
+              <div class="fw-semibold">#{{ handoff.id }} {{ handoff.from_agent or handoff.agent_name or handoff.source }}{% if handoff.to_agent %} -> {{ handoff.to_agent }}{% endif %}</div>
+              <span class="badge text-bg-{{ 'success' if handoff.handoff_status == 'completed' else ('primary' if handoff.handoff_status == 'accepted' else ('danger' if handoff.handoff_status == 'rejected' else 'warning')) }}">{{ handoff.handoff_status or 'pending' }}</span>
+            </div>
             <div class="text-muted">{{ handoff.created_at or '-' }} / {{ handoff.risk_level or '-' }}</div>
-            <div class="mt-2">{{ handoff.summary or '-' }}</div>
-            {% if handoff.next_steps %}<div class="text-muted mt-1">Next: {{ handoff.next_steps }}</div>{% endif %}
+            {% if handoff.approval_required %}<span class="badge text-bg-warning mt-2">pending approval</span>{% endif %}
+            <div class="mt-2">{{ handoff.reason or handoff.summary or '-' }}</div>
+            {% if handoff.next_step or handoff.next_steps %}<div class="text-muted mt-1">Next: {{ handoff.next_step or handoff.next_steps }}</div>{% endif %}
+            {% if handoff.accepted_at or handoff.completed_at or handoff.rejected_at %}
+              <div class="text-muted mt-1">
+                accepted: {{ handoff.accepted_at or '-' }} /
+                completed: {{ handoff.completed_at or '-' }} /
+                rejected: {{ handoff.rejected_at or '-' }}
+              </div>
+            {% endif %}
           </div>
         {% else %}
           <div class="list-group-item text-muted">No related handoffs.</div>

@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Handoffs</h1>
+    <div class="text-muted small">Manual task handoff records. Coordination only; execution remains approval-gated.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">SIDE-EFFECT-FREE</span>
+      <span class="badge text-bg-secondary">NO PROVIDER CALL</span>
+      <span class="badge text-bg-secondary">NO WORKER EXECUTION</span>
+      <span class="badge text-bg-secondary">NO DEPLOY</span>
+      <span class="badge text-bg-secondary">NO INFRA WRITE</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/ai-messages">AI Messages</a>
+    <a class="btn btn-outline-secondary" href="/ai-console">AI Console</a>
+  </div>
+</div>
+
+<form class="row g-2 align-items-end mb-3" method="get" action="/ai-handoffs">
+  <div class="col-lg-2 col-md-4">
+    <label class="form-label small text-muted">Project</label>
+    <select class="form-select form-select-sm" name="project_id">
+      <option value="">All projects</option>
+      {% for project in projects %}
+        <option value="{{ project.id }}" {% if filters.project_id == project.id %}selected{% endif %}>#{{ project.id }} {{ project.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-lg-2 col-md-4">
+    <label class="form-label small text-muted">Task ID</label>
+    <input class="form-control form-control-sm" type="number" name="task_id" value="{{ filters.task_id or '' }}">
+  </div>
+  <div class="col-lg-2 col-md-4">
+    <label class="form-label small text-muted">Status</label>
+    <select class="form-select form-select-sm" name="status">
+      <option value="">All statuses</option>
+      {% for status in statuses %}
+        <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-lg-2 col-md-4">
+    <label class="form-label small text-muted">Risk</label>
+    <input class="form-control form-control-sm" name="risk_level" value="{{ filters.risk_level or '' }}" placeholder="low / high">
+  </div>
+  <div class="col-lg-2 col-md-4">
+    <label class="form-label small text-muted">To agent</label>
+    <input class="form-control form-control-sm" name="to_agent" value="{{ filters.to_agent or '' }}">
+  </div>
+  <div class="col-lg-2 col-md-4 d-flex gap-2">
+    <button class="btn btn-sm btn-primary" type="submit">Filter</button>
+    <a class="btn btn-sm btn-outline-secondary" href="/ai-handoffs">Reset</a>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">Handoff Queue</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Task</th>
+          <th>Agents</th>
+          <th>Status</th>
+          <th>Risk</th>
+          <th>Next step</th>
+          <th>Created</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for handoff in handoffs %}
+          <tr>
+            <td>#{{ handoff.id }}</td>
+            <td>
+              {% if handoff.task_id %}
+                <a href="/tasks/{{ handoff.task_id }}/thread">#{{ handoff.task_id }} {{ handoff.task_title or '' }}</a>
+              {% else %}
+                <span class="text-muted">Unlinked</span>
+              {% endif %}
+              <div class="small text-muted">{{ handoff.project_name or '-' }}</div>
+            </td>
+            <td>
+              <div>{{ handoff.from_agent or '-' }} -> {{ handoff.to_agent or '-' }}</div>
+              <div class="small text-muted">{{ handoff.reason or handoff.summary or '-' }}</div>
+            </td>
+            <td><span class="badge text-bg-{{ 'success' if handoff.handoff_status == 'completed' else ('primary' if handoff.handoff_status == 'accepted' else ('danger' if handoff.handoff_status == 'rejected' else 'warning')) }}">{{ handoff.handoff_status or 'pending' }}</span></td>
+            <td>
+              <span class="badge text-bg-{{ 'danger' if handoff.risk_level in ['high', 'critical'] else 'secondary' }}">{{ handoff.risk_level or 'low' }}</span>
+              {% if handoff.approval_required %}<span class="badge text-bg-warning">approval required</span>{% endif %}
+            </td>
+            <td>{{ handoff.next_step or handoff.next_steps or '-' }}</td>
+            <td class="small text-muted">{{ handoff.created_at or '-' }}</td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-primary js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="accept" {% if handoff.handoff_status == 'accepted' %}disabled{% endif %}>Accept</button>
+                <button class="btn btn-outline-success js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="complete" {% if handoff.handoff_status == 'completed' %}disabled{% endif %}>Complete</button>
+                <button class="btn btn-outline-danger js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="reject" {% if handoff.handoff_status == 'rejected' %}disabled{% endif %}>Reject</button>
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-muted">No AI task handoffs found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.js-handoff-action').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const handoffId = button.dataset.handoffId;
+    const action = button.dataset.action;
+    button.disabled = true;
+    const response = await fetch(`/api/handoffs/${handoffId}/${action}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({})
+    });
+    if (!response.ok) {
+      button.disabled = false;
+      alert('Handoff status update failed.');
+      return;
+    }
+    window.location.reload();
+  });
+});
+</script>
+{% endblock %}
