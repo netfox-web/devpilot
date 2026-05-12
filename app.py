@@ -1488,6 +1488,54 @@ def require_api_roles(*roles):
     return decorator
 
 
+def configured_external_api_keys():
+    configured = {}
+    raw = os.getenv("DEVPILOT_EXTERNAL_API_KEYS", "").strip()
+    if not raw:
+        return configured
+    for item in raw.split(","):
+        if ":" not in item:
+            continue
+        source_system, api_key = item.split(":", 1)
+        source_system = source_system.strip()
+        api_key = api_key.strip()
+        if source_system and api_key:
+            configured[source_system] = api_key
+    return configured
+
+
+def external_api_allow_all_sources():
+    return os.getenv("DEVPILOT_EXTERNAL_API_ALLOW_ALL_SOURCES", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_external_api_identity():
+    configured = configured_external_api_keys()
+    if not configured:
+        return None, "external API is not enabled"
+    source_system = request.headers.get("X-DevPilot-Source-System", "").strip()
+    api_key = request.headers.get("X-DevPilot-Api-Key", "")
+    if not source_system or source_system not in configured:
+        return None, "external source system is not allowed"
+    if not api_key or not hmac.compare_digest(api_key, configured[source_system]):
+        return None, "external API credential is invalid"
+    return {
+        "source_system": source_system,
+        "request_id": request.headers.get("X-DevPilot-Request-Id", "").strip(),
+        "idempotency_key": request.headers.get("X-DevPilot-Idempotency-Key", "").strip(),
+    }, None
+
+
+def require_external_api_key(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        identity, error = get_external_api_identity()
+        if error:
+            return jsonify({"ok": False, "error": error}), 403
+        g.external_api_identity = identity
+        return fn(*args, **kwargs)
+    return wrapper
+
+
 def audit_log(action, target_type=None, target_id=None, metadata=None):
     user = current_user()
     try:
@@ -10369,6 +10417,12 @@ AI_TASK_HANDOFF_RISK_LEVELS = ["low", "medium", "high", "critical", "deploy", "p
 AI_TASK_HANDOFF_PAYLOAD_SUMMARY_KEYS = [
     "record_type",
     "task_id",
+    "source_system",
+    "external_ref",
+    "request_id",
+    "idempotency_key",
+    "actor_type",
+    "actor_id",
     "from_agent",
     "to_agent",
     "reason",
@@ -10482,6 +10536,12 @@ def ai_task_handoff_public(row):
         "task_title": item.get("task_title") or "",
         "source": item.get("source") or "",
         "agent_name": item.get("agent_name") or "",
+        "source_system": preview_text(payload.get("source_system")),
+        "external_ref": preview_text(payload.get("external_ref")),
+        "request_id": preview_text(payload.get("request_id")),
+        "idempotency_key": preview_text(payload.get("idempotency_key")),
+        "actor_type": preview_text(payload.get("actor_type")),
+        "actor_id": preview_text(payload.get("actor_id")),
         "from_agent": from_agent,
         "to_agent": to_agent,
         "work_mode": item.get("work_mode") or "",
@@ -10528,7 +10588,7 @@ def ai_task_handoff_row(handoff_id):
     return item
 
 
-def ai_handoff_rows(limit=100, project_id=None, task_id=None, status=None, risk_level=None, from_agent=None, to_agent=None, q=None):
+def ai_handoff_rows(limit=100, project_id=None, task_id=None, status=None, risk_level=None, from_agent=None, to_agent=None, q=None, source_system=None, external_ref=None):
     limit = max(1, min(coerce_int(limit, 100), 300))
     clauses = [
         "COALESCE(h.is_hidden, 0)=0",
@@ -10583,6 +10643,12 @@ def ai_handoff_rows(limit=100, project_id=None, task_id=None, status=None, risk_
     if to_agent not in (None, ""):
         needle = str(to_agent).strip().lower()
         items = [item for item in items if str(item.get("to_agent") or "").strip().lower() == needle]
+    if source_system not in (None, ""):
+        needle = str(source_system).strip().lower()
+        items = [item for item in items if str(item.get("source_system") or "").strip().lower() == needle]
+    if external_ref not in (None, ""):
+        needle = str(external_ref).strip().lower()
+        items = [item for item in items if str(item.get("external_ref") or "").strip().lower() == needle]
     task_ids = {item.get("task_id") for item in items if item.get("task_id")}
     task_map = {task_id: task_row(task_id) for task_id in task_ids}
     for item in items:
@@ -10606,6 +10672,8 @@ def ai_handoff_filters_from_args(args):
         "risk_level": ai_handoff_risk_filter_from_args(args),
         "from_agent": args.get("from_agent") or "",
         "to_agent": args.get("to_agent") or "",
+        "source_system": args.get("source_system") or "",
+        "external_ref": args.get("external_ref") or "",
         "q": args.get("q") or "",
         "limit": max(1, min(coerce_int(args.get("limit"), 100), 300)),
     }
@@ -10630,6 +10698,8 @@ def ai_handoff_active_filter_summary(filters):
         ("to_agent", "to"),
         ("status", "status"),
         ("risk_level", "risk"),
+        ("source_system", "source system"),
+        ("external_ref", "external ref"),
     ):
         value = filters.get(key)
         if value not in (None, ""):
@@ -10647,6 +10717,12 @@ def ai_handoff_export_item(handoff, project_map=None):
         "project_id": handoff.get("project_id"),
         "project_name": handoff.get("project_name") or project.get("name") or "",
         "project_status": project.get("status") or "",
+        "source_system": handoff.get("source_system") or "",
+        "external_ref": handoff.get("external_ref") or "",
+        "request_id": handoff.get("request_id") or "",
+        "idempotency_key": handoff.get("idempotency_key") or "",
+        "actor_type": handoff.get("actor_type") or "",
+        "actor_id": handoff.get("actor_id") or "",
         "from_agent": handoff.get("from_agent") or "",
         "to_agent": handoff.get("to_agent") or "",
         "status": handoff.get("handoff_status") or handoff.get("status") or "pending",
@@ -10674,6 +10750,73 @@ def ai_handoff_export_rows(filters):
     return [ai_handoff_export_item(handoff, project_map=project_map) for handoff in handoffs]
 
 
+def ai_handoff_export_item_with_project(handoff):
+    project_map = {}
+    if handoff.get("project_id"):
+        project = query_one("SELECT id, name, status FROM projects WHERE id=?", (handoff["project_id"],))
+        if project:
+            project_map[handoff["project_id"]] = row_to_dict(project)
+    return ai_handoff_export_item(handoff, project_map=project_map)
+
+
+def include_all_external_handoff_sources_requested():
+    return external_api_allow_all_sources() and str(request.args.get("include_all_sources") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def external_ai_handoff_filters(identity):
+    filters = ai_handoff_filters_from_args(request.args)
+    if not include_all_external_handoff_sources_requested():
+        filters["source_system"] = identity["source_system"]
+    return filters
+
+
+def external_handoff_visible(handoff, identity):
+    if include_all_external_handoff_sources_requested():
+        return True
+    return str(handoff.get("source_system") or "") == identity["source_system"]
+
+
+def find_external_handoff_by_idempotency(task_id, source_system, idempotency_key):
+    if not idempotency_key:
+        return None
+    rows = query_all(
+        """SELECT h.*, p.name AS project_name
+           FROM handoff_logs h
+           LEFT JOIN projects p ON p.id=h.project_id
+           WHERE COALESCE(h.is_hidden, 0)=0 AND h.conversation_ref=?
+           ORDER BY h.created_at DESC, h.id DESC
+           LIMIT 300""",
+        (f"ai-task:{task_id}",),
+    )
+    for row in rows:
+        payload, payload_parse_error = parse_ai_handoff_payload(row["api_payload"])
+        if payload_parse_error:
+            continue
+        if str(payload.get("source_system") or "") == source_system and str(payload.get("idempotency_key") or "") == idempotency_key:
+            handoff = ai_task_handoff_public(row)
+            if handoff.get("task_id") and not handoff.get("task_title"):
+                task = task_row(handoff["task_id"])
+                handoff["task_title"] = (task or {}).get("title") or ""
+            return handoff
+    return None
+
+
+def external_handoff_create_response(handoff, identity, status_code, idempotent_replay=False):
+    return jsonify({
+        "ok": True,
+        "handoff_id": handoff.get("id"),
+        "task_id": handoff.get("task_id"),
+        "status": handoff.get("handoff_status") or handoff.get("status") or "pending",
+        "conversation_ref": handoff.get("conversation_ref") or "",
+        "source_system": handoff.get("source_system") or identity.get("source_system") or "",
+        "external_ref": handoff.get("external_ref") or "",
+        "idempotency_key": handoff.get("idempotency_key") or identity.get("idempotency_key") or "",
+        "idempotent_replay": bool(idempotent_replay),
+        "execution_allowed": False,
+        "handoff": ai_handoff_export_item_with_project(handoff),
+    }), status_code
+
+
 AI_HANDOFF_EXPORT_CSV_FIELDS = [
     "handoff_id",
     "conversation_ref",
@@ -10682,6 +10825,12 @@ AI_HANDOFF_EXPORT_CSV_FIELDS = [
     "project_id",
     "project_name",
     "project_status",
+    "source_system",
+    "external_ref",
+    "request_id",
+    "idempotency_key",
+    "actor_type",
+    "actor_id",
     "from_agent",
     "to_agent",
     "status",
@@ -10720,7 +10869,7 @@ def save_ai_task_handoff(task_id, payload):
         raise ValueError("reason is required")
     if not next_step:
         raise ValueError("next_step is required")
-    risk_level = normalize_ai_handoff_risk_level(payload.get("risk_level"))
+    risk_level = normalize_ai_handoff_risk_level(payload.get("risk_level") or payload.get("risk"))
     approval_required = ai_handoff_approval_required(risk_level)
     created_at = now_str()
     api_payload = {
@@ -10747,6 +10896,10 @@ def save_ai_task_handoff(task_id, payload):
             "external_write_executed": False,
         },
     }
+    for key in ("source_system", "external_ref", "request_id", "idempotency_key", "actor_type", "actor_id"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            api_payload[key] = value
     cur = execute(
         """INSERT INTO handoff_logs
            (project_id, source, agent_name, work_mode, conversation_ref, risk_level, summary, next_steps, warnings, api_payload, created_at)
@@ -17938,6 +18091,72 @@ def api_ai_handoff_detail(handoff_id):
         "api_payload_parse_error": bool(handoff.get("api_payload_parse_error")),
         "task": task,
         "project": project,
+        "read_only": True,
+        "execution_allowed": False,
+    })
+
+
+@app.route("/api/external/tasks/<int:task_id>/handoffs", methods=["POST"])
+@require_external_api_key
+def api_external_ai_task_handoff_create(task_id):
+    identity = g.external_api_identity
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "JSON object body is required"}), 400
+    existing = find_external_handoff_by_idempotency(task_id, identity["source_system"], identity.get("idempotency_key"))
+    if existing:
+        return external_handoff_create_response(existing, identity, 200, idempotent_replay=True)
+    handoff_payload = dict(payload)
+    handoff_payload.update({
+        "risk_level": payload.get("risk_level") or payload.get("risk"),
+        "source_system": identity["source_system"],
+        "request_id": identity.get("request_id"),
+        "idempotency_key": identity.get("idempotency_key"),
+        "external_ref": payload.get("external_ref"),
+        "actor_type": payload.get("actor_type"),
+        "actor_id": payload.get("actor_id"),
+    })
+    try:
+        handoff = save_ai_task_handoff(task_id, handoff_payload)
+        return external_handoff_create_response(handoff, identity, 201, idempotent_replay=False)
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/external/ai-handoffs", methods=["GET"])
+@require_external_api_key
+def api_external_ai_handoffs():
+    identity = g.external_api_identity
+    items = ai_handoff_export_rows(external_ai_handoff_filters(identity))
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "handoffs": items,
+        "count": len(items),
+        "source_system": identity["source_system"],
+        "include_all_sources": include_all_external_handoff_sources_requested(),
+        "read_only": True,
+        "execution_allowed": False,
+    })
+
+
+@app.route("/api/external/handoffs/<int:handoff_id>", methods=["GET"])
+@require_external_api_key
+def api_external_ai_handoff_detail(handoff_id):
+    identity = g.external_api_identity
+    handoff = ai_task_handoff_row(handoff_id)
+    if not handoff or not external_handoff_visible(handoff, identity):
+        return jsonify({"ok": False, "error": "handoff not found"}), 404
+    item = ai_handoff_export_item_with_project(handoff)
+    return jsonify({
+        "ok": True,
+        "handoff": item,
+        "api_payload": item.get("api_payload_summary") or {},
+        "api_payload_parse_error": bool(item.get("api_payload_parse_error")),
+        "source_system": identity["source_system"],
+        "include_all_sources": include_all_external_handoff_sources_requested(),
         "read_only": True,
         "execution_allowed": False,
     })

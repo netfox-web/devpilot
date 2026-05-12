@@ -65,6 +65,22 @@ class AiManualHandoffTest(unittest.TestCase):
             sess["user_id"] = self.user_id
         return client
 
+    def external_api_env(self, allow_all_sources=False):
+        return {
+            "DEVPILOT_EXTERNAL_API_KEYS": "external-a:key-a,external-b:key-b",
+            "DEVPILOT_EXTERNAL_API_ALLOW_ALL_SOURCES": "1" if allow_all_sources else "0",
+        }
+
+    def external_headers(self, source="external-a", key="key-a", request_id="req-a", idempotency_key="idem-a"):
+        headers = {
+            "X-DevPilot-Source-System": source,
+            "X-DevPilot-Api-Key": key,
+            "X-DevPilot-Request-Id": request_id,
+        }
+        if idempotency_key:
+            headers["X-DevPilot-Idempotency-Key"] = idempotency_key
+        return headers
+
     def handoff_payload(self, risk_level="low", **overrides):
         payload = {
             "from_agent": "planner-ai",
@@ -563,6 +579,209 @@ class AiManualHandoffTest(unittest.TestCase):
             approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
         self.assertEqual(approval_count_after, approval_count_before)
         self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_handoff_api_rejects_missing_or_wrong_key(self):
+        payload = self.handoff_payload(risk="medium")
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
+            response = self.client().post(f"/api/external/tasks/{self.task['id']}/handoffs", json=payload)
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.get_json()["ok"])
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            response = self.client().post(f"/api/external/tasks/{self.task['id']}/handoffs", json=payload)
+            self.assertEqual(response.status_code, 403)
+
+            response = self.client().post(
+                f"/api/external/tasks/{self.task['id']}/handoffs",
+                json=payload,
+                headers=self.external_headers(key="wrong-key"),
+            )
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.get_json()["ok"])
+
+    def test_external_handoff_create_stores_metadata_is_idempotent_and_side_effect_free(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+            self.app_module.execute(
+                """INSERT INTO handoff_logs
+                   (project_id, source, agent_name, work_mode, conversation_ref, risk_level, summary, next_steps, warnings, api_payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.project_id,
+                    "external-invalid",
+                    "external-invalid",
+                    "ai-task-handoff",
+                    f"ai-task:{self.task['id']}",
+                    "medium",
+                    "Invalid idempotency lookup payload",
+                    "Invalid idempotency next step",
+                    "",
+                    "{not-json",
+                    self.app_module.now_str(),
+                ),
+            )
+
+        body = {
+            "from_agent": "external-system-a",
+            "to_agent": "devpilot-reviewer",
+            "reason": "External handoff reason",
+            "next_step": "External handoff next step",
+            "risk": "medium",
+            "external_ref": "external-ticket-123",
+            "actor_type": "system",
+            "actor_id": "external-system-a",
+        }
+        headers = self.external_headers(
+            source="external-a",
+            key="key-a",
+            request_id="request-123",
+            idempotency_key="external-ticket-123:create",
+        )
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            with patch.object(self.app_module, "call_task_provider") as provider_call:
+                with patch.object(self.app_module, "run_ai_task") as run_task:
+                    with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                            with patch.object(self.app_module, "save_handoff") as legacy_save:
+                                response = self.client().post(
+                                    f"/api/external/tasks/{self.task['id']}/handoffs",
+                                    json=body,
+                                    headers=headers,
+                                )
+                                replay = self.client().post(
+                                    f"/api/external/tasks/{self.task['id']}/handoffs",
+                                    json={**body, "reason": "Retry body should not create duplicate"},
+                                    headers=headers,
+                                )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["idempotent_replay"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertEqual(payload["task_id"], self.task["id"])
+        self.assertEqual(payload["status"], "pending")
+        self.assertEqual(payload["conversation_ref"], f"ai-task:{self.task['id']}")
+        self.assertEqual(payload["source_system"], "external-a")
+        self.assertEqual(payload["external_ref"], "external-ticket-123")
+        self.assertEqual(payload["idempotency_key"], "external-ticket-123:create")
+        handoff_id = payload["handoff_id"]
+
+        self.assertEqual(replay.status_code, 200, replay.get_data(as_text=True))
+        replay_payload = replay.get_json()
+        self.assertTrue(replay_payload["idempotent_replay"])
+        self.assertEqual(replay_payload["handoff_id"], handoff_id)
+
+        with self.app.app_context():
+            row = self.app_module.query_one("SELECT * FROM handoff_logs WHERE id=?", (handoff_id,))
+            api_payload, parse_error = self.app_module.parse_ai_handoff_payload(row["api_payload"])
+            handoff_count = self.app_module.query_one("SELECT COUNT(*) AS count FROM handoff_logs WHERE project_id=?", (self.project_id,))["count"]
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertFalse(parse_error)
+        self.assertEqual(api_payload["source_system"], "external-a")
+        self.assertEqual(api_payload["external_ref"], "external-ticket-123")
+        self.assertEqual(api_payload["request_id"], "request-123")
+        self.assertEqual(api_payload["idempotency_key"], "external-ticket-123:create")
+        self.assertEqual(api_payload["actor_type"], "system")
+        self.assertEqual(api_payload["actor_id"], "external-system-a")
+        self.assertEqual(api_payload["risk_level"], "medium")
+        self.assertEqual(handoff_count, 2)
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+
+    def test_external_handoff_read_endpoints_are_source_isolated(self):
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            response_a = self.client().post(
+                f"/api/external/tasks/{self.task['id']}/handoffs",
+                json={
+                    "from_agent": "external-a-agent",
+                    "to_agent": "devpilot-reviewer",
+                    "reason": "External A handoff",
+                    "next_step": "Review external A",
+                    "risk": "medium",
+                    "external_ref": "ticket-a",
+                    "actor_type": "system",
+                    "actor_id": "external-a",
+                },
+                headers=self.external_headers(source="external-a", key="key-a", request_id="req-a", idempotency_key="idem-a"),
+            )
+            response_b = self.client().post(
+                f"/api/external/tasks/{self.task['id']}/handoffs",
+                json={
+                    "from_agent": "external-b-agent",
+                    "to_agent": "devpilot-reviewer",
+                    "reason": "External B handoff",
+                    "next_step": "Review external B",
+                    "risk": "high",
+                    "external_ref": "ticket-b",
+                    "actor_type": "system",
+                    "actor_id": "external-b",
+                },
+                headers=self.external_headers(source="external-b", key="key-b", request_id="req-b", idempotency_key="idem-b"),
+            )
+            self.assertEqual(response_a.status_code, 201)
+            self.assertEqual(response_b.status_code, 201)
+            handoff_a = response_a.get_json()["handoff_id"]
+            handoff_b = response_b.get_json()["handoff_id"]
+
+            response = self.client().get("/api/external/ai-handoffs", headers=self.external_headers(source="external-a", key="key-a"))
+            self.assertEqual(response.status_code, 200)
+            items = response.get_json()["items"]
+            ids = {item["handoff_id"] for item in items}
+            self.assertIn(handoff_a, ids)
+            self.assertNotIn(handoff_b, ids)
+            self.assertTrue(all(item["source_system"] == "external-a" for item in items))
+
+            response = self.client().get(
+                "/api/external/ai-handoffs?source_system=external-b",
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+            self.assertEqual(response.status_code, 200)
+            ids = {item["handoff_id"] for item in response.get_json()["items"]}
+            self.assertIn(handoff_a, ids)
+            self.assertNotIn(handoff_b, ids)
+
+            response = self.client().get(
+                "/api/external/ai-handoffs?external_ref=ticket-a&risk=medium",
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+            self.assertEqual(response.status_code, 200)
+            ids = {item["handoff_id"] for item in response.get_json()["items"]}
+            self.assertIn(handoff_a, ids)
+            self.assertNotIn(handoff_b, ids)
+
+            response = self.client().get(
+                f"/api/external/handoffs/{handoff_a}",
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertTrue(payload["read_only"])
+            self.assertFalse(payload["execution_allowed"])
+            self.assertEqual(payload["handoff"]["source_system"], "external-a")
+            self.assertEqual(payload["handoff"]["external_ref"], "ticket-a")
+            self.assertNotIn("api_payload", payload["handoff"])
+
+            response = self.client().get(
+                f"/api/external/handoffs/{handoff_b}",
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+            self.assertEqual(response.status_code, 404)
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(allow_all_sources=True), clear=False):
+            response = self.client().get(
+                "/api/external/ai-handoffs?include_all_sources=true",
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+        self.assertEqual(response.status_code, 200)
+        ids = {item["handoff_id"] for item in response.get_json()["items"]}
+        self.assertIn(handoff_a, ids)
+        self.assertIn(handoff_b, ids)
 
 
 if __name__ == "__main__":
