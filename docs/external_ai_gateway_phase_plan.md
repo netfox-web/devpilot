@@ -30,6 +30,118 @@ External System
 
 The gateway should be a broker and governance layer, not a general-purpose remote execution surface.
 
+## 3. DevPilot as Unified AI Key / Provider / Usage Governance Center
+
+### Strategic Goal
+
+DevPilot should become the shared AI gateway for future AI-related projects and internal/external systems.
+
+All future AI-related systems should integrate through DevPilot for AI capability access, rather than receiving direct OpenAI, Gemini, Claude, or other provider credentials. DevPilot should centrally decide which `source_system` can use AI, which provider/model it can use, which capabilities it can call, and what rate, token, budget, and audit rules apply.
+
+### Standard Integration Model
+
+External systems receive:
+
+```text
+DEVPILOT_API_BASE_URL
+DEVPILOT_SOURCE_SYSTEM
+DEVPILOT_API_KEY
+```
+
+External systems do not receive:
+
+```text
+OPENAI_API_KEY
+GEMINI_API_KEY
+ANTHROPIC_API_KEY
+CLAUDE_API_KEY
+```
+
+Provider keys stay inside DevPilot-controlled runtime configuration or a future DevPilot provider key vault.
+
+### Admin Workflow
+
+DevPilot admins should be able to:
+
+- Generate and revoke external API keys.
+- Configure `source_system` identities.
+- Choose allowed providers.
+- Choose allowed models.
+- Choose allowed capabilities.
+- Set daily and monthly request/token limits.
+- Set budget limits.
+- Disable tool calling.
+- Disable worker execution.
+- Disable project/task mutation.
+- Review usage and audit logs.
+
+### Source Policy Examples
+
+`crm-system`:
+
+- Allowed provider: OpenAI.
+- Allowed model: `gpt-4.1-mini`.
+- Capabilities: `summary`, `classification`, `rewrite`.
+- Daily request limit: `1000`.
+- Daily token limit: `500000`.
+- Monthly budget: `50 USD`.
+- Tool calling: `false`.
+- Worker execution: `false`.
+- Project mutation: `false`.
+
+`crawler-system`:
+
+- Allowed provider: Gemini.
+- Allowed model: `gemini-flash`.
+- Capabilities: `extraction`, `summarization`.
+- Daily request limit: `300`.
+- Daily token limit: `200000`.
+- Monthly budget: `20 USD`.
+- Tool calling: `false`.
+- Worker execution: `false`.
+- Project mutation: `false`.
+
+`internal-agent-console`:
+
+- Allowed providers: OpenAI, Claude.
+- Allowed models: small/medium approved models only.
+- Capabilities: `summary`, `rewrite`, `planning`.
+- Requires approval for advanced actions.
+- No deploy or infrastructure actions by default.
+
+### Benefits
+
+- Provider keys never leave DevPilot.
+- Source systems can be revoked independently.
+- Provider/model can be changed centrally.
+- Usage and cost can be audited.
+- Budgets can be enforced.
+- External systems do not need code changes when provider routing changes.
+- Safer foundation for future AI projects.
+- One common integration pattern for all AI-related systems.
+
+### Safety Defaults
+
+Permanent defaults:
+
+- Fail closed if no source policy exists.
+- No raw provider key exposure.
+- No unlimited provider access.
+- No worker execution by default.
+- No tool calling by default.
+- No project/task mutation by default.
+- No deploy or infrastructure actions by default.
+- No full prompt/response storage by default unless policy allows it.
+- All AI gateway requests must be audited.
+
+### Roadmap Alignment
+
+- External API Key Manager is the first layer.
+- Provider Config Inspection is the second layer.
+- Source AI Policy Manager is the third layer.
+- External AI Gateway Generate API comes only after policy, budget, and audit behavior are ready.
+- Chat, streaming, and tool calling come later and must be policy-gated.
+
 ## 3. Why Not Share Raw Provider Keys
 
 Raw provider keys should not be distributed to external systems because they are difficult to revoke, audit, and constrain once they leave DevPilot.
