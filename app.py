@@ -10358,6 +10358,7 @@ def ai_message_thread_summaries(limit=50, project_id=None):
 
 
 AI_TASK_HANDOFF_STATUSES = {"pending", "accepted", "completed", "rejected"}
+AI_TASK_HANDOFF_STATUS_ORDER = ["pending", "accepted", "completed", "rejected"]
 AI_TASK_HANDOFF_TRANSITIONS = {
     "pending": {"accepted", "rejected"},
     "accepted": {"completed", "rejected"},
@@ -10595,6 +10596,106 @@ def ai_handoff_risk_filter_from_args(args):
     if risk_level not in (None, ""):
         return risk_level
     return args.get("risk") or ""
+
+
+def ai_handoff_filters_from_args(args):
+    return {
+        "project_id": coerce_int(args.get("project_id"), None) if args.get("project_id") else None,
+        "task_id": coerce_int(args.get("task_id"), None) if args.get("task_id") else None,
+        "status": args.get("status") or "",
+        "risk_level": ai_handoff_risk_filter_from_args(args),
+        "from_agent": args.get("from_agent") or "",
+        "to_agent": args.get("to_agent") or "",
+        "q": args.get("q") or "",
+        "limit": max(1, min(coerce_int(args.get("limit"), 100), 300)),
+    }
+
+
+def ai_handoff_review_counts(filters):
+    count_filters = dict(filters)
+    count_filters["status"] = ""
+    count_filters["limit"] = 300
+    counts = {status: 0 for status in AI_TASK_HANDOFF_STATUS_ORDER}
+    for handoff in ai_handoff_rows(**count_filters):
+        status = normalize_ai_handoff_status(handoff.get("handoff_status"), "pending")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def ai_handoff_active_filter_summary(filters):
+    labels = []
+    for key, label in (
+        ("q", "search"),
+        ("from_agent", "from"),
+        ("to_agent", "to"),
+        ("status", "status"),
+        ("risk_level", "risk"),
+    ):
+        value = filters.get(key)
+        if value not in (None, ""):
+            labels.append({"label": label, "value": str(value)})
+    return labels
+
+
+def ai_handoff_export_item(handoff, project_map=None):
+    project = (project_map or {}).get(handoff.get("project_id")) or {}
+    return {
+        "handoff_id": handoff.get("id"),
+        "conversation_ref": handoff.get("conversation_ref") or "",
+        "task_id": handoff.get("task_id"),
+        "task_title": handoff.get("task_title") or "",
+        "project_id": handoff.get("project_id"),
+        "project_name": handoff.get("project_name") or project.get("name") or "",
+        "project_status": project.get("status") or "",
+        "from_agent": handoff.get("from_agent") or "",
+        "to_agent": handoff.get("to_agent") or "",
+        "status": handoff.get("handoff_status") or handoff.get("status") or "pending",
+        "risk": handoff.get("risk_level") or "low",
+        "reason": handoff.get("reason") or "",
+        "next_step": handoff.get("next_step") or "",
+        "rejection_reason": handoff.get("rejection_reason") or "",
+        "created_at": handoff.get("created_at") or "",
+        "accepted_at": handoff.get("accepted_at") or "",
+        "completed_at": handoff.get("completed_at") or "",
+        "rejected_at": handoff.get("rejected_at") or "",
+        "api_payload_parse_error": bool(handoff.get("api_payload_parse_error")),
+        "api_payload_summary": handoff.get("api_payload_summary") or {},
+    }
+
+
+def ai_handoff_export_rows(filters):
+    handoffs = ai_handoff_rows(**filters)
+    project_ids = sorted({handoff.get("project_id") for handoff in handoffs if handoff.get("project_id")})
+    project_map = {}
+    if project_ids:
+        placeholders = ",".join("?" for _ in project_ids)
+        projects = query_all(f"SELECT id, name, status FROM projects WHERE id IN ({placeholders})", tuple(project_ids))
+        project_map = {project["id"]: row_to_dict(project) for project in projects}
+    return [ai_handoff_export_item(handoff, project_map=project_map) for handoff in handoffs]
+
+
+AI_HANDOFF_EXPORT_CSV_FIELDS = [
+    "handoff_id",
+    "conversation_ref",
+    "task_id",
+    "task_title",
+    "project_id",
+    "project_name",
+    "project_status",
+    "from_agent",
+    "to_agent",
+    "status",
+    "risk",
+    "reason",
+    "next_step",
+    "rejection_reason",
+    "created_at",
+    "accepted_at",
+    "completed_at",
+    "rejected_at",
+    "api_payload_parse_error",
+    "api_payload_summary",
+]
 
 
 def ai_handoff_payload_from_request():
@@ -12813,22 +12914,16 @@ def ai_messages_page():
 @app.route("/ai-handoffs")
 @require_login
 def ai_handoffs_page():
-    filters = {
-        "project_id": coerce_int(request.args.get("project_id"), None) if request.args.get("project_id") else None,
-        "task_id": coerce_int(request.args.get("task_id"), None) if request.args.get("task_id") else None,
-        "status": request.args.get("status") or "",
-        "risk_level": ai_handoff_risk_filter_from_args(request.args),
-        "from_agent": request.args.get("from_agent") or "",
-        "to_agent": request.args.get("to_agent") or "",
-        "q": request.args.get("q") or "",
-        "limit": max(1, min(coerce_int(request.args.get("limit"), 100), 300)),
-    }
+    filters = ai_handoff_filters_from_args(request.args)
+    handoffs = ai_handoff_rows(**filters)
     return render_template(
         "ai_handoffs.html",
         app_name=APP_NAME,
-        handoffs=ai_handoff_rows(**filters),
+        handoffs=handoffs,
         filters=filters,
-        statuses=sorted(AI_TASK_HANDOFF_STATUSES),
+        statuses=AI_TASK_HANDOFF_STATUS_ORDER,
+        status_counts=ai_handoff_review_counts(filters),
+        active_filter_summary=ai_handoff_active_filter_summary(filters),
         risk_levels=AI_TASK_HANDOFF_RISK_LEVELS,
         projects=query_all("SELECT id, name FROM projects ORDER BY updated_at DESC, id DESC LIMIT 100"),
     )
@@ -17784,21 +17879,42 @@ def api_ai_messages_thread_board():
 @app.route("/api/ai-handoffs", methods=["GET"])
 @require_api_roles("owner", "admin", "ai")
 def api_ai_handoffs():
-    items = ai_handoff_rows(
-        limit=coerce_int(request.args.get("limit"), 100),
-        project_id=coerce_int(request.args.get("project_id"), None) if request.args.get("project_id") else None,
-        task_id=coerce_int(request.args.get("task_id"), None) if request.args.get("task_id") else None,
-        status=request.args.get("status"),
-        risk_level=ai_handoff_risk_filter_from_args(request.args),
-        from_agent=request.args.get("from_agent"),
-        to_agent=request.args.get("to_agent"),
-        q=request.args.get("q"),
-    )
+    items = ai_handoff_rows(**ai_handoff_filters_from_args(request.args))
     return jsonify({
         "ok": True,
         "items": items,
         "handoffs": items,
         "count": len(items),
+        "read_only": True,
+        "execution_allowed": False,
+    })
+
+
+@app.route("/api/ai-handoffs/export", methods=["GET"])
+@require_api_roles("owner", "admin", "ai")
+def api_ai_handoffs_export():
+    filters = ai_handoff_filters_from_args(request.args)
+    items = ai_handoff_export_rows(filters)
+    export_format = str(request.args.get("format") or "json").strip().lower()
+    if export_format == "csv":
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=AI_HANDOFF_EXPORT_CSV_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        for item in items:
+            row = dict(item)
+            row["api_payload_summary"] = json.dumps(item.get("api_payload_summary") or {}, ensure_ascii=False)
+            writer.writerow(row)
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=ai-handoffs-export.csv"},
+        )
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "handoffs": items,
+        "count": len(items),
+        "format": "json",
         "read_only": True,
         "execution_allowed": False,
     })

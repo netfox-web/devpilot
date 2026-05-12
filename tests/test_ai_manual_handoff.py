@@ -1,3 +1,5 @@
+import csv
+import io
 import unittest
 from unittest.mock import patch
 
@@ -311,6 +313,57 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('name="to_agent"', body)
         self.assertIn('value="medium" selected', body)
 
+    def test_ai_handoffs_review_queue_counts_and_active_filters(self):
+        pending = self.create_handoff(
+            from_agent="queue-planner",
+            to_agent="queue-reviewer",
+            reason="Review queue counts marker",
+            next_step="Pending queue item",
+            risk_level="medium",
+        )
+        accepted = self.create_handoff(
+            from_agent="queue-planner",
+            to_agent="queue-reviewer",
+            reason="Review queue counts marker",
+            next_step="Accepted queue item",
+            risk_level="medium",
+        )
+        completed = self.create_handoff(
+            from_agent="queue-planner",
+            to_agent="queue-reviewer",
+            reason="Review queue counts marker",
+            next_step="Completed queue item",
+            risk_level="medium",
+        )
+        rejected = self.create_handoff(
+            from_agent="queue-planner",
+            to_agent="queue-reviewer",
+            reason="Review queue counts marker",
+            next_step="Rejected queue item",
+            risk_level="medium",
+        )
+        self.client().post(f"/api/handoffs/{accepted['id']}/accept", json={})
+        self.client().post(f"/api/handoffs/{completed['id']}/accept", json={})
+        self.client().post(f"/api/handoffs/{completed['id']}/complete", json={})
+        self.client().post(f"/api/handoffs/{rejected['id']}/reject", json={"reason": "Queue rejected"})
+
+        response = self.client().get(
+            "/ai-handoffs?q=Review+queue+counts&from_agent=queue-planner&to_agent=queue-reviewer&risk=medium"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("pending: 1", body)
+        self.assertIn("accepted: 1", body)
+        self.assertIn("completed: 1", body)
+        self.assertIn("rejected: 1", body)
+        self.assertIn("Active filters", body)
+        self.assertIn("search: Review queue counts", body)
+        self.assertIn("from: queue-planner", body)
+        self.assertIn("to: queue-reviewer", body)
+        self.assertIn("risk: medium", body)
+        self.assertIn("Clear filters", body)
+        self.assertIn(f"Details for handoff #{pending['id']}", body)
+
     def test_ai_handoff_detail_endpoint_and_board_detail_are_read_only(self):
         before = self.state_snapshot()
         created = self.create_handoff(
@@ -414,6 +467,102 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(payload["handoff"]["task_id"], self.task["id"])
         self.assertEqual(payload["handoff"]["handoff_status"], "pending")
         self.assertEqual(payload["handoff"]["reason"], "Missing payload fallback reason")
+
+    def test_ai_handoffs_export_is_filtered_safe_and_read_only(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        match = self.create_handoff(
+            from_agent="export-planner",
+            to_agent="export-reviewer",
+            reason="Export searchable handoff",
+            next_step="Export next step",
+            risk_level="medium",
+        )
+        other = self.create_handoff(
+            from_agent="other-export-planner",
+            to_agent="other-export-reviewer",
+            reason="Other export handoff",
+            next_step="Other export next step",
+            risk_level="low",
+        )
+        with self.app.app_context():
+            invalid_id = self.app_module.execute(
+                """INSERT INTO handoff_logs
+                   (project_id, source, agent_name, work_mode, conversation_ref, risk_level, summary, next_steps, warnings, api_payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.project_id,
+                    "export-invalid",
+                    "export-invalid",
+                    "ai-task-handoff",
+                    f"ai-task:{self.task['id']}",
+                    "low",
+                    "Export invalid payload fallback",
+                    "Export invalid payload next step",
+                    "",
+                    "{not-json",
+                    self.app_module.now_str(),
+                ),
+            ).lastrowid
+
+        response = self.client().get("/api/ai-handoffs/export?q=Export+searchable&risk=medium")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["execution_allowed"])
+        ids = {item["handoff_id"] for item in payload["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+        item = next(item for item in payload["items"] if item["handoff_id"] == match["id"])
+        self.assertEqual(item["task_id"], self.task["id"])
+        self.assertEqual(item["task_title"], self.task["title"])
+        self.assertEqual(item["project_id"], self.project_id)
+        self.assertEqual(item["project_name"], f"AI Manual Handoff Test Project {self.marker}")
+        self.assertEqual(item["project_status"], "active")
+        self.assertEqual(item["from_agent"], "export-planner")
+        self.assertEqual(item["to_agent"], "export-reviewer")
+        self.assertEqual(item["status"], "pending")
+        self.assertEqual(item["risk"], "medium")
+        self.assertEqual(item["reason"], "Export searchable handoff")
+        self.assertEqual(item["next_step"], "Export next step")
+        self.assertEqual(item["conversation_ref"], f"ai-task:{self.task['id']}")
+        self.assertTrue(item["created_at"])
+        self.assertIn("api_payload_summary", item)
+        self.assertNotIn("api_payload", item)
+        self.assertEqual(item["api_payload_summary"]["reason"], "Export searchable handoff")
+
+        response = self.client().get("/api/ai-handoffs/export?q=Export+searchable&risk_level=medium")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["handoff_id"] for item in response.get_json()["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/api/ai-handoffs/export?q=Export+searchable&risk=low&risk_level=medium")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["handoff_id"] for item in response.get_json()["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/api/ai-handoffs/export?q=Export+invalid+payload")
+        self.assertEqual(response.status_code, 200)
+        item = next(item for item in response.get_json()["items"] if item["handoff_id"] == invalid_id)
+        self.assertTrue(item["api_payload_parse_error"])
+        self.assertEqual(item["api_payload_summary"], {})
+
+        response = self.client().get("/api/ai-handoffs/export?q=Export+searchable&risk=medium&format=csv")
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.DictReader(io.StringIO(response.get_data(as_text=True))))
+        row = next(row for row in rows if row["handoff_id"] == str(match["id"]))
+        self.assertEqual(row["risk"], "medium")
+        self.assertIn("api_payload_summary", row)
+        self.assertNotIn("api_payload", row)
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
 
 
 if __name__ == "__main__":
