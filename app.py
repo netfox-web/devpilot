@@ -47,6 +47,7 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "project_manager.db"))
 EXTERNAL_API_KEY_STORE_PATH = DATA_DIR / "external_api_keys.json"
 EXTERNAL_AI_POLICY_STORE_PATH = DATA_DIR / "external_ai_policies.json"
+EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH = DATA_DIR / "external_ai_permission_profiles.json"
 API_TOKEN = os.getenv("API_TOKEN", "change-me-token")
 _DEV_PILOT_API_URL_RAW = os.getenv("DEV_PILOT_API_URL", "").strip().rstrip("/")
 # 一鍵複製回寫指令 / README 範例皆以 .env 的 DEV_PILOT_API_URL 為準；未設定時預設本機開發埠
@@ -1529,6 +1530,232 @@ def external_api_key_record_public(record):
     }
 
 
+def external_api_key_source_options():
+    records = [external_api_key_record_public(record) for record in load_external_api_key_records()]
+    records.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
+    options = []
+    seen = set()
+    for record in records:
+        source_system = record.get("source_system") or ""
+        if not source_system or record.get("revoked_at") or source_system in seen:
+            continue
+        seen.add(source_system)
+        label_parts = [source_system]
+        if record.get("label"):
+            label_parts.append(record["label"])
+        if record.get("key_prefix"):
+            label_parts.append(record["key_prefix"])
+        options.append({
+            "source_system": source_system,
+            "label": " - ".join(label_parts),
+            "key_prefix": record.get("key_prefix") or "",
+            "key_label": record.get("label") or "",
+            "status": "active",
+        })
+    return options
+
+
+def slugify_filename(value, default="source"):
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-").lower()
+    return slug or default
+
+
+def external_api_key_integration_doc(record):
+    public_record = external_api_key_record_public(record)
+    source_system = public_record.get("source_system") or ""
+    label = public_record.get("label") or ""
+    key_prefix = public_record.get("key_prefix") or ""
+    status = public_record.get("status") or "unknown"
+    warning = "\n> Warning: this external API key is revoked. Generate a new key before onboarding.\n" if status == "revoked" else ""
+    return f"""# DevPilot External API Integration Guide
+
+{warning}
+## Source
+
+- Source system: `{source_system}`
+- Label: `{label or "-"}`
+- Key prefix: `{key_prefix}`
+- Status: `{status}`
+
+## Setup Variables
+
+```bash
+DEVPILOT_API_BASE_URL=\"https://YOUR_DEVPILOT_DOMAIN\"
+DEVPILOT_SOURCE_SYSTEM=\"{source_system}\"
+DEVPILOT_API_KEY=\"<paste-the-key-shown-once>\"
+```
+
+Do not log `DEVPILOT_API_KEY`. DevPilot does not expose raw provider keys to external systems.
+
+## DevPilot Policy
+
+DevPilot admins control provider, model, capability, token, request, and budget permissions for this `source_system` through External AI Policies. The external system should call DevPilot only; it should never receive raw OpenAI, Gemini, Claude, Replicate, fal, Runway, Kling, or other provider keys.
+
+## Required Headers
+
+```http
+X-DevPilot-Source-System: {source_system}
+X-DevPilot-Api-Key: <paste-the-key-shown-once>
+X-DevPilot-Request-Id: <stable-request-id>
+X-DevPilot-Idempotency-Key: <stable-retry-key>
+```
+
+## External AI Handoff API
+
+### Create Handoff
+
+```http
+POST /api/external/tasks/<task_id>/handoffs
+Content-Type: application/json
+```
+
+```json
+{{
+  "from_agent": "{source_system}",
+  "to_agent": "devpilot-reviewer",
+  "reason": "External system requests AI handoff review",
+  "next_step": "Review external task context and decide next action",
+  "risk": "medium",
+  "external_ref": "external-ticket-123",
+  "actor_type": "system",
+  "actor_id": "{source_system}"
+}}
+```
+
+### List Handoffs
+
+```http
+GET /api/external/ai-handoffs
+```
+
+### Read Handoff
+
+```http
+GET /api/external/handoffs/<handoff_id>
+```
+
+## Idempotency
+
+Use a stable `X-DevPilot-Idempotency-Key` for retries of the same operation. DevPilot uses this to avoid duplicate handoff creation where supported.
+
+## JavaScript Fetch Example
+
+```js
+import {{ randomUUID }} from "node:crypto";
+
+const baseUrl = (process.env.DEVPILOT_API_BASE_URL || "").replace(/\\/$/, "");
+const sourceSystem = process.env.DEVPILOT_SOURCE_SYSTEM;
+const apiKey = process.env.DEVPILOT_API_KEY;
+
+if (!baseUrl || !sourceSystem || !apiKey) {{
+  throw new Error("Missing DevPilot integration environment variables");
+}}
+
+export async function createDevPilotHandoff(taskId, externalRef) {{
+  if (!Number.isInteger(taskId) || taskId <= 0) {{
+    throw new Error("taskId must be a positive integer");
+  }}
+  if (!externalRef || typeof externalRef !== "string") {{
+    throw new Error("externalRef is required");
+  }}
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {{
+    const response = await fetch(`${{baseUrl}}/api/external/tasks/${{taskId}}/handoffs`, {{
+      method: "POST",
+      signal: controller.signal,
+      headers: {{
+        "Content-Type": "application/json",
+        "X-DevPilot-Source-System": sourceSystem,
+        "X-DevPilot-Api-Key": apiKey,
+        "X-DevPilot-Request-Id": randomUUID(),
+        "X-DevPilot-Idempotency-Key": `${{externalRef}}:handoff:v1`
+      }},
+      body: JSON.stringify({{
+        from_agent: sourceSystem,
+        to_agent: "devpilot-reviewer",
+        reason: "External system requests AI handoff review",
+        next_step: "Review external task context and decide next action",
+        risk: "medium",
+        external_ref: externalRef,
+        actor_type: "system",
+        actor_id: sourceSystem
+      }})
+    }});
+
+    const payload = await response.json().catch(() => ({{ ok: false, error: "invalid_json_response" }}));
+    if (!response.ok || !payload.ok) {{
+      throw new Error(`DevPilot handoff failed: ${{payload.error || response.status}}`);
+    }}
+    return payload;
+  }} finally {{
+    clearTimeout(timeout);
+  }}
+}}
+```
+
+Never print the API key in application logs.
+
+## Python Requests Example
+
+```python
+import os
+import uuid
+import requests
+
+base_url = os.environ["DEVPILOT_API_BASE_URL"].rstrip("/")
+source_system = os.environ["DEVPILOT_SOURCE_SYSTEM"]
+api_key = os.environ["DEVPILOT_API_KEY"]
+
+def create_devpilot_handoff(task_id, external_ref):
+    if not isinstance(task_id, int) or task_id <= 0:
+        raise ValueError("task_id must be a positive integer")
+    if not external_ref:
+        raise ValueError("external_ref is required")
+
+    response = requests.post(
+        f"{{base_url}}/api/external/tasks/{{task_id}}/handoffs",
+        timeout=15,
+        headers={{
+            "Content-Type": "application/json",
+            "X-DevPilot-Source-System": source_system,
+            "X-DevPilot-Api-Key": api_key,
+            "X-DevPilot-Request-Id": str(uuid.uuid4()),
+            "X-DevPilot-Idempotency-Key": f"{{external_ref}}:handoff:v1",
+        }},
+        json={{
+            "from_agent": source_system,
+            "to_agent": "devpilot-reviewer",
+            "reason": "External system requests AI handoff review",
+            "next_step": "Review external task context and decide next action",
+            "risk": "medium",
+            "external_ref": external_ref,
+            "actor_type": "system",
+            "actor_id": source_system,
+        }},
+    )
+    response.raise_for_status()
+    return response.json()
+```
+
+Do not log `api_key`.
+
+## Current Safety Boundaries
+
+- Can create/read handoffs.
+- Cannot accept, complete, or reject handoffs.
+- Cannot call providers yet unless External AI Gateway is later enabled.
+- Cannot run workers.
+- Cannot mutate task/project state.
+- Cannot deploy or change infrastructure.
+
+## Future External AI Gateway
+
+Provider/model/capability permissions are controlled by DevPilot Source AI Policy. External systems never receive raw OpenAI, Gemini, Claude, Replicate, fal, Runway, Kling, or other provider keys.
+"""
+
+
 def normalize_external_api_key_record(record):
     if not isinstance(record, dict):
         return None
@@ -1710,13 +1937,15 @@ EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS = 1000
 EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT = 100
 EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT = 50000
 EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD = 10.0
-EXTERNAL_AI_PROVIDER_OPTIONS = ["openai", "gemini", "claude", "replicate", "fal"]
+EXTERNAL_AI_PROVIDER_OPTIONS = ["openai", "gemini", "claude", "replicate", "fal", "runway", "kling"]
 EXTERNAL_AI_MODEL_OPTIONS = {
     "openai": ["gpt-4.1-mini", "gpt-4o-mini", "o4-mini", "gpt-image-1"],
     "gemini": ["gemini-1.5-flash", "gemini-1.5-pro"],
     "claude": ["claude-3-5-haiku", "claude-3-5-sonnet"],
     "replicate": ["flux-schnell", "flux-pro"],
     "fal": ["fal-flux-schnell", "fal-flux-pro"],
+    "runway": [],
+    "kling": [],
 }
 EXTERNAL_AI_CAPABILITY_GROUPS = {
     "Text": ["summary", "classification", "rewrite", "extraction", "planning", "chat", "generate"],
@@ -1725,11 +1954,86 @@ EXTERNAL_AI_CAPABILITY_GROUPS = {
     "Business creative": ["ad_creative", "product_image", "avatar_generation"],
 }
 EXTERNAL_AI_CAPABILITY_OPTIONS = [capability for capabilities in EXTERNAL_AI_CAPABILITY_GROUPS.values() for capability in capabilities]
+EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
+    {
+        "id": "basic-text",
+        "name": "Basic Text",
+        "allowed_providers": ["openai"],
+        "allowed_models": ["gpt-4.1-mini"],
+        "allowed_capabilities": ["summary", "rewrite", "classification"],
+        "max_tokens_per_request": 2000,
+        "daily_request_limit": 1000,
+        "daily_token_limit": 500000,
+        "monthly_budget_usd": 50.0,
+        "allow_streaming": False,
+        "allow_tool_calling": False,
+        "store_prompt": False,
+        "store_response": False,
+        "enabled_by_default": True,
+        "note": "Text summary, rewrite, and classification only.",
+    },
+    {
+        "id": "image-basic",
+        "name": "Image Basic",
+        "allowed_providers": ["openai", "replicate", "fal"],
+        "allowed_models": ["gpt-image-1", "flux-schnell", "fal-flux-schnell"],
+        "allowed_capabilities": ["image_generation", "prompt_rewrite"],
+        "max_tokens_per_request": 2000,
+        "daily_request_limit": 300,
+        "daily_token_limit": 200000,
+        "monthly_budget_usd": 50.0,
+        "allow_streaming": False,
+        "allow_tool_calling": False,
+        "store_prompt": False,
+        "store_response": False,
+        "enabled_by_default": True,
+        "note": "Entry-level image generation and prompt rewrite.",
+    },
+    {
+        "id": "image-pro",
+        "name": "Image Pro",
+        "allowed_providers": ["openai", "replicate", "fal"],
+        "allowed_models": ["gpt-image-1", "flux-pro", "fal-flux-pro"],
+        "allowed_capabilities": ["image_generation", "image_editing", "image_variation", "prompt_rewrite"],
+        "max_tokens_per_request": 2000,
+        "daily_request_limit": 1000,
+        "daily_token_limit": 1000000,
+        "monthly_budget_usd": 200.0,
+        "allow_streaming": False,
+        "allow_tool_calling": False,
+        "store_prompt": False,
+        "store_response": False,
+        "enabled_by_default": True,
+        "note": "Higher-volume image generation, editing, and variation.",
+    },
+    {
+        "id": "video-basic",
+        "name": "Video Basic",
+        "allowed_providers": ["runway", "kling", "fal"],
+        "allowed_models": [],
+        "allowed_capabilities": ["video_generation", "image_to_video"],
+        "max_tokens_per_request": 2000,
+        "daily_request_limit": 50,
+        "daily_token_limit": 100000,
+        "monthly_budget_usd": 100.0,
+        "allow_streaming": False,
+        "allow_tool_calling": False,
+        "store_prompt": False,
+        "store_response": False,
+        "enabled_by_default": False,
+        "note": "Video governance placeholder. Provider calls remain disabled until a later gateway phase.",
+    },
+]
 
 
 def external_ai_policy_store_path():
     raw_path = os.getenv("DEVPILOT_EXTERNAL_AI_POLICY_STORE_PATH", "").strip()
     return Path(raw_path) if raw_path else EXTERNAL_AI_POLICY_STORE_PATH
+
+
+def external_ai_permission_profile_store_path():
+    raw_path = os.getenv("DEVPILOT_EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH", "").strip()
+    return Path(raw_path) if raw_path else EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH
 
 
 def external_ai_policy_preview(value, limit=200):
@@ -1779,6 +2083,79 @@ def validate_external_ai_policy_allowlists(providers, models, capabilities):
             raise ValueError(f"model/provider mismatch: {model} requires {required_provider}")
 
 
+def normalize_external_ai_permission_profile(record):
+    if not isinstance(record, dict):
+        return None
+    profile_id = external_ai_policy_preview(record.get("id"), 80)
+    name = external_ai_policy_preview(record.get("name"), 160)
+    if not profile_id or not name:
+        return None
+    providers = external_ai_policy_list(record.get("allowed_providers"))
+    models = external_ai_policy_list(record.get("allowed_models"))
+    capabilities = external_ai_policy_list(record.get("allowed_capabilities"))
+    try:
+        validate_external_ai_policy_allowlists(providers, models, capabilities)
+    except ValueError:
+        return None
+    return {
+        "id": profile_id,
+        "name": name,
+        "allowed_providers": providers,
+        "allowed_models": models,
+        "allowed_capabilities": capabilities,
+        "max_tokens_per_request": external_ai_policy_int(record.get("max_tokens_per_request"), EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS, 1, 100000),
+        "daily_request_limit": external_ai_policy_int(record.get("daily_request_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT, 0, 1000000),
+        "daily_token_limit": external_ai_policy_int(record.get("daily_token_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT, 0, 100000000),
+        "monthly_budget_usd": external_ai_policy_float(record.get("monthly_budget_usd"), EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD, 0.0, 1000000.0),
+        "allow_streaming": boolish(record.get("allow_streaming")),
+        "allow_tool_calling": boolish(record.get("allow_tool_calling")),
+        "store_prompt": boolish(record.get("store_prompt")),
+        "store_response": boolish(record.get("store_response")),
+        "enabled_by_default": boolish(record.get("enabled_by_default")),
+        "note": external_ai_policy_preview(record.get("note"), 240),
+    }
+
+
+def default_external_ai_permission_profiles():
+    return [
+        profile for profile in (
+            normalize_external_ai_permission_profile(item)
+            for item in deepcopy(EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS)
+        )
+        if profile
+    ]
+
+
+def load_external_ai_permission_profiles():
+    path = external_ai_permission_profile_store_path()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return default_external_ai_permission_profiles()
+    except (OSError, ValueError, TypeError):
+        return default_external_ai_permission_profiles()
+    items = raw.get("profiles") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return default_external_ai_permission_profiles()
+    profiles = []
+    seen = set()
+    for item in items:
+        profile = normalize_external_ai_permission_profile(item)
+        if profile and profile["id"] not in seen:
+            profiles.append(profile)
+            seen.add(profile["id"])
+    return profiles or default_external_ai_permission_profiles()
+
+
+def external_ai_permission_profile_by_id(profile_id):
+    profile_id = external_ai_policy_preview(profile_id, 80)
+    for profile in load_external_ai_permission_profiles():
+        if profile.get("id") == profile_id:
+            return profile
+    return None
+
+
 def external_ai_policy_int(value, default, minimum=0, maximum=10000000):
     number = coerce_int(value, default)
     return max(minimum, min(number, maximum))
@@ -1802,6 +2179,7 @@ def normalize_external_ai_policy_record(record):
     return {
         "id": policy_id,
         "source_system": source_system,
+        "profile_id": external_ai_policy_preview(record.get("profile_id"), 80),
         "label": external_ai_policy_preview(record.get("label"), 160),
         "enabled": boolish(record.get("enabled")),
         "allowed_providers": external_ai_policy_list(record.get("allowed_providers")),
@@ -1857,6 +2235,7 @@ def external_ai_policy_payload(source):
     source = source or {}
     return {
         "source_system": source.get("source_system"),
+        "profile_id": source.get("profile_id"),
         "label": source.get("label"),
         "enabled": source.get("enabled"),
         "allowed_providers": source.get("allowed_providers"),
@@ -1873,7 +2252,7 @@ def external_ai_policy_payload(source):
     }
 
 
-def create_external_ai_policy(payload):
+def external_ai_policy_record_from_payload(payload, existing=None):
     payload = external_ai_policy_payload(payload)
     now = now_str()
     source_system = validate_external_source_system(payload.get("source_system"))
@@ -1881,11 +2260,14 @@ def create_external_ai_policy(payload):
     allowed_models = external_ai_policy_list(payload.get("allowed_models"))
     allowed_capabilities = external_ai_policy_list(payload.get("allowed_capabilities"))
     validate_external_ai_policy_allowlists(allowed_providers, allowed_models, allowed_capabilities)
+    enabled = boolish(payload.get("enabled"))
+    existing = existing if isinstance(existing, dict) else {}
     record = {
-        "id": f"aipolicy_{secrets.token_hex(12)}",
+        "id": existing.get("id") or f"aipolicy_{secrets.token_hex(12)}",
         "source_system": source_system,
+        "profile_id": external_ai_policy_preview(payload.get("profile_id"), 80),
         "label": external_ai_policy_preview(payload.get("label"), 160),
-        "enabled": boolish(payload.get("enabled")),
+        "enabled": enabled,
         "allowed_providers": allowed_providers,
         "allowed_models": allowed_models,
         "allowed_capabilities": allowed_capabilities,
@@ -1897,14 +2279,91 @@ def create_external_ai_policy(payload):
         "allow_tool_calling": boolish(payload.get("allow_tool_calling")),
         "store_prompt": boolish(payload.get("store_prompt")),
         "store_response": boolish(payload.get("store_response")),
-        "created_at": now,
+        "created_at": existing.get("created_at") or now,
         "updated_at": now,
-        "disabled_at": "" if boolish(payload.get("enabled")) else now,
+        "disabled_at": "" if enabled else (existing.get("disabled_at") or now),
     }
+    return record
+
+
+def create_external_ai_policy(payload):
+    record = external_ai_policy_record_from_payload(payload)
     records = load_external_ai_policy_records()
     records.append(record)
     save_external_ai_policy_records(records)
     return record
+
+
+def upsert_external_ai_policy(payload):
+    payload = external_ai_policy_payload(payload)
+    source_system = validate_external_source_system(payload.get("source_system"))
+    records = load_external_ai_policy_records()
+    for index, existing in enumerate(records):
+        if existing.get("source_system") == source_system:
+            record = external_ai_policy_record_from_payload(payload, existing=existing)
+            records[index] = record
+            save_external_ai_policy_records(records)
+            return record, False
+    record = external_ai_policy_record_from_payload(payload)
+    records.append(record)
+    save_external_ai_policy_records(records)
+    return record, True
+
+
+def external_ai_policy_payload_from_profile(source_system, profile, enabled_override=None):
+    enabled = bool(profile.get("enabled_by_default")) if enabled_override is None else bool(enabled_override)
+    return {
+        "source_system": source_system,
+        "profile_id": profile.get("id"),
+        "label": profile.get("name"),
+        "enabled": enabled,
+        "allowed_providers": list(profile.get("allowed_providers") or []),
+        "allowed_models": list(profile.get("allowed_models") or []),
+        "allowed_capabilities": list(profile.get("allowed_capabilities") or []),
+        "max_tokens_per_request": profile.get("max_tokens_per_request"),
+        "daily_request_limit": profile.get("daily_request_limit"),
+        "daily_token_limit": profile.get("daily_token_limit"),
+        "monthly_budget_usd": profile.get("monthly_budget_usd"),
+        "allow_streaming": profile.get("allow_streaming"),
+        "allow_tool_calling": profile.get("allow_tool_calling"),
+        "store_prompt": profile.get("store_prompt"),
+        "store_response": profile.get("store_response"),
+    }
+
+
+def apply_external_ai_permission_profile(profile_id, source_systems, enabled_override=None):
+    profile = external_ai_permission_profile_by_id(profile_id)
+    if not profile:
+        raise ValueError("unknown permission profile")
+    result = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "policies": []}
+    seen = set()
+    source_items = external_ai_policy_list(source_systems) if isinstance(source_systems, str) else (source_systems or [])
+    for raw_source in source_items:
+        try:
+            source_system = validate_external_source_system(raw_source)
+        except ValueError as exc:
+            result["skipped"] += 1
+            result["errors"].append({"source_system": str(raw_source or ""), "error": str(exc)})
+            continue
+        if source_system in seen:
+            result["skipped"] += 1
+            continue
+        seen.add(source_system)
+        try:
+            payload = external_ai_policy_payload_from_profile(source_system, profile, enabled_override=enabled_override)
+            record, created = upsert_external_ai_policy(payload)
+        except ValueError as exc:
+            result["skipped"] += 1
+            result["errors"].append({"source_system": source_system, "error": str(exc)})
+            continue
+        result["policies"].append(record)
+        if created:
+            result["created"] += 1
+        else:
+            result["updated"] += 1
+    if not seen and not result["errors"]:
+        raise ValueError("at least one source_system is required")
+    return result
 
 
 def set_external_ai_policy_enabled(policy_id, enabled):
@@ -14017,6 +14476,18 @@ def admin_external_api_key_revoke(key_id):
     return redirect(url_for("admin_external_api_keys_page"))
 
 
+@app.route("/admin/external-api-keys/<key_id>/integration-doc")
+@require_roles("owner", "admin")
+def admin_external_api_key_integration_doc(key_id):
+    record = next((item for item in load_external_api_key_records() if item.get("id") == key_id), None)
+    if not record:
+        return "External API key not found", 404
+    source_slug = slugify_filename(record.get("source_system"), "source")
+    filename = f"devpilot-integration-{source_slug}.md"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(external_api_key_integration_doc(record), mimetype="text/markdown", headers=headers)
+
+
 @app.route("/admin/ai-providers")
 @require_roles("owner", "admin")
 def admin_ai_providers_page():
@@ -14034,11 +14505,14 @@ def render_external_ai_policies_page():
         "external_ai_policies.html",
         app_name=APP_NAME,
         policies=records,
+        source_options=external_api_key_source_options(),
+        permission_profiles=load_external_ai_permission_profiles(),
         provider_choices=EXTERNAL_AI_PROVIDER_OPTIONS,
         model_choices=EXTERNAL_AI_MODEL_OPTIONS,
         capability_choices=EXTERNAL_AI_CAPABILITY_OPTIONS,
         capability_groups=EXTERNAL_AI_CAPABILITY_GROUPS,
         key_store_path=str(external_ai_policy_store_path()),
+        profile_store_path=str(external_ai_permission_profile_store_path()),
         default_max_tokens=EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS,
         default_daily_requests=EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT,
         default_daily_tokens=EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT,
@@ -14050,7 +14524,33 @@ def render_external_ai_policies_page():
 @require_roles("owner", "admin")
 def admin_external_ai_policies_page():
     if request.method == "POST":
+        if request.form.get("action_type") == "apply_profile":
+            selected_sources = request.form.getlist("source_systems")
+            manual_source = (request.form.get("manual_source_system") or "").strip()
+            if manual_source:
+                selected_sources.append(manual_source)
+            enabled_mode = (request.form.get("profile_enabled_mode") or "profile").strip().lower()
+            enabled_override = True if enabled_mode == "enabled" else False if enabled_mode == "disabled" else None
+            try:
+                result = apply_external_ai_permission_profile(
+                    request.form.get("profile_id"),
+                    selected_sources,
+                    enabled_override=enabled_override,
+                )
+                flash(
+                    "Permission profile applied: "
+                    f"{result['created']} created, {result['updated']} updated, {result['skipped']} skipped."
+                )
+                if result["errors"]:
+                    flash("; ".join(f"{item['source_system']}: {item['error']}" for item in result["errors"]))
+                return redirect(url_for("admin_external_ai_policies_page"))
+            except ValueError as exc:
+                flash(str(exc))
+                return render_external_ai_policies_page()
         payload = dict(request.form)
+        selected_source = (request.form.get("source_system_select") or "").strip()
+        manual_source = (request.form.get("source_system") or "").strip()
+        payload["source_system"] = selected_source or manual_source
         payload["allowed_providers"] = request.form.getlist("allowed_providers")
         payload["allowed_models"] = request.form.getlist("allowed_models")
         payload["allowed_capabilities"] = request.form.getlist("allowed_capabilities")
@@ -18661,10 +19161,35 @@ def api_admin_external_ai_policies():
     return jsonify({
         "ok": True,
         "policies": records,
+        "source_options": external_api_key_source_options(),
+        "permission_profiles": load_external_ai_permission_profiles(),
         "count": len(records),
         "read_only": True,
         "execution_allowed": False,
     })
+
+
+@app.route("/api/admin/external-ai-policies/apply-profile", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_policy_apply_profile():
+    payload = request.get_json(silent=True) or {}
+    enabled_mode = str(payload.get("enabled_mode") or "profile").strip().lower()
+    enabled_override = True if enabled_mode == "enabled" else False if enabled_mode == "disabled" else None
+    try:
+        result = apply_external_ai_permission_profile(
+            payload.get("profile_id"),
+            payload.get("source_systems") or [],
+            enabled_override=enabled_override,
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    status_code = 200 if result["updated"] and not result["created"] else 201
+    return jsonify({
+        "ok": not bool(result["errors"]),
+        "result": result,
+        "execution_allowed": False,
+        "provider_calls_executed": False,
+    }), status_code
 
 
 @app.route("/api/admin/external-ai-policies/<policy_id>/disable", methods=["POST"])

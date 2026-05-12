@@ -24,18 +24,22 @@ class AiManualHandoffTest(unittest.TestCase):
         self.key_store_dir = tempfile.TemporaryDirectory()
         self.key_store_path = Path(self.key_store_dir.name) / "external_api_keys.json"
         self.policy_store_path = Path(self.key_store_dir.name) / "external_ai_policies.json"
+        self.profile_store_path = Path(self.key_store_dir.name) / "external_ai_permission_profiles.json"
         self.key_store_patch = patch.object(self.app_module, "EXTERNAL_API_KEY_STORE_PATH", self.key_store_path)
         self.policy_store_patch = patch.object(self.app_module, "EXTERNAL_AI_POLICY_STORE_PATH", self.policy_store_path)
+        self.profile_store_patch = patch.object(self.app_module, "EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH", self.profile_store_path)
         self.key_store_env_patch = patch.dict(
             self.app_module.os.environ,
             {
                 "DEVPILOT_EXTERNAL_API_KEY_STORE_PATH": str(self.key_store_path),
                 "DEVPILOT_EXTERNAL_AI_POLICY_STORE_PATH": str(self.policy_store_path),
+                "DEVPILOT_EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH": str(self.profile_store_path),
             },
             clear=False,
         )
         self.key_store_patch.start()
         self.policy_store_patch.start()
+        self.profile_store_patch.start()
         self.key_store_env_patch.start()
         with self.app.app_context():
             now = self.app_module.now_str()
@@ -78,6 +82,7 @@ class AiManualHandoffTest(unittest.TestCase):
             self.app_module.execute("DELETE FROM project_phases WHERE project_id=?", (self.project_id,))
             self.app_module.execute("DELETE FROM projects WHERE id=?", (self.project_id,))
         self.key_store_env_patch.stop()
+        self.profile_store_patch.stop()
         self.policy_store_patch.stop()
         self.key_store_patch.stop()
         self.key_store_dir.cleanup()
@@ -946,6 +951,271 @@ class AiManualHandoffTest(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 403)
 
+    def test_external_ai_policy_source_dropdown_uses_managed_keys_safely(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        active_response = self.client().post(
+            "/api/admin/external-api-keys",
+            json={"source_system": "dropdown-source", "label": "Dropdown source label"},
+        )
+        self.assertEqual(active_response.status_code, 201, active_response.get_data(as_text=True))
+        active_payload = active_response.get_json()
+        active_raw_key = active_payload["api_key"]
+        active_record = active_payload["record"]
+
+        duplicate_one = self.client().post(
+            "/api/admin/external-api-keys",
+            json={"source_system": "duplicate-source", "label": "Duplicate source first"},
+        ).get_json()
+        duplicate_two = self.client().post(
+            "/api/admin/external-api-keys",
+            json={"source_system": "duplicate-source", "label": "Duplicate source second"},
+        ).get_json()
+
+        revoked_response = self.client().post(
+            "/api/admin/external-api-keys",
+            json={"source_system": "revoked-source", "label": "Revoked source label"},
+        )
+        revoked_payload = revoked_response.get_json()
+        revoked_raw_key = revoked_payload["api_key"]
+        revoke_response = self.client().post(f"/api/admin/external-api-keys/{revoked_payload['record']['id']}/revoke", json={})
+        self.assertEqual(revoke_response.status_code, 200)
+
+        with patch.object(self.app_module, "call_task_provider") as provider_call:
+            with patch.object(self.app_module, "run_ai_task") as run_task:
+                with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                    page = self.client().get("/admin/external-ai-policies")
+                    dropdown_create = self.client().post(
+                        "/admin/external-ai-policies",
+                        data={
+                            "source_system_select": "dropdown-source",
+                            "source_system": "",
+                            "label": "Dropdown policy",
+                            "allowed_providers": "openai",
+                            "allowed_models": "gpt-4.1-mini",
+                            "allowed_capabilities": "summary",
+                        },
+                    )
+                    manual_create = self.client().post(
+                        "/admin/external-ai-policies",
+                        data={
+                            "source_system_select": "",
+                            "source_system": "manual-source",
+                            "label": "Manual policy",
+                            "allowed_providers": "gemini",
+                            "allowed_models": "gemini-1.5-flash",
+                            "allowed_capabilities": "extraction",
+                        },
+                    )
+
+        self.assertEqual(page.status_code, 200)
+        page_body = page.get_data(as_text=True)
+        self.assertIn("sourcePickerSearch", page_body)
+        self.assertIn('name="source_systems"', page_body)
+        self.assertIn("Apply Permission Profile", page_body)
+        self.assertIn("Basic Text", page_body)
+        self.assertIn("Image Basic", page_body)
+        self.assertIn("Image Pro", page_body)
+        self.assertIn("Video Basic", page_body)
+        self.assertIn("Select a managed source system", page_body)
+        self.assertIn("dropdown-source", page_body)
+        self.assertIn("Dropdown source label", page_body)
+        self.assertIn(active_record["key_prefix"], page_body)
+        self.assertNotIn(active_raw_key, page_body)
+        self.assertNotIn("key_hash", page_body)
+        self.assertNotIn("revoked-source", page_body)
+        self.assertNotIn(revoked_raw_key, page_body)
+        self.assertEqual(page_body.count('name="source_systems" value="duplicate-source"'), 1)
+        self.assertNotIn(duplicate_one["api_key"], page_body)
+        self.assertNotIn(duplicate_two["api_key"], page_body)
+
+        self.assertEqual(dropdown_create.status_code, 302, dropdown_create.get_data(as_text=True))
+        self.assertEqual(manual_create.status_code, 302, manual_create.get_data(as_text=True))
+        response = self.client().get("/api/admin/external-ai-policies")
+        self.assertEqual(response.status_code, 200)
+        sources = {item["source_system"] for item in response.get_json()["policies"]}
+        self.assertIn("dropdown-source", sources)
+        self.assertIn("manual-source", sources)
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_permission_profiles_apply_batch_and_update_existing(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        response = self.client().get("/api/admin/external-ai-policies")
+        self.assertEqual(response.status_code, 200)
+        profiles = {item["id"]: item for item in response.get_json()["permission_profiles"]}
+        self.assertIn("basic-text", profiles)
+        self.assertIn("image-basic", profiles)
+        self.assertIn("image-pro", profiles)
+        self.assertIn("video-basic", profiles)
+        self.assertEqual(profiles["basic-text"]["daily_request_limit"], 1000)
+        self.assertEqual(profiles["image-basic"]["daily_request_limit"], 300)
+        self.assertEqual(profiles["image-pro"]["daily_request_limit"], 1000)
+        self.assertEqual(profiles["video-basic"]["daily_request_limit"], 50)
+        self.assertEqual(profiles["video-basic"]["allowed_providers"], ["runway", "kling", "fal"])
+        self.assertFalse(profiles["video-basic"]["enabled_by_default"])
+
+        self.profile_store_path.write_text("{not-json", encoding="utf-8")
+        response = self.client().get("/api/admin/external-ai-policies")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("basic-text", {item["id"] for item in response.get_json()["permission_profiles"]})
+
+        with patch.object(self.app_module, "call_task_provider") as provider_call:
+            with patch.object(self.app_module, "run_ai_task") as run_task:
+                with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                    with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                        with patch.object(self.app_module, "save_handoff") as legacy_save:
+                            response = self.client().post(
+                                "/api/admin/external-ai-policies/apply-profile",
+                                json={
+                                    "profile_id": "basic-text",
+                                    "source_systems": ["profile-a", "profile-b"],
+                                },
+                            )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        result = response.get_json()["result"]
+        self.assertEqual(result["created"], 2)
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(result["skipped"], 0)
+
+        response = self.client().get("/api/admin/external-ai-policies")
+        policies = {item["source_system"]: item for item in response.get_json()["policies"]}
+        self.assertEqual(len(policies), 2)
+        self.assertEqual(policies["profile-a"]["profile_id"], "basic-text")
+        self.assertTrue(policies["profile-a"]["enabled"])
+        self.assertEqual(policies["profile-a"]["allowed_providers"], ["openai"])
+        self.assertEqual(policies["profile-a"]["allowed_models"], ["gpt-4.1-mini"])
+        self.assertEqual(policies["profile-a"]["allowed_capabilities"], ["summary", "rewrite", "classification"])
+        self.assertEqual(policies["profile-a"]["daily_request_limit"], 1000)
+
+        response = self.client().post(
+            "/api/admin/external-ai-policies/apply-profile",
+            json={
+                "profile_id": "image-basic",
+                "source_systems": ["profile-a"],
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["result"]["updated"], 1)
+        response = self.client().get("/api/admin/external-ai-policies")
+        policies = {item["source_system"]: item for item in response.get_json()["policies"]}
+        self.assertEqual(len(policies), 2)
+        self.assertEqual(policies["profile-a"]["profile_id"], "image-basic")
+        self.assertEqual(policies["profile-a"]["allowed_providers"], ["openai", "replicate", "fal"])
+        self.assertEqual(policies["profile-a"]["allowed_models"], ["gpt-image-1", "flux-schnell", "fal-flux-schnell"])
+        self.assertEqual(policies["profile-a"]["allowed_capabilities"], ["image_generation", "prompt_rewrite"])
+        self.assertEqual(policies["profile-a"]["daily_request_limit"], 300)
+
+        response = self.client().post(
+            "/api/admin/external-ai-policies/apply-profile",
+            json={
+                "profile_id": "image-pro",
+                "source_systems": ["profile-b"],
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        response = self.client().post(
+            "/api/admin/external-ai-policies/apply-profile",
+            json={
+                "profile_id": "video-basic",
+                "source_systems": ["profile-c"],
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        response = self.client().get("/api/admin/external-ai-policies")
+        policies = {item["source_system"]: item for item in response.get_json()["policies"]}
+        self.assertEqual(policies["profile-b"]["profile_id"], "image-pro")
+        self.assertEqual(policies["profile-b"]["allowed_models"], ["gpt-image-1", "flux-pro", "fal-flux-pro"])
+        self.assertEqual(policies["profile-c"]["profile_id"], "video-basic")
+        self.assertEqual(policies["profile-c"]["allowed_providers"], ["runway", "kling", "fal"])
+        self.assertEqual(policies["profile-c"]["allowed_models"], [])
+        self.assertEqual(policies["profile-c"]["allowed_capabilities"], ["video_generation", "image_to_video"])
+        self.assertEqual(policies["profile-c"]["daily_request_limit"], 50)
+        self.assertFalse(policies["profile-c"]["enabled"])
+
+        response = self.client().post(
+            "/api/admin/external-ai-policies/apply-profile",
+            json={"profile_id": "unknown-profile", "source_systems": ["profile-z"]},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("unknown permission profile", response.get_json()["error"])
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_api_key_integration_doc_download_is_safe(self):
+        before = self.state_snapshot()
+        response = self.client().post(
+            "/api/admin/external-api-keys",
+            json={"source_system": "doc-source", "label": "Doc source label"},
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        payload = response.get_json()
+        raw_key = payload["api_key"]
+        record = payload["record"]
+        store_text = self.key_store_path.read_text(encoding="utf-8")
+        stored_key_hash = json.loads(store_text)["keys"][0]["key_hash"]
+
+        unauthenticated = self.app.test_client().get(f"/admin/external-api-keys/{record['id']}/integration-doc")
+        self.assertEqual(unauthenticated.status_code, 302)
+
+        with patch.object(self.app_module, "call_task_provider") as provider_call:
+            with patch.object(self.app_module, "run_ai_task") as run_task:
+                doc_response = self.client().get(f"/admin/external-api-keys/{record['id']}/integration-doc")
+
+        self.assertEqual(doc_response.status_code, 200, doc_response.get_data(as_text=True))
+        self.assertIn("text/markdown", doc_response.headers.get("Content-Type", ""))
+        self.assertIn("attachment", doc_response.headers.get("Content-Disposition", ""))
+        self.assertIn("devpilot-integration-doc-source.md", doc_response.headers.get("Content-Disposition", ""))
+        body = doc_response.get_data(as_text=True)
+        self.assertIn("doc-source", body)
+        self.assertIn("Doc source label", body)
+        self.assertIn(record["key_prefix"], body)
+        self.assertIn('DEVPILOT_API_KEY="<paste-the-key-shown-once>"', body)
+        self.assertIn("POST /api/external/tasks/<task_id>/handoffs", body)
+        self.assertIn("GET /api/external/ai-handoffs", body)
+        self.assertIn("GET /api/external/handoffs/<handoff_id>", body)
+        self.assertIn("X-DevPilot-Idempotency-Key", body)
+        self.assertIn("AbortController", body)
+        self.assertIn("randomUUID", body)
+        self.assertIn("requests.post", body)
+        self.assertNotIn(raw_key, body)
+        self.assertNotIn(stored_key_hash, body)
+        self.assertNotIn("key_hash", body)
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+
+        page = self.client().get("/admin/external-api-keys")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(f"/admin/external-api-keys/{record['id']}/integration-doc", page.get_data(as_text=True))
+        self.assertNotIn(raw_key, page.get_data(as_text=True))
+
+        revoke_response = self.client().post(f"/api/admin/external-api-keys/{record['id']}/revoke", json={})
+        self.assertEqual(revoke_response.status_code, 200)
+        revoked_doc = self.client().get(f"/admin/external-api-keys/{record['id']}/integration-doc")
+        self.assertEqual(revoked_doc.status_code, 200)
+        self.assertIn("revoked", revoked_doc.get_data(as_text=True).lower())
+        self.assertNotIn(raw_key, revoked_doc.get_data(as_text=True))
+        self.assertEqual(self.state_snapshot(), before)
+
     def test_ai_provider_config_inspection_is_masked_and_read_only(self):
         before = self.state_snapshot()
         env = {
@@ -1035,6 +1305,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('value="claude"', page_body)
         self.assertIn('value="replicate"', page_body)
         self.assertIn('value="fal"', page_body)
+        self.assertIn('value="runway"', page_body)
+        self.assertIn('value="kling"', page_body)
         self.assertIn('name="allowed_models" multiple', page_body)
         self.assertIn('value="gpt-4.1-mini"', page_body)
         self.assertIn('value="gpt-image-1"', page_body)
@@ -1069,7 +1341,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "/api/admin/external-ai-policies",
             json={
                 "source_system": "multi-policy-source",
-                "allowed_providers": ["openai", "gemini", "claude", "replicate", "fal"],
+                "allowed_providers": ["openai", "gemini", "claude", "replicate", "fal", "runway", "kling"],
                 "allowed_models": ["gpt-4.1-mini", "gpt-image-1", "gemini-1.5-flash", "claude-3-5-haiku", "flux-schnell", "fal-flux-pro"],
                 "allowed_capabilities": [
                     "summary",
@@ -1094,7 +1366,7 @@ class AiManualHandoffTest(unittest.TestCase):
         )
         self.assertEqual(valid.status_code, 201, valid.get_data(as_text=True))
         policy = valid.get_json()["policy"]
-        self.assertEqual(policy["allowed_providers"], ["openai", "gemini", "claude", "replicate", "fal"])
+        self.assertEqual(policy["allowed_providers"], ["openai", "gemini", "claude", "replicate", "fal", "runway", "kling"])
         self.assertEqual(policy["allowed_models"], ["gpt-4.1-mini", "gpt-image-1", "gemini-1.5-flash", "claude-3-5-haiku", "flux-schnell", "fal-flux-pro"])
         self.assertIn("image_generation", policy["allowed_capabilities"])
         self.assertIn("video_generation", policy["allowed_capabilities"])

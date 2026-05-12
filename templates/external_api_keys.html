@@ -84,6 +84,7 @@
               </td>
               <td class="small">{{ record.last_used_at or '-' }}</td>
               <td class="text-end">
+                <a class="btn btn-sm btn-outline-primary mb-1" href="/admin/external-api-keys/{{ record.id }}/integration-doc">Download integration doc</a>
                 {% if not record.revoked_at %}
                 <form method="post" action="/admin/external-api-keys/{{ record.id }}/revoke" onsubmit="return confirm('Revoke this external API key?')">
                   <button class="btn btn-sm btn-outline-danger">Revoke</button>
