@@ -10202,6 +10202,377 @@ def ai_task_detail(task_id):
     )
 
 
+def parse_json_object(value):
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def preview_text(value, limit=240):
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if approval_payload_contains_secret(text):
+        return "[redacted secret-like content]"
+    if len(text) > limit:
+        return text[: max(0, limit - 3)] + "..."
+    return text
+
+
+def ai_message_public(row):
+    item = row_to_dict(row) if not isinstance(row, dict) else dict(row)
+    raw = parse_json_object(item.get("raw_response"))
+    task_id = ai_message_task_id(item)
+    response_source = item.get("response_text") or item.get("error_message") or item.get("prompt_summary") or ""
+    return {
+        "id": item.get("id"),
+        "project_id": item.get("project_id"),
+        "project_name": item.get("project_name"),
+        "provider": item.get("provider") or "unknown",
+        "model": item.get("model") or "",
+        "task_role": item.get("task_role") or "",
+        "prompt_summary": item.get("prompt_summary") or "",
+        "status": item.get("status") or "",
+        "response_preview": preview_text(response_source),
+        "error_preview": preview_text(item.get("error_message")),
+        "created_at": item.get("created_at"),
+        "updated_at": item.get("updated_at"),
+        "task_id": task_id,
+        "thread_id": f"task-{task_id}" if task_id else f"message-{item.get('id')}",
+        "raw_keys": sorted(raw.keys()),
+        "secret_like_redacted": approval_payload_contains_secret(response_source),
+    }
+
+
+def ai_task_thread_heartbeat(project_id, heartbeats):
+    if not heartbeats:
+        return None
+    if project_id not in (None, ""):
+        for heartbeat in heartbeats:
+            if str(heartbeat.get("project_id") or "") == str(project_id):
+                return heartbeat
+    return heartbeats[0]
+
+
+def ai_message_thread_summaries(limit=50, project_id=None):
+    limit = max(1, min(coerce_int(limit, 50), 100))
+    messages = [ai_message_public(item) for item in recent_ai_messages(limit=200, project_id=project_id)]
+    task_ids = sorted({message["task_id"] for message in messages if message.get("task_id")})
+    task_map = {}
+    if task_ids:
+        placeholders = ",".join("?" for _ in task_ids)
+        task_rows_for_messages = query_all(
+            f"""SELECT t.*, p.name AS project_name
+                FROM tasks t
+                LEFT JOIN projects p ON p.id=t.project_id
+                WHERE t.id IN ({placeholders})""",
+            tuple(task_ids),
+        )
+        task_map = {row["id"]: row_to_dict(row) for row in task_rows_for_messages}
+    recent_tasks_where = ""
+    params = []
+    if project_id not in (None, ""):
+        recent_tasks_where = "WHERE t.project_id=?"
+        params.append(int(project_id))
+    params.append(limit)
+    recent_tasks = [
+        row_to_dict(row)
+        for row in query_all(
+            f"""SELECT t.*, p.name AS project_name
+                FROM tasks t
+                LEFT JOIN projects p ON p.id=t.project_id
+                {recent_tasks_where}
+                ORDER BY t.updated_at DESC, t.id DESC
+                LIMIT ?""",
+            tuple(params),
+        )
+    ]
+    for task in recent_tasks:
+        task_map[task["id"]] = task
+
+    heartbeats = heartbeat_query(project_id=project_id, limit=100) if project_id not in (None, "") else heartbeat_query(limit=100)
+    threads = {}
+    for message in messages:
+        thread_id = message["thread_id"]
+        task = task_map.get(message.get("task_id")) if message.get("task_id") else None
+        if thread_id not in threads:
+            heartbeat = ai_task_thread_heartbeat((task or {}).get("project_id") or message.get("project_id"), heartbeats)
+            threads[thread_id] = {
+                "thread_id": thread_id,
+                "task_id": message.get("task_id"),
+                "task_title": (task or {}).get("title") or message.get("prompt_summary") or f"Message #{message.get('id')}",
+                "project_id": (task or {}).get("project_id") or message.get("project_id"),
+                "project_name": (task or {}).get("project_name") or message.get("project_name"),
+                "task_status": (task or {}).get("status") or message.get("status"),
+                "approval_status": (task or {}).get("approval_status") or "none",
+                "providers": [],
+                "roles": [],
+                "message_count": 0,
+                "last_message_at": message.get("created_at") or message.get("updated_at"),
+                "last_message": message.get("response_preview") or message.get("prompt_summary"),
+                "heartbeat": heartbeat,
+                "read_only": True,
+            }
+        thread = threads[thread_id]
+        thread["message_count"] += 1
+        for key, value in (("providers", message.get("provider")), ("roles", message.get("task_role"))):
+            if value and value not in thread[key]:
+                thread[key].append(value)
+        current_at = message.get("created_at") or message.get("updated_at") or ""
+        if current_at >= str(thread.get("last_message_at") or ""):
+            thread["last_message_at"] = current_at
+            thread["last_message"] = message.get("response_preview") or message.get("prompt_summary")
+
+    for task in recent_tasks:
+        thread_id = f"task-{task['id']}"
+        if thread_id in threads:
+            continue
+        heartbeat = ai_task_thread_heartbeat(task.get("project_id"), heartbeats)
+        threads[thread_id] = {
+            "thread_id": thread_id,
+            "task_id": task["id"],
+            "task_title": task.get("title") or f"Task #{task['id']}",
+            "project_id": task.get("project_id"),
+            "project_name": task.get("project_name"),
+            "task_status": task.get("status") or "queued",
+            "approval_status": task.get("approval_status") or "none",
+            "providers": [task.get("provider")] if task.get("provider") else [],
+            "roles": [],
+            "message_count": 0,
+            "last_message_at": task.get("updated_at") or task.get("created_at"),
+            "last_message": preview_text(task.get("prompt")),
+            "heartbeat": heartbeat,
+            "read_only": True,
+        }
+
+    ordered = sorted(
+        threads.values(),
+        key=lambda item: (str(item.get("last_message_at") or ""), str(item.get("thread_id") or "")),
+        reverse=True,
+    )
+    return ordered[:limit]
+
+
+def task_thread_handoffs(task):
+    project_id = task.get("project_id")
+    if project_id in (None, ""):
+        return []
+    task_id = task["id"]
+    patterns = [
+        f"ai-task:{task_id}",
+        f"task-{task_id}",
+        f"task #{task_id}",
+        f'"task_id": {task_id}',
+        f'"task_id":{task_id}',
+    ]
+    params = [project_id, f"ai-task:{task_id}", f"task-{task_id}"]
+    like_clauses = []
+    for pattern in patterns:
+        like_clauses.extend(["COALESCE(raw_text, '') LIKE ?", "COALESCE(summary, '') LIKE ?", "COALESCE(api_payload, '') LIKE ?"])
+        params.extend([f"%{pattern}%", f"%{pattern}%", f"%{pattern}%"])
+    return [
+        {
+            "id": row["id"],
+            "source": row["source"],
+            "agent_name": row["agent_name"],
+            "work_mode": row["work_mode"],
+            "conversation_ref": row["conversation_ref"],
+            "risk_level": row["risk_level"],
+            "summary": preview_text(row["summary"]),
+            "test_result": preview_text(row["test_result"]),
+            "warnings": preview_text(row["warnings"]),
+            "next_steps": preview_text(row["next_steps"]),
+            "created_at": row["created_at"],
+        }
+        for row in query_all(
+            f"""SELECT *
+                FROM handoff_logs
+                WHERE project_id=?
+                  AND COALESCE(is_hidden, 0)=0
+                  AND (
+                    conversation_ref IN (?, ?)
+                    OR {' OR '.join(like_clauses)}
+                  )
+                ORDER BY created_at ASC, id ASC
+                LIMIT 50""",
+            tuple(params),
+        )
+    ]
+
+
+def task_thread_dispatch_jobs(task):
+    project_id = task.get("project_id")
+    if project_id in (None, ""):
+        return []
+    task_id = task["id"]
+    like_terms = [f"#{task_id}", f"task {task_id}", f"task_id {task_id}", f'"task_id": {task_id}', f'"task_id":{task_id}']
+    params = [project_id]
+    clauses = []
+    for term in like_terms:
+        clauses.extend(["COALESCE(task, '') LIKE ?", "COALESCE(task_prompt, '') LIKE ?", "COALESCE(result, '') LIKE ?"])
+        params.extend([f"%{term}%", f"%{term}%", f"%{term}%"])
+    rows = query_all(
+        f"""SELECT *
+            FROM dispatch_jobs
+            WHERE project_id=?
+              AND ({' OR '.join(clauses)})
+            ORDER BY created_at ASC, id ASC
+            LIMIT 30""",
+        tuple(params),
+    )
+    jobs = []
+    for row in rows:
+        job = row_to_dict(row)
+        runs = query_all(
+            """SELECT id, dispatch_job_id, exit_code, created_at,
+                      LENGTH(COALESCE(stdout, '')) AS stdout_length,
+                      LENGTH(COALESCE(stderr, '')) AS stderr_length
+               FROM agent_runs
+               WHERE dispatch_job_id=?
+               ORDER BY created_at ASC, id ASC
+               LIMIT 20""",
+            (job["id"],),
+        )
+        jobs.append({
+            "id": job["id"],
+            "project_id": job.get("project_id"),
+            "provider": job.get("provider"),
+            "task_role": job.get("task_role"),
+            "agent": job.get("agent"),
+            "status": job.get("status"),
+            "risk_level": job.get("risk_level"),
+            "approval_required": job.get("approval_required"),
+            "task": preview_text(job.get("task") or job.get("task_prompt")),
+            "error_message": preview_text(job.get("error_message")),
+            "changed_files": preview_text(job.get("changed_files")),
+            "diff_stat": preview_text(job.get("diff_stat")),
+            "created_at": job.get("created_at"),
+            "updated_at": job.get("updated_at"),
+            "started_at": job.get("started_at"),
+            "finished_at": job.get("finished_at"),
+            "agent_runs": [row_to_dict(run) for run in runs],
+        })
+    return jobs
+
+
+def task_thread_approvals(task):
+    project_id = task.get("project_id")
+    if project_id in (None, ""):
+        return []
+    task_id = task["id"]
+    rows = approval_request_rows(project_id=project_id, limit=50)
+    matches = []
+    for item in rows:
+        searchable = json.dumps({
+            "title": item.get("title"),
+            "summary": item.get("summary"),
+            "payload": item.get("payload"),
+            "payload_json": item.get("payload_json"),
+        }, ensure_ascii=False)
+        if any(pattern in searchable for pattern in (f"ai-task:{task_id}", f"task-{task_id}", f"task #{task_id}", f'"task_id": {task_id}', f'"task_id":{task_id}')):
+            matches.append({
+                "id": item.get("id"),
+                "request_type": item.get("request_type"),
+                "title": item.get("title"),
+                "status": item.get("status"),
+                "summary": preview_text(item.get("summary")),
+                "execution_state": item.get("execution_state"),
+                "plan_only": item.get("plan_only"),
+                "requires_manual_execution": item.get("requires_manual_execution"),
+                "created_at": item.get("created_at"),
+                "updated_at": item.get("updated_at"),
+                "approved_at": item.get("approved_at"),
+                "rejected_at": item.get("rejected_at"),
+            })
+    return matches
+
+
+def timeline_add_event(events, event_type, event_at, title, detail="", status="", source="", url=""):
+    if not event_at:
+        return
+    events.append({
+        "type": event_type,
+        "at": event_at,
+        "title": title,
+        "detail": preview_text(detail, limit=320),
+        "status": status or "",
+        "source": source or "",
+        "url": url or "",
+    })
+
+
+def ai_task_timeline(task_id):
+    task = task_row(task_id)
+    if not task:
+        return None
+    project = row_to_dict(query_one("SELECT * FROM projects WHERE id=?", (task["project_id"],))) if task.get("project_id") else None
+    messages = sorted([ai_message_public(row) for row in task_ai_message_rows(task_id, limit=100)], key=lambda item: (str(item.get("created_at") or ""), item.get("id") or 0))
+    reviewer_messages = [item for item in messages if item.get("task_role") == "reviewer"]
+    handoffs = task_thread_handoffs(task)
+    dispatch_jobs = task_thread_dispatch_jobs(task)
+    heartbeats = heartbeat_query(project_id=task.get("project_id"), limit=20) if task.get("project_id") else []
+    approvals = task_thread_approvals(task)
+    events = []
+    timeline_add_event(events, "task", task.get("created_at"), f"Task created #{task['id']}", task.get("title"), task.get("status"), "system")
+    timeline_add_event(events, "task", task.get("started_at"), f"Task started #{task['id']}", task.get("title"), task.get("status"), "system")
+    timeline_add_event(events, "task", task.get("finished_at"), f"Task finished #{task['id']}", task.get("result") or task.get("error_message"), task.get("status"), "system")
+    for message in messages:
+        timeline_add_event(
+            events,
+            "ai_message",
+            message.get("created_at"),
+            f"{message.get('task_role') or 'message'} / {message.get('provider')}",
+            message.get("response_preview") or message.get("prompt_summary"),
+            message.get("status"),
+            message.get("provider"),
+            f"/tasks/{message.get('task_id')}/thread" if message.get("task_id") else "/ai-messages",
+        )
+    for handoff in handoffs:
+        timeline_add_event(events, "handoff", handoff.get("created_at"), f"Handoff #{handoff.get('id')}", handoff.get("summary"), handoff.get("risk_level"), handoff.get("agent_name") or handoff.get("source"))
+    for job in dispatch_jobs:
+        timeline_add_event(events, "dispatch_job", job.get("created_at"), f"Dispatch job #{job.get('id')}", job.get("task"), job.get("status"), job.get("agent") or job.get("provider"))
+        for run in job.get("agent_runs") or []:
+            timeline_add_event(events, "agent_run", run.get("created_at"), f"Agent run #{run.get('id')}", f"exit_code={run.get('exit_code')}", str(run.get("exit_code")), job.get("agent") or job.get("provider"))
+    for approval in approvals:
+        timeline_add_event(events, "approval", approval.get("created_at"), f"Approval #{approval.get('id')}", approval.get("summary") or approval.get("title"), approval.get("status"), "approval-center")
+    for heartbeat in heartbeats:
+        timeline_add_event(events, "heartbeat", heartbeat.get("last_seen_at") or heartbeat.get("updated_at"), f"Heartbeat {heartbeat.get('agent_name') or heartbeat.get('source')}", heartbeat.get("current_task") or heartbeat.get("last_message"), heartbeat.get("display_status") or heartbeat.get("status"), heartbeat.get("source"))
+    events.sort(key=lambda item: (str(item.get("at") or ""), item.get("type") or "", item.get("title") or ""))
+    return {
+        "task": task,
+        "project": project,
+        "messages": messages,
+        "reviewer_messages": reviewer_messages,
+        "handoffs": handoffs,
+        "dispatch_jobs": dispatch_jobs,
+        "heartbeats": heartbeats,
+        "approvals": approvals,
+        "timeline": events,
+        "summary": {
+            "message_count": len(messages),
+            "reviewer_message_count": len(reviewer_messages),
+            "handoff_count": len(handoffs),
+            "dispatch_job_count": len(dispatch_jobs),
+            "heartbeat_count": len(heartbeats),
+            "approval_count": len(approvals),
+        },
+        "safety": {
+            "read_only": True,
+            "provider_call_executed": False,
+            "worker_executed": False,
+            "repo_write_executed": False,
+            "external_write_executed": False,
+            "execution_allowed": False,
+            "approval_required": bool(coerce_int(task.get("requires_approval"), 0)),
+            "approval_status": task.get("approval_status") or "none",
+        },
+    }
+
+
 def create_ai_task(payload):
     title = str(payload.get("title") or "").strip()
     prompt = str(payload.get("prompt") or payload.get("task_prompt") or "").strip()
@@ -12056,6 +12427,21 @@ def ai_console_page():
     )
 
 
+@app.route("/ai-messages")
+@require_login
+def ai_messages_page():
+    project_id = coerce_int(request.args.get("project_id"), None) if request.args.get("project_id") else None
+    limit = coerce_int(request.args.get("limit"), 50)
+    return render_template(
+        "ai_messages.html",
+        app_name=APP_NAME,
+        threads=ai_message_thread_summaries(limit=limit, project_id=project_id),
+        projects=query_all("SELECT id, name FROM projects ORDER BY updated_at DESC, id DESC LIMIT 100"),
+        selected_project_id=project_id,
+        limit=max(1, min(limit, 100)),
+    )
+
+
 @app.route("/ai-console/sandbox")
 @require_roles("owner", "admin")
 def ai_console_sandbox_gallery_page():
@@ -12122,6 +12508,25 @@ def ai_task_detail_page(task_id):
         app_name=APP_NAME,
         project=project,
         **detail,
+    )
+
+
+@app.route("/tasks/<int:task_id>/thread")
+@require_login
+def ai_task_thread_page(task_id):
+    timeline = ai_task_timeline(task_id)
+    if not timeline:
+        return render_template(
+            "ai_task_thread.html",
+            app_name=APP_NAME,
+            timeline=None,
+            task_id=task_id,
+        ), 404
+    return render_template(
+        "ai_task_thread.html",
+        app_name=APP_NAME,
+        timeline=timeline,
+        task_id=task_id,
     )
 
 
@@ -16950,6 +17355,23 @@ def api_ai_messages():
     })
 
 
+@app.route("/api/ai-messages", methods=["GET"])
+@require_api_roles("owner", "admin", "ai")
+def api_ai_messages_thread_board():
+    project_id = coerce_int(request.args.get("project_id"), None) if request.args.get("project_id") else None
+    items = ai_message_thread_summaries(
+        limit=coerce_int(request.args.get("limit"), 50),
+        project_id=project_id,
+    )
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "threads": items,
+        "count": len(items),
+        "read_only": True,
+    })
+
+
 @app.route("/api/ai/dispatch", methods=["POST"])
 @app.route("/api/ai-dispatch", methods=["POST"])
 @require_api_token
@@ -17080,6 +17502,15 @@ def api_task_run(task_id):
         return jsonify({"ok": False, "error": str(exc)}), 404
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/tasks/<int:task_id>/timeline", methods=["GET"])
+@require_api_roles("owner", "admin", "ai")
+def api_task_timeline(task_id):
+    timeline = ai_task_timeline(task_id)
+    if not timeline:
+        return jsonify({"ok": False, "error": "AI task not found"}), 404
+    return jsonify({"ok": True, **timeline})
 
 
 @app.route("/api/tasks/<int:task_id>/run-flow", methods=["POST"])

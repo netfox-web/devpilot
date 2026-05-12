@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Messages</h1>
+    <div class="text-muted small">Read-only AI-to-AI thread board from tasks, ai_messages, handoffs, dispatch jobs, approvals, and heartbeats.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-secondary">NO PROVIDER CALL</span>
+      <span class="badge text-bg-secondary">NO WORKER EXECUTION</span>
+      <span class="badge text-bg-secondary">NO REPO WRITE</span>
+      <span class="badge text-bg-secondary">NO DEPLOY</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/ai-console">AI Console</a>
+    <a class="btn btn-outline-secondary" href="/ai-heartbeats">AI Heartbeats</a>
+  </div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="/ai-messages">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label small">Project</label>
+        <select class="form-select" name="project_id">
+          <option value="">All projects</option>
+          {% for project in projects %}
+            <option value="{{ project.id }}" {% if selected_project_id == project.id %}selected{% endif %}>#{{ project.id }} {{ project.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Limit</label>
+        <input class="form-control" type="number" min="1" max="100" name="limit" value="{{ limit }}">
+      </div>
+      <div class="col-md-4">
+        <button class="btn btn-primary w-100">Filter</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+    <span>Threads</span>
+    <span class="badge text-bg-light">{{ threads|length }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Thread</th>
+          <th>Project</th>
+          <th>Status</th>
+          <th>Provider / Role</th>
+          <th>Messages</th>
+          <th>Heartbeat</th>
+          <th>Last message</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for thread in threads %}
+          <tr>
+            <td style="min-width: 18rem;">
+              <div class="fw-semibold">
+                {% if thread.task_id %}
+                  <a href="/tasks/{{ thread.task_id }}/thread">#{{ thread.task_id }} {{ thread.task_title }}</a>
+                {% else %}
+                  {{ thread.task_title }}
+                {% endif %}
+              </div>
+              <code class="small">{{ thread.thread_id }}</code>
+            </td>
+            <td class="small">
+              {% if thread.project_id %}
+                <a href="/projects/{{ thread.project_id }}">#{{ thread.project_id }} {{ thread.project_name or '' }}</a>
+              {% else %}
+                <span class="text-muted">Global</span>
+              {% endif %}
+            </td>
+            <td>
+              {% set task_status = thread.task_status or 'unknown' %}
+              <span class="badge text-bg-{{ 'success' if task_status == 'done' else ('danger' if task_status == 'failed' else ('warning' if task_status in ['running', 'pending'] else ('dark' if task_status == 'blocked' else 'secondary'))) }}">{{ task_status }}</span>
+              <div class="small text-muted">approval: {{ thread.approval_status or 'none' }}</div>
+            </td>
+            <td class="small">
+              <div>
+                {% for provider in thread.providers %}
+                  <span class="badge text-bg-dark">{{ provider }}</span>
+                {% else %}
+                  <span class="text-muted">-</span>
+                {% endfor %}
+              </div>
+              <div class="mt-1">
+                {% for role in thread.roles %}
+                  <span class="badge text-bg-secondary">{{ role }}</span>
+                {% else %}
+                  <span class="text-muted">no role yet</span>
+                {% endfor %}
+              </div>
+            </td>
+            <td>{{ thread.message_count }}</td>
+            <td class="small" style="min-width: 14rem;">
+              {% if thread.heartbeat %}
+                <div><span class="badge text-bg-{{ 'danger' if thread.heartbeat.is_offline else 'success' }}">{{ thread.heartbeat.display_status }}</span> {{ thread.heartbeat.agent_name or thread.heartbeat.source }}</div>
+                <div class="text-muted">{{ thread.heartbeat.last_seen_at or thread.heartbeat.updated_at or '-' }}</div>
+              {% else %}
+                <span class="text-muted">none</span>
+              {% endif %}
+            </td>
+            <td class="small" style="min-width: 22rem;">
+              <div class="text-muted">{{ thread.last_message_at or '-' }}</div>
+              <div>{{ thread.last_message or '-' }}</div>
+            </td>
+            <td class="text-end">
+              {% if thread.task_id %}
+                <a class="btn btn-sm btn-outline-primary" href="/tasks/{{ thread.task_id }}/thread">Open</a>
+              {% else %}
+                <span class="badge text-bg-secondary">message only</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">No AI message threads found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
