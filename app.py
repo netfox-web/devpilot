@@ -45,6 +45,7 @@ APP_NAME = "DevPilot 專案開發管家"
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "project_manager.db"))
+EXTERNAL_API_KEY_STORE_PATH = DATA_DIR / "external_api_keys.json"
 API_TOKEN = os.getenv("API_TOKEN", "change-me-token")
 _DEV_PILOT_API_URL_RAW = os.getenv("DEV_PILOT_API_URL", "").strip().rstrip("/")
 # 一鍵複製回寫指令 / README 範例皆以 .env 的 DEV_PILOT_API_URL 為準；未設定時預設本機開發埠
@@ -1504,24 +1505,180 @@ def configured_external_api_keys():
     return configured
 
 
+def external_api_key_store_path():
+    raw_path = os.getenv("DEVPILOT_EXTERNAL_API_KEY_STORE_PATH", "").strip()
+    return Path(raw_path) if raw_path else EXTERNAL_API_KEY_STORE_PATH
+
+
+def external_api_key_preview(value, limit=160):
+    return str(value or "").strip()[:limit]
+
+
+def external_api_key_record_public(record):
+    return {
+        "id": record.get("id") or "",
+        "source_system": record.get("source_system") or "",
+        "key_prefix": record.get("key_prefix") or "",
+        "label": record.get("label") or "",
+        "created_at": record.get("created_at") or "",
+        "revoked_at": record.get("revoked_at") or "",
+        "created_by": record.get("created_by") or "",
+        "last_used_at": record.get("last_used_at") or "",
+        "status": "revoked" if record.get("revoked_at") else "active",
+    }
+
+
+def normalize_external_api_key_record(record):
+    if not isinstance(record, dict):
+        return None
+    key_id = external_api_key_preview(record.get("id"), 80)
+    source_system = external_api_key_preview(record.get("source_system"), 120)
+    key_hash = external_api_key_preview(record.get("key_hash"), 128)
+    key_prefix = external_api_key_preview(record.get("key_prefix"), 32)
+    if not key_id or not source_system or not key_hash or not key_prefix:
+        return None
+    return {
+        "id": key_id,
+        "source_system": source_system,
+        "key_prefix": key_prefix,
+        "key_hash": key_hash,
+        "label": external_api_key_preview(record.get("label"), 160),
+        "created_at": external_api_key_preview(record.get("created_at"), 64),
+        "revoked_at": external_api_key_preview(record.get("revoked_at"), 64),
+        "created_by": external_api_key_preview(record.get("created_by"), 120),
+        "last_used_at": external_api_key_preview(record.get("last_used_at"), 64),
+    }
+
+
+def load_external_api_key_records():
+    path = external_api_key_store_path()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, TypeError):
+        return []
+    items = raw.get("keys") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return []
+    records = []
+    for item in items:
+        record = normalize_external_api_key_record(item)
+        if record:
+            records.append(record)
+    return records
+
+
+def save_external_api_key_records(records):
+    path = external_api_key_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [record for record in (normalize_external_api_key_record(item) for item in records) if record]
+    payload = {"keys": normalized, "updated_at": now_str()}
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def external_api_key_hash(raw_key):
+    return hashlib.sha256(str(raw_key or "").encode("utf-8")).hexdigest()
+
+
+def validate_external_source_system(source_system):
+    text = external_api_key_preview(source_system, 120)
+    if not text:
+        raise ValueError("source_system is required")
+    if "," in text or ":" in text:
+        raise ValueError("source_system must not contain comma or colon")
+    return text
+
+
+def generate_external_api_key(source_system, label=None):
+    source_system = validate_external_source_system(source_system)
+    raw_key = "dp_ext_" + secrets.token_urlsafe(48)
+    user = current_user() or {}
+    created_by = user.get("username") or (current_role() if has_request_context() else "") or "local_admin"
+    record = {
+        "id": f"extkey_{secrets.token_hex(12)}",
+        "source_system": source_system,
+        "key_prefix": raw_key[:18],
+        "key_hash": external_api_key_hash(raw_key),
+        "label": external_api_key_preview(label, 160),
+        "created_at": now_str(),
+        "revoked_at": "",
+        "created_by": created_by,
+        "last_used_at": "",
+    }
+    records = load_external_api_key_records()
+    records.append(record)
+    save_external_api_key_records(records)
+    return record, raw_key
+
+
+def revoke_external_api_key(key_id):
+    key_id = external_api_key_preview(key_id, 80)
+    records = load_external_api_key_records()
+    revoked = None
+    for record in records:
+        if record.get("id") == key_id:
+            if not record.get("revoked_at"):
+                record["revoked_at"] = now_str()
+            revoked = record
+            break
+    if not revoked:
+        raise LookupError("external API key not found")
+    save_external_api_key_records(records)
+    return revoked
+
+
+def verify_managed_external_api_key(source_system, raw_key, records=None):
+    if not source_system or not raw_key:
+        return None
+    key_hash = external_api_key_hash(raw_key)
+    source_records = records if records is not None else load_external_api_key_records()
+    for record in source_records:
+        if record.get("revoked_at"):
+            continue
+        if record.get("source_system") != source_system:
+            continue
+        if hmac.compare_digest(record.get("key_hash") or "", key_hash):
+            return record
+    return None
+
+
 def external_api_allow_all_sources():
     return os.getenv("DEVPILOT_EXTERNAL_API_ALLOW_ALL_SOURCES", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def get_external_api_identity():
     configured = configured_external_api_keys()
-    if not configured:
+    managed_records = load_external_api_key_records()
+    active_managed_sources = {record["source_system"] for record in managed_records if not record.get("revoked_at")}
+    if not configured and not active_managed_sources:
         return None, "external API is not enabled"
     source_system = request.headers.get("X-DevPilot-Source-System", "").strip()
     api_key = request.headers.get("X-DevPilot-Api-Key", "")
-    if not source_system or source_system not in configured:
+    if not source_system or (source_system not in configured and source_system not in active_managed_sources):
         return None, "external source system is not allowed"
-    if not api_key or not hmac.compare_digest(api_key, configured[source_system]):
+    auth_source = ""
+    managed_record = None
+    if source_system in configured and api_key and hmac.compare_digest(api_key, configured[source_system]):
+        auth_source = "env"
+    else:
+        managed_record = verify_managed_external_api_key(source_system, api_key, managed_records)
+        if managed_record:
+            auth_source = "managed"
+    if not auth_source:
         return None, "external API credential is invalid"
     return {
         "source_system": source_system,
         "request_id": request.headers.get("X-DevPilot-Request-Id", "").strip(),
         "idempotency_key": request.headers.get("X-DevPilot-Idempotency-Key", "").strip(),
+        "auth_source": auth_source,
+        "key_id": managed_record.get("id") if managed_record else "",
+        "key_prefix": managed_record.get("key_prefix") if managed_record else "",
     }, None
 
 
@@ -13528,6 +13685,51 @@ def api_keys_import_env():
     return redirect(url_for("api_keys_page"))
 
 
+def render_external_api_keys_page(generated_key=None, generated_record=None):
+    records = [external_api_key_record_public(record) for record in load_external_api_key_records()]
+    records.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
+    env_sources = sorted(configured_external_api_keys().keys())
+    return render_template(
+        "external_api_keys.html",
+        app_name=APP_NAME,
+        records=records,
+        env_sources=env_sources,
+        generated_key=generated_key,
+        generated_record=generated_record,
+        key_store_path=str(external_api_key_store_path()),
+    )
+
+
+@app.route("/admin/external-api-keys", methods=["GET", "POST"])
+@require_roles("owner", "admin")
+def admin_external_api_keys_page():
+    if request.method == "POST":
+        try:
+            record, raw_key = generate_external_api_key(
+                request.form.get("source_system"),
+                label=request.form.get("label"),
+            )
+            flash(f"External API key generated for {record['source_system']}. Copy it now; it will not be shown again.")
+            return render_external_api_keys_page(
+                generated_key=raw_key,
+                generated_record=external_api_key_record_public(record),
+            )
+        except ValueError as exc:
+            flash(str(exc))
+    return render_external_api_keys_page()
+
+
+@app.route("/admin/external-api-keys/<key_id>/revoke", methods=["POST"])
+@require_roles("owner", "admin")
+def admin_external_api_key_revoke(key_id):
+    try:
+        record = revoke_external_api_key(key_id)
+        flash(f"External API key revoked for {record['source_system']}.")
+    except LookupError as exc:
+        flash(str(exc))
+    return redirect(url_for("admin_external_api_keys_page"))
+
+
 @app.route("/api/api-keys", methods=["POST"])
 @require_api_roles("owner")
 def api_api_key_create():
@@ -18026,6 +18228,51 @@ def api_ai_messages_thread_board():
         "threads": items,
         "count": len(items),
         "read_only": True,
+    })
+
+
+@app.route("/api/admin/external-api-keys", methods=["GET", "POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_api_keys():
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        try:
+            record, raw_key = generate_external_api_key(
+                payload.get("source_system"),
+                label=payload.get("label"),
+            )
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        public_record = external_api_key_record_public(record)
+        return jsonify({
+            "ok": True,
+            "api_key": raw_key,
+            "record": public_record,
+            "copy_once": True,
+            "store_path": str(external_api_key_store_path()),
+        }), 201
+    records = [external_api_key_record_public(record) for record in load_external_api_key_records()]
+    records.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
+    return jsonify({
+        "ok": True,
+        "records": records,
+        "env_sources": sorted(configured_external_api_keys().keys()),
+        "count": len(records),
+        "read_only": True,
+    })
+
+
+@app.route("/api/admin/external-api-keys/<key_id>/revoke", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_api_key_revoke(key_id):
+    try:
+        record = revoke_external_api_key(key_id)
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    return jsonify({
+        "ok": True,
+        "record": external_api_key_record_public(record),
+        "api_key": None,
     })
 
 

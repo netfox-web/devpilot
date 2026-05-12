@@ -1,5 +1,8 @@
 import csv
 import io
+import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +21,16 @@ class AiManualHandoffTest(unittest.TestCase):
 
     def setUp(self):
         self.marker = "ai_manual_handoff_test"
+        self.key_store_dir = tempfile.TemporaryDirectory()
+        self.key_store_path = Path(self.key_store_dir.name) / "external_api_keys.json"
+        self.key_store_patch = patch.object(self.app_module, "EXTERNAL_API_KEY_STORE_PATH", self.key_store_path)
+        self.key_store_env_patch = patch.dict(
+            self.app_module.os.environ,
+            {"DEVPILOT_EXTERNAL_API_KEY_STORE_PATH": str(self.key_store_path)},
+            clear=False,
+        )
+        self.key_store_patch.start()
+        self.key_store_env_patch.start()
         with self.app.app_context():
             now = self.app_module.now_str()
             self.project_id = self.app_module.execute(
@@ -58,6 +71,9 @@ class AiManualHandoffTest(unittest.TestCase):
             self.app_module.execute("DELETE FROM tasks WHERE project_id=?", (self.project_id,))
             self.app_module.execute("DELETE FROM project_phases WHERE project_id=?", (self.project_id,))
             self.app_module.execute("DELETE FROM projects WHERE id=?", (self.project_id,))
+        self.key_store_env_patch.stop()
+        self.key_store_patch.stop()
+        self.key_store_dir.cleanup()
 
     def client(self):
         client = self.app.test_client()
@@ -782,6 +798,146 @@ class AiManualHandoffTest(unittest.TestCase):
         ids = {item["handoff_id"] for item in response.get_json()["items"]}
         self.assertIn(handoff_a, ids)
         self.assertIn(handoff_b, ids)
+
+    def test_managed_external_api_key_generate_auth_revoke_and_env_compatibility(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        response = self.client().post(
+            "/api/admin/external-api-keys",
+            json={"source_system": "managed-a", "label": "Managed source A"},
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        payload = response.get_json()
+        raw_key = payload["api_key"]
+        record = payload["record"]
+        self.assertTrue(raw_key.startswith("dp_ext_"))
+        self.assertEqual(record["source_system"], "managed-a")
+        self.assertEqual(record["status"], "active")
+        self.assertIn("key_prefix", record)
+        self.assertNotIn("key_hash", record)
+
+        store_text = self.key_store_path.read_text(encoding="utf-8")
+        store = json.loads(store_text)
+        stored_record = store["keys"][0]
+        self.assertNotIn(raw_key, store_text)
+        self.assertEqual(stored_record["source_system"], "managed-a")
+        self.assertEqual(stored_record["key_prefix"], record["key_prefix"])
+        self.assertEqual(stored_record["key_hash"], self.app_module.external_api_key_hash(raw_key))
+
+        response = self.client().get("/api/admin/external-api-keys")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(raw_key, response.get_data(as_text=True))
+
+        headers = self.external_headers(
+            source="managed-a",
+            key=raw_key,
+            request_id="managed-request",
+            idempotency_key="managed-idempotency",
+        )
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
+            response = self.client().get("/api/external/ai-handoffs", headers=headers)
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+
+            response = self.client().get(
+                "/api/external/ai-handoffs",
+                headers=self.external_headers(source="managed-a", key="wrong-key"),
+            )
+            self.assertEqual(response.status_code, 403)
+
+            response = self.client().get(
+                "/api/external/ai-handoffs",
+                headers=self.external_headers(source="managed-b", key=raw_key),
+            )
+            self.assertEqual(response.status_code, 403)
+
+            with patch.object(self.app_module, "call_task_provider") as provider_call:
+                with patch.object(self.app_module, "run_ai_task") as run_task:
+                    with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                            with patch.object(self.app_module, "save_handoff") as legacy_save:
+                                create_response = self.client().post(
+                                    f"/api/external/tasks/{self.task['id']}/handoffs",
+                                    json={
+                                        "from_agent": "managed-a",
+                                        "to_agent": "devpilot-reviewer",
+                                        "reason": "Managed key handoff",
+                                        "next_step": "Review managed key handoff",
+                                        "risk": "medium",
+                                        "external_ref": "managed-ticket-1",
+                                        "actor_type": "system",
+                                        "actor_id": "managed-a",
+                                    },
+                                    headers=headers,
+                                )
+        self.assertEqual(create_response.status_code, 201, create_response.get_data(as_text=True))
+        handoff_id = create_response.get_json()["handoff_id"]
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+
+        with self.app.app_context():
+            row = self.app_module.query_one("SELECT * FROM handoff_logs WHERE id=?", (handoff_id,))
+            api_payload, parse_error = self.app_module.parse_ai_handoff_payload(row["api_payload"])
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertFalse(parse_error)
+        self.assertEqual(api_payload["source_system"], "managed-a")
+        self.assertEqual(api_payload["request_id"], "managed-request")
+        self.assertEqual(api_payload["idempotency_key"], "managed-idempotency")
+        self.assertEqual(api_payload["external_ref"], "managed-ticket-1")
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+        response = self.client().post(f"/api/admin/external-api-keys/{record['id']}/revoke", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.get_json()["api_key"])
+        self.assertEqual(response.get_json()["record"]["status"], "revoked")
+        self.assertNotIn(raw_key, response.get_data(as_text=True))
+
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
+            response = self.client().get("/api/external/ai-handoffs", headers=headers)
+        self.assertEqual(response.status_code, 403)
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            response = self.client().get(
+                "/api/external/ai-handoffs",
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+
+    def test_managed_external_api_key_admin_page_and_store_fallbacks_are_safe(self):
+        response = self.client().get("/admin/external-api-keys")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("External API Keys", response.get_data(as_text=True))
+
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
+            response = self.client().get(
+                "/api/external/ai-handoffs",
+                headers=self.external_headers(source="managed-a", key="missing-key"),
+            )
+        self.assertEqual(response.status_code, 403)
+
+        self.key_store_path.write_text("{not-json", encoding="utf-8")
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
+            response = self.client().get(
+                "/api/external/ai-handoffs",
+                headers=self.external_headers(source="managed-a", key="missing-key"),
+            )
+        self.assertEqual(response.status_code, 403)
+
+        self.key_store_path.write_text(
+            json.dumps({"keys": [{"id": "bad-record"}, {"id": "bad-hash", "source_system": "managed-a", "key_prefix": "dp_ext_bad"}]}),
+            encoding="utf-8",
+        )
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
+            response = self.client().get(
+                "/api/external/ai-handoffs",
+                headers=self.external_headers(source="managed-a", key="missing-key"),
+            )
+        self.assertEqual(response.status_code, 403)
 
 
 if __name__ == "__main__":

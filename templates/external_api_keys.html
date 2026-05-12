@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">External API Keys</h1>
+    <div class="text-muted small">Managed keys are stored as hashes in <code>{{ key_store_path }}</code>. Raw keys are shown only once.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/ai-handoffs">AI Handoffs</a>
+    <a class="btn btn-outline-secondary" href="/api-keys">API Keys</a>
+  </div>
+</div>
+
+{% if generated_key and generated_record %}
+<div class="alert alert-warning">
+  <div class="fw-bold mb-2">Generated external API key for {{ generated_record.source_system }}</div>
+  <code class="d-block text-break mb-2">{{ generated_key }}</code>
+  <div class="small">Copy this key now. It will not be shown again.</div>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Generate Key</div>
+      <div class="card-body">
+        <form method="post" action="/admin/external-api-keys">
+          <label class="form-label">Source system</label>
+          <input class="form-control mb-2" name="source_system" placeholder="crm-system" autocomplete="off" required>
+
+          <label class="form-label">Label</label>
+          <input class="form-control mb-3" name="label" placeholder="Production CRM connector" autocomplete="off">
+
+          <button class="btn btn-primary w-100">Generate external key</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-header fw-bold">Environment Sources</div>
+      <div class="card-body">
+        {% for source in env_sources %}
+          <span class="badge text-bg-secondary me-1 mb-1">{{ source }}</span>
+        {% else %}
+          <div class="text-muted small">No env-based external sources configured.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>Managed Keys</span>
+        <span class="badge text-bg-secondary">{{ records|length }}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Label</th>
+              <th>Prefix</th>
+              <th>Created</th>
+              <th>Status</th>
+              <th>Last used</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for record in records %}
+            <tr>
+              <td class="fw-semibold">{{ record.source_system }}</td>
+              <td>{{ record.label or '-' }}</td>
+              <td><code>{{ record.key_prefix }}</code></td>
+              <td class="small">{{ record.created_at or '-' }}<div class="text-muted">{{ record.created_by or '' }}</div></td>
+              <td>
+                {% if record.revoked_at %}
+                  <span class="badge text-bg-danger">revoked</span>
+                  <div class="small text-muted">{{ record.revoked_at }}</div>
+                {% else %}
+                  <span class="badge text-bg-success">active</span>
+                {% endif %}
+              </td>
+              <td class="small">{{ record.last_used_at or '-' }}</td>
+              <td class="text-end">
+                {% if not record.revoked_at %}
+                <form method="post" action="/admin/external-api-keys/{{ record.id }}/revoke" onsubmit="return confirm('Revoke this external API key?')">
+                  <button class="btn btn-sm btn-outline-danger">Revoke</button>
+                </form>
+                {% else %}
+                  <span class="text-muted small">done</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="text-center text-muted py-4">No managed external API keys yet</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
