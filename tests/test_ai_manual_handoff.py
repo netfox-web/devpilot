@@ -255,12 +255,51 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn(match["id"], ids)
         self.assertNotIn(other["id"], ids)
 
+        response = self.client().get("/api/ai-handoffs?risk=medium")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.get_json()["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/api/ai-handoffs?risk_level=medium")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.get_json()["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/api/ai-handoffs?risk=low&risk_level=medium")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.get_json()["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
         response = self.client().get("/api/ai-handoffs?q=searchable&status=accepted&risk_level=medium&from_agent=planner-search&to_agent=executor-search")
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         ids = {item["id"] for item in payload["items"]}
         self.assertIn(match["id"], ids)
         self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/api/ai-handoffs?q=searchable&status=accepted&risk=medium&from_agent=planner-search&to_agent=executor-search")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        ids = {item["id"] for item in payload["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/ai-handoffs?risk=medium")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("Searchable follow-up step", body)
+        self.assertNotIn("Different next step", body)
+        self.assertIn('value="medium" selected', body)
+
+        response = self.client().get("/ai-handoffs?q=searchable&status=accepted&risk=medium&from_agent=planner-search&to_agent=executor-search")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("Searchable follow-up step", body)
+        self.assertNotIn("Different next step", body)
+        self.assertIn("planner-search", body)
 
         response = self.client().get("/ai-handoffs?q=searchable&status=accepted&risk_level=medium&from_agent=planner-search&to_agent=executor-search")
         self.assertEqual(response.status_code, 200)

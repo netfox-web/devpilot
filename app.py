@@ -10590,6 +10590,13 @@ def ai_handoff_rows(limit=100, project_id=None, task_id=None, status=None, risk_
     return items
 
 
+def ai_handoff_risk_filter_from_args(args):
+    risk_level = args.get("risk_level")
+    if risk_level not in (None, ""):
+        return risk_level
+    return args.get("risk") or ""
+
+
 def ai_handoff_payload_from_request():
     return request.get_json(silent=True) or request.form.to_dict()
 
@@ -12810,7 +12817,7 @@ def ai_handoffs_page():
         "project_id": coerce_int(request.args.get("project_id"), None) if request.args.get("project_id") else None,
         "task_id": coerce_int(request.args.get("task_id"), None) if request.args.get("task_id") else None,
         "status": request.args.get("status") or "",
-        "risk_level": request.args.get("risk_level") or "",
+        "risk_level": ai_handoff_risk_filter_from_args(request.args),
         "from_agent": request.args.get("from_agent") or "",
         "to_agent": request.args.get("to_agent") or "",
         "q": request.args.get("q") or "",
@@ -17782,7 +17789,7 @@ def api_ai_handoffs():
         project_id=coerce_int(request.args.get("project_id"), None) if request.args.get("project_id") else None,
         task_id=coerce_int(request.args.get("task_id"), None) if request.args.get("task_id") else None,
         status=request.args.get("status"),
-        risk_level=request.args.get("risk_level"),
+        risk_level=ai_handoff_risk_filter_from_args(request.args),
         from_agent=request.args.get("from_agent"),
         to_agent=request.args.get("to_agent"),
         q=request.args.get("q"),
