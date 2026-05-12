@@ -16,6 +16,9 @@
     <div class="card shadow-sm">
       <div class="card-header fw-bold">Create Policy</div>
       <div class="card-body">
+        <div class="alert alert-info small">
+          Providers are AI platforms. Models are provider-specific model IDs. Capabilities are the AI use cases this source system may call.
+        </div>
         <form method="post" action="/admin/external-ai-policies">
           <label class="form-label">Source system</label>
           <input class="form-control mb-2" name="source_system" placeholder="crm-system" autocomplete="off" required>
@@ -23,14 +26,39 @@
           <label class="form-label">Label</label>
           <input class="form-control mb-2" name="label" placeholder="CRM summary policy" autocomplete="off">
 
-          <label class="form-label">Allowed providers</label>
-          <input class="form-control mb-2" name="allowed_providers" placeholder="openai">
+          <div class="form-label">Allowed providers</div>
+          <div class="d-flex flex-wrap gap-2 mb-2">
+            {% for provider in provider_choices %}
+              <label class="form-check border rounded px-2 py-1">
+                <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}">
+                <span class="form-check-label">{{ provider }}</span>
+              </label>
+            {% endfor %}
+          </div>
 
           <label class="form-label">Allowed models</label>
-          <input class="form-control mb-2" name="allowed_models" placeholder="gpt-4.1-mini">
+          <select class="form-select mb-2" name="allowed_models" multiple size="7">
+            {% for provider, models in model_choices.items() %}
+              <optgroup label="{{ provider }}">
+                {% for model in models %}
+                  <option value="{{ model }}">{{ model }}</option>
+                {% endfor %}
+              </optgroup>
+            {% endfor %}
+          </select>
 
-          <label class="form-label">Allowed capabilities</label>
-          <input class="form-control mb-2" name="allowed_capabilities" placeholder="summary, classification">
+          <div class="form-label">Allowed capabilities</div>
+          {% for group, capabilities in capability_groups.items() %}
+            <div class="small text-muted mt-2">{{ group }}</div>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+              {% for capability in capabilities %}
+                <label class="form-check border rounded px-2 py-1">
+                  <input class="form-check-input me-1" type="checkbox" name="allowed_capabilities" value="{{ capability }}">
+                  <span class="form-check-label">{{ capability }}</span>
+                </label>
+              {% endfor %}
+            </div>
+            {% endfor %}
 
           <div class="row g-2">
             <div class="col-md-6">

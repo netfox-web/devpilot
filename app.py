@@ -1710,6 +1710,21 @@ EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS = 1000
 EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT = 100
 EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT = 50000
 EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD = 10.0
+EXTERNAL_AI_PROVIDER_OPTIONS = ["openai", "gemini", "claude", "replicate", "fal"]
+EXTERNAL_AI_MODEL_OPTIONS = {
+    "openai": ["gpt-4.1-mini", "gpt-4o-mini", "o4-mini", "gpt-image-1"],
+    "gemini": ["gemini-1.5-flash", "gemini-1.5-pro"],
+    "claude": ["claude-3-5-haiku", "claude-3-5-sonnet"],
+    "replicate": ["flux-schnell", "flux-pro"],
+    "fal": ["fal-flux-schnell", "fal-flux-pro"],
+}
+EXTERNAL_AI_CAPABILITY_GROUPS = {
+    "Text": ["summary", "classification", "rewrite", "extraction", "planning", "chat", "generate"],
+    "Image": ["image_generation", "image_editing", "image_variation", "prompt_rewrite"],
+    "Video": ["video_generation", "image_to_video", "video_editing"],
+    "Business creative": ["ad_creative", "product_image", "avatar_generation"],
+}
+EXTERNAL_AI_CAPABILITY_OPTIONS = [capability for capabilities in EXTERNAL_AI_CAPABILITY_GROUPS.values() for capability in capabilities]
 
 
 def external_ai_policy_store_path():
@@ -1722,10 +1737,10 @@ def external_ai_policy_preview(value, limit=200):
 
 
 def external_ai_policy_list(value):
-    if isinstance(value, list):
-        items = value
-    else:
-        items = re.split(r"[,\r\n]+", str(value or ""))
+    raw_items = value if isinstance(value, list) else [value]
+    items = []
+    for raw_item in raw_items:
+        items.extend(re.split(r"[,\r\n]+", str(raw_item or "")))
     cleaned = []
     seen = set()
     for item in items:
@@ -1735,6 +1750,33 @@ def external_ai_policy_list(value):
         cleaned.append(text)
         seen.add(text)
     return cleaned
+
+
+def external_ai_model_provider(model):
+    for provider, models in EXTERNAL_AI_MODEL_OPTIONS.items():
+        if model in models:
+            return provider
+    return ""
+
+
+def validate_external_ai_policy_allowlists(providers, models, capabilities):
+    provider_set = set(EXTERNAL_AI_PROVIDER_OPTIONS)
+    model_set = {model for models_for_provider in EXTERNAL_AI_MODEL_OPTIONS.values() for model in models_for_provider}
+    capability_set = set(EXTERNAL_AI_CAPABILITY_OPTIONS)
+    unknown_providers = [item for item in providers if item not in provider_set]
+    unknown_models = [item for item in models if item not in model_set]
+    unknown_capabilities = [item for item in capabilities if item not in capability_set]
+    if unknown_providers:
+        raise ValueError(f"unknown provider: {unknown_providers[0]}")
+    if unknown_models:
+        raise ValueError(f"unknown model: {unknown_models[0]}")
+    if unknown_capabilities:
+        raise ValueError(f"unknown capability: {unknown_capabilities[0]}")
+    selected_providers = set(providers)
+    for model in models:
+        required_provider = external_ai_model_provider(model)
+        if required_provider and required_provider not in selected_providers:
+            raise ValueError(f"model/provider mismatch: {model} requires {required_provider}")
 
 
 def external_ai_policy_int(value, default, minimum=0, maximum=10000000):
@@ -1835,14 +1877,18 @@ def create_external_ai_policy(payload):
     payload = external_ai_policy_payload(payload)
     now = now_str()
     source_system = validate_external_source_system(payload.get("source_system"))
+    allowed_providers = external_ai_policy_list(payload.get("allowed_providers"))
+    allowed_models = external_ai_policy_list(payload.get("allowed_models"))
+    allowed_capabilities = external_ai_policy_list(payload.get("allowed_capabilities"))
+    validate_external_ai_policy_allowlists(allowed_providers, allowed_models, allowed_capabilities)
     record = {
         "id": f"aipolicy_{secrets.token_hex(12)}",
         "source_system": source_system,
         "label": external_ai_policy_preview(payload.get("label"), 160),
         "enabled": boolish(payload.get("enabled")),
-        "allowed_providers": external_ai_policy_list(payload.get("allowed_providers")),
-        "allowed_models": external_ai_policy_list(payload.get("allowed_models")),
-        "allowed_capabilities": external_ai_policy_list(payload.get("allowed_capabilities")),
+        "allowed_providers": allowed_providers,
+        "allowed_models": allowed_models,
+        "allowed_capabilities": allowed_capabilities,
         "max_tokens_per_request": external_ai_policy_int(payload.get("max_tokens_per_request"), EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS, 1, 100000),
         "daily_request_limit": external_ai_policy_int(payload.get("daily_request_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT, 0, 1000000),
         "daily_token_limit": external_ai_policy_int(payload.get("daily_token_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT, 0, 100000000),
@@ -13988,7 +14034,10 @@ def render_external_ai_policies_page():
         "external_ai_policies.html",
         app_name=APP_NAME,
         policies=records,
-        provider_choices=[item["id"] for item in AI_PROVIDER_CONFIGS],
+        provider_choices=EXTERNAL_AI_PROVIDER_OPTIONS,
+        model_choices=EXTERNAL_AI_MODEL_OPTIONS,
+        capability_choices=EXTERNAL_AI_CAPABILITY_OPTIONS,
+        capability_groups=EXTERNAL_AI_CAPABILITY_GROUPS,
         key_store_path=str(external_ai_policy_store_path()),
         default_max_tokens=EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS,
         default_daily_requests=EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT,
@@ -14002,6 +14051,9 @@ def render_external_ai_policies_page():
 def admin_external_ai_policies_page():
     if request.method == "POST":
         payload = dict(request.form)
+        payload["allowed_providers"] = request.form.getlist("allowed_providers")
+        payload["allowed_models"] = request.form.getlist("allowed_models")
+        payload["allowed_capabilities"] = request.form.getlist("allowed_capabilities")
         for key in ("enabled", "allow_streaming", "allow_tool_calling", "store_prompt", "store_response"):
             payload[key] = request.form.get(key) == "1"
         try:

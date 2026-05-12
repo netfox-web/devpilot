@@ -1027,7 +1027,26 @@ class AiManualHandoffTest(unittest.TestCase):
 
         page = self.client().get("/admin/external-ai-policies")
         self.assertEqual(page.status_code, 200)
-        self.assertIn("External AI Policies", page.get_data(as_text=True))
+        page_body = page.get_data(as_text=True)
+        self.assertIn("External AI Policies", page_body)
+        self.assertIn('name="allowed_providers"', page_body)
+        self.assertIn('value="openai"', page_body)
+        self.assertIn('value="gemini"', page_body)
+        self.assertIn('value="claude"', page_body)
+        self.assertIn('value="replicate"', page_body)
+        self.assertIn('value="fal"', page_body)
+        self.assertIn('name="allowed_models" multiple', page_body)
+        self.assertIn('value="gpt-4.1-mini"', page_body)
+        self.assertIn('value="gpt-image-1"', page_body)
+        self.assertIn('value="gemini-1.5-flash"', page_body)
+        self.assertIn('value="claude-3-5-sonnet"', page_body)
+        self.assertIn('value="flux-schnell"', page_body)
+        self.assertIn('value="fal-flux-pro"', page_body)
+        self.assertIn('value="summary"', page_body)
+        self.assertIn('value="image_generation"', page_body)
+        self.assertIn('value="video_generation"', page_body)
+        self.assertIn('value="product_image"', page_body)
+        self.assertIn("Providers are AI platforms", page_body)
 
         self.policy_store_path.write_text("{not-json", encoding="utf-8")
         response = self.client().get("/api/admin/external-ai-policies")
@@ -1042,6 +1061,75 @@ class AiManualHandoffTest(unittest.TestCase):
         with self.app.app_context():
             approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
         self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_policy_validation_rejects_unknown_or_mismatched_allowlists(self):
+        before = self.state_snapshot()
+        valid = self.client().post(
+            "/api/admin/external-ai-policies",
+            json={
+                "source_system": "multi-policy-source",
+                "allowed_providers": ["openai", "gemini", "claude", "replicate", "fal"],
+                "allowed_models": ["gpt-4.1-mini", "gpt-image-1", "gemini-1.5-flash", "claude-3-5-haiku", "flux-schnell", "fal-flux-pro"],
+                "allowed_capabilities": [
+                    "summary",
+                    "classification",
+                    "rewrite",
+                    "extraction",
+                    "planning",
+                    "chat",
+                    "generate",
+                    "image_generation",
+                    "image_editing",
+                    "image_variation",
+                    "prompt_rewrite",
+                    "video_generation",
+                    "image_to_video",
+                    "video_editing",
+                    "ad_creative",
+                    "product_image",
+                    "avatar_generation",
+                ],
+            },
+        )
+        self.assertEqual(valid.status_code, 201, valid.get_data(as_text=True))
+        policy = valid.get_json()["policy"]
+        self.assertEqual(policy["allowed_providers"], ["openai", "gemini", "claude", "replicate", "fal"])
+        self.assertEqual(policy["allowed_models"], ["gpt-4.1-mini", "gpt-image-1", "gemini-1.5-flash", "claude-3-5-haiku", "flux-schnell", "fal-flux-pro"])
+        self.assertIn("image_generation", policy["allowed_capabilities"])
+        self.assertIn("video_generation", policy["allowed_capabilities"])
+        self.assertIn("product_image", policy["allowed_capabilities"])
+        self.assertFalse(policy["enabled"])
+        self.assertFalse(policy["allow_streaming"])
+        self.assertFalse(policy["allow_tool_calling"])
+        self.assertFalse(policy["store_prompt"])
+        self.assertFalse(policy["store_response"])
+
+        cases = [
+            ({"allowed_providers": ["unknown-provider"]}, "unknown provider"),
+            ({"allowed_providers": ["openai"], "allowed_models": ["unknown-model"]}, "unknown model"),
+            ({"allowed_providers": ["openai"], "allowed_capabilities": ["unknown-capability"]}, "unknown capability"),
+            ({"allowed_providers": ["openai"], "allowed_models": ["gemini-1.5-flash"]}, "model/provider mismatch"),
+            ({"allowed_providers": ["replicate"], "allowed_models": ["fal-flux-schnell"]}, "model/provider mismatch"),
+            ({"allowed_models": ["gpt-4.1-mini"]}, "model/provider mismatch"),
+        ]
+        with patch.object(self.app_module, "call_task_provider") as provider_call:
+            with patch.object(self.app_module, "run_ai_task") as run_task:
+                with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                    for index, (overrides, expected_error) in enumerate(cases):
+                        body = {
+                            "source_system": f"invalid-policy-{index}",
+                            "allowed_providers": [],
+                            "allowed_models": [],
+                            "allowed_capabilities": [],
+                        }
+                        body.update(overrides)
+                        response = self.client().post("/api/admin/external-ai-policies", json=body)
+                        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+                        self.assertIn(expected_error, response.get_json()["error"])
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
         self.assertEqual(self.state_snapshot(), before)
 
     def test_external_ai_generate_stub_is_auth_gated_policy_gated_and_side_effect_free(self):
