@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Providers</h1>
+    <div class="text-muted small">Read-only provider configuration inspection. Values are masked and no provider calls are made.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/external-api-keys">External API Keys</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-ai-policies">External AI Policies</a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">Provider Config Status</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Configured</th>
+          <th>Enabled</th>
+          <th>Source</th>
+          <th>Key prefix</th>
+          <th>Checked env vars</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for provider in providers %}
+        <tr>
+          <td class="fw-semibold">{{ provider.name }}</td>
+          <td>
+            {% if provider.configured %}
+              <span class="badge text-bg-success">configured</span>
+            {% else %}
+              <span class="badge text-bg-secondary">missing</span>
+            {% endif %}
+          </td>
+          <td>{{ 'true' if provider.enabled else 'false' }}</td>
+          <td>{{ provider.source or '-' }}</td>
+          <td>{% if provider.key_prefix %}<code>{{ provider.key_prefix }}</code>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+          <td class="small">
+            {% for env_var in provider.checked_env_vars %}
+              <code>{{ env_var }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </td>
+          <td class="small text-muted">{{ provider.notes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="alert alert-info mt-3 mb-0">
+  Provider keys stay inside DevPilot runtime configuration. External systems receive DevPilot external API keys only.
+</div>
+{% endblock %}

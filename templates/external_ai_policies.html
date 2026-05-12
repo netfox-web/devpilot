@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">External AI Policies</h1>
+    <div class="text-muted small">File-backed source policy store: <code>{{ key_store_path }}</code>. No provider calls are made from this page.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/ai-providers">AI Providers</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-api-keys">External API Keys</a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-4">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Create Policy</div>
+      <div class="card-body">
+        <form method="post" action="/admin/external-ai-policies">
+          <label class="form-label">Source system</label>
+          <input class="form-control mb-2" name="source_system" placeholder="crm-system" autocomplete="off" required>
+
+          <label class="form-label">Label</label>
+          <input class="form-control mb-2" name="label" placeholder="CRM summary policy" autocomplete="off">
+
+          <label class="form-label">Allowed providers</label>
+          <input class="form-control mb-2" name="allowed_providers" placeholder="openai">
+
+          <label class="form-label">Allowed models</label>
+          <input class="form-control mb-2" name="allowed_models" placeholder="gpt-4.1-mini">
+
+          <label class="form-label">Allowed capabilities</label>
+          <input class="form-control mb-2" name="allowed_capabilities" placeholder="summary, classification">
+
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Max tokens/request</label>
+              <input class="form-control mb-2" name="max_tokens_per_request" type="number" min="1" value="{{ default_max_tokens }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Daily requests</label>
+              <input class="form-control mb-2" name="daily_request_limit" type="number" min="0" value="{{ default_daily_requests }}">
+            </div>
+          </div>
+
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Daily tokens</label>
+              <input class="form-control mb-2" name="daily_token_limit" type="number" min="0" value="{{ default_daily_tokens }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Monthly budget USD</label>
+              <input class="form-control mb-2" name="monthly_budget_usd" type="number" min="0" step="0.01" value="{{ default_monthly_budget }}">
+            </div>
+          </div>
+
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="enabled" value="1" id="policyEnabled">
+            <label class="form-check-label" for="policyEnabled">Enabled</label>
+          </div>
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="allow_streaming" value="1" id="policyStreaming">
+            <label class="form-check-label" for="policyStreaming">Allow streaming</label>
+          </div>
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="allow_tool_calling" value="1" id="policyTools">
+            <label class="form-check-label" for="policyTools">Allow tool calling</label>
+          </div>
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="store_prompt" value="1" id="policyStorePrompt">
+            <label class="form-check-label" for="policyStorePrompt">Store full prompt</label>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="store_response" value="1" id="policyStoreResponse">
+            <label class="form-check-label" for="policyStoreResponse">Store full response</label>
+          </div>
+
+          <button class="btn btn-primary w-100">Create policy</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-8">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>Policies</span>
+        <span class="badge text-bg-secondary">{{ policies|length }}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Allowlist</th>
+              <th>Limits</th>
+              <th>Storage</th>
+              <th>Updated</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for policy in policies %}
+            <tr>
+              <td>
+                <div class="fw-semibold">{{ policy.source_system }}</div>
+                <div class="small text-muted">{{ policy.label or '-' }}</div>
+              </td>
+              <td>
+                {% if policy.enabled %}
+                  <span class="badge text-bg-success">enabled</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">disabled</span>
+                  <div class="small text-muted">{{ policy.disabled_at or '' }}</div>
+                {% endif %}
+                <div class="small">streaming: {{ 'yes' if policy.allow_streaming else 'no' }}</div>
+                <div class="small">tools: {{ 'yes' if policy.allow_tool_calling else 'no' }}</div>
+              </td>
+              <td class="small">
+                <div><span class="text-muted">providers:</span> {{ policy.allowed_providers|join(', ') or '-' }}</div>
+                <div><span class="text-muted">models:</span> {{ policy.allowed_models|join(', ') or '-' }}</div>
+                <div><span class="text-muted">capabilities:</span> {{ policy.allowed_capabilities|join(', ') or '-' }}</div>
+              </td>
+              <td class="small">
+                <div>max/request: {{ policy.max_tokens_per_request }}</div>
+                <div>daily requests: {{ policy.daily_request_limit }}</div>
+                <div>daily tokens: {{ policy.daily_token_limit }}</div>
+                <div>monthly budget: ${{ policy.monthly_budget_usd }}</div>
+              </td>
+              <td class="small">
+                <div>prompt: {{ 'full' if policy.store_prompt else 'hash/summary only' }}</div>
+                <div>response: {{ 'full' if policy.store_response else 'hash/summary only' }}</div>
+              </td>
+              <td class="small">{{ policy.updated_at or policy.created_at or '-' }}</td>
+              <td class="text-end">
+                {% if policy.enabled %}
+                <form method="post" action="/admin/external-ai-policies/{{ policy.id }}/disable">
+                  <button class="btn btn-sm btn-outline-danger">Disable</button>
+                </form>
+                {% else %}
+                <form method="post" action="/admin/external-ai-policies/{{ policy.id }}/enable">
+                  <button class="btn btn-sm btn-outline-success">Enable</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="text-center text-muted py-4">No external AI policies yet</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-warning mt-3 mb-0">
+  Policies prepare future gateway governance only. Provider calls remain disabled until a later implementation phase.
+</div>
+{% endblock %}

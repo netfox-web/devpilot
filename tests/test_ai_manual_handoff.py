@@ -23,13 +23,19 @@ class AiManualHandoffTest(unittest.TestCase):
         self.marker = "ai_manual_handoff_test"
         self.key_store_dir = tempfile.TemporaryDirectory()
         self.key_store_path = Path(self.key_store_dir.name) / "external_api_keys.json"
+        self.policy_store_path = Path(self.key_store_dir.name) / "external_ai_policies.json"
         self.key_store_patch = patch.object(self.app_module, "EXTERNAL_API_KEY_STORE_PATH", self.key_store_path)
+        self.policy_store_patch = patch.object(self.app_module, "EXTERNAL_AI_POLICY_STORE_PATH", self.policy_store_path)
         self.key_store_env_patch = patch.dict(
             self.app_module.os.environ,
-            {"DEVPILOT_EXTERNAL_API_KEY_STORE_PATH": str(self.key_store_path)},
+            {
+                "DEVPILOT_EXTERNAL_API_KEY_STORE_PATH": str(self.key_store_path),
+                "DEVPILOT_EXTERNAL_AI_POLICY_STORE_PATH": str(self.policy_store_path),
+            },
             clear=False,
         )
         self.key_store_patch.start()
+        self.policy_store_patch.start()
         self.key_store_env_patch.start()
         with self.app.app_context():
             now = self.app_module.now_str()
@@ -72,6 +78,7 @@ class AiManualHandoffTest(unittest.TestCase):
             self.app_module.execute("DELETE FROM project_phases WHERE project_id=?", (self.project_id,))
             self.app_module.execute("DELETE FROM projects WHERE id=?", (self.project_id,))
         self.key_store_env_patch.stop()
+        self.policy_store_patch.stop()
         self.key_store_patch.stop()
         self.key_store_dir.cleanup()
 
@@ -938,6 +945,170 @@ class AiManualHandoffTest(unittest.TestCase):
                 headers=self.external_headers(source="managed-a", key="missing-key"),
             )
         self.assertEqual(response.status_code, 403)
+
+    def test_ai_provider_config_inspection_is_masked_and_read_only(self):
+        before = self.state_snapshot()
+        env = {
+            "OPENAI_API_KEY": "sk-test-openai-secret-value",
+            "GEMINI_API_KEY": "",
+            "GOOGLE_API_KEY": "gemini-test-secret-value",
+            "ANTHROPIC_API_KEY": "",
+            "CLAUDE_API_KEY": "",
+        }
+        with patch.dict(self.app_module.os.environ, env, clear=False):
+            with patch.object(self.app_module, "call_task_provider") as provider_call:
+                with patch.object(self.app_module, "run_ai_task") as run_task:
+                    response = self.client().get("/api/admin/ai-providers")
+                    page = self.client().get("/admin/ai-providers")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        providers = {item["id"]: item for item in payload["providers"]}
+        self.assertTrue(providers["openai"]["configured"])
+        self.assertTrue(providers["gemini"]["configured"])
+        self.assertFalse(providers["claude"]["configured"])
+        self.assertEqual(providers["openai"]["key_prefix"], "sk-tes...")
+        self.assertNotIn("sk-test-openai-secret-value", response.get_data(as_text=True))
+        self.assertNotIn("gemini-test-secret-value", response.get_data(as_text=True))
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["provider_calls_executed"])
+
+        self.assertEqual(page.status_code, 200)
+        page_body = page.get_data(as_text=True)
+        self.assertIn("AI Providers", page_body)
+        self.assertNotIn("sk-test-openai-secret-value", page_body)
+        self.assertNotIn("gemini-test-secret-value", page_body)
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_policy_manager_create_list_toggle_and_safe_defaults(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        response = self.client().post(
+            "/api/admin/external-ai-policies",
+            json={
+                "source_system": "policy-source",
+                "label": "Policy source summary",
+                "allowed_providers": "openai, gemini",
+                "allowed_models": "gpt-4.1-mini",
+                "allowed_capabilities": "summary, classification",
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        policy = response.get_json()["policy"]
+        self.assertEqual(policy["source_system"], "policy-source")
+        self.assertFalse(policy["enabled"])
+        self.assertEqual(policy["allowed_providers"], ["openai", "gemini"])
+        self.assertEqual(policy["allowed_models"], ["gpt-4.1-mini"])
+        self.assertEqual(policy["allowed_capabilities"], ["summary", "classification"])
+        self.assertFalse(policy["allow_streaming"])
+        self.assertFalse(policy["allow_tool_calling"])
+        self.assertFalse(policy["store_prompt"])
+        self.assertFalse(policy["store_response"])
+        self.assertEqual(policy["max_tokens_per_request"], self.app_module.EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS)
+        self.assertTrue(policy["disabled_at"])
+
+        response = self.client().get("/api/admin/external-ai-policies")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(policy["id"], {item["id"] for item in response.get_json()["policies"]})
+
+        response = self.client().post(f"/api/admin/external-ai-policies/{policy['id']}/enable", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["policy"]["enabled"])
+        self.assertEqual(response.get_json()["policy"]["disabled_at"], "")
+
+        response = self.client().post(f"/api/admin/external-ai-policies/{policy['id']}/disable", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["policy"]["enabled"])
+        self.assertTrue(response.get_json()["policy"]["disabled_at"])
+
+        page = self.client().get("/admin/external-ai-policies")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("External AI Policies", page.get_data(as_text=True))
+
+        self.policy_store_path.write_text("{not-json", encoding="utf-8")
+        response = self.client().get("/api/admin/external-ai-policies")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["policies"], [])
+
+        self.policy_store_path.write_text(json.dumps({"policies": [{"id": "missing-source"}]}), encoding="utf-8")
+        response = self.client().get("/api/admin/external-ai-policies")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["policies"], [])
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_generate_stub_is_auth_gated_policy_gated_and_side_effect_free(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        body = {
+            "capability": "summary",
+            "model": "gpt-4.1-mini",
+            "prompt": "Summarize this safely.",
+            "external_ref": "stub-ticket-1",
+        }
+
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
+            response = self.client().post("/api/external/ai/generate", json=body)
+        self.assertEqual(response.status_code, 403)
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            response = self.client().post(
+                "/api/external/ai/generate",
+                json=body,
+                headers=self.external_headers(source="external-a", key="wrong-key"),
+            )
+        self.assertEqual(response.status_code, 403)
+
+        headers = self.external_headers(source="external-a", key="key-a", request_id="gateway-req", idempotency_key="gateway-idem")
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+        self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["error"], "external_ai_policy_not_enabled")
+
+        policy = self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["openai"],
+            "allowed_models": ["gpt-4.1-mini"],
+            "allowed_capabilities": ["summary"],
+        })
+        self.assertTrue(policy["enabled"])
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            with patch.object(self.app_module, "call_task_provider") as provider_call:
+                with patch.object(self.app_module, "run_ai_task") as run_task:
+                    with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                            with patch.object(self.app_module, "save_handoff") as legacy_save:
+                                response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+
+        self.assertEqual(response.status_code, 501, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "external_ai_gateway_not_enabled")
+        self.assertEqual(payload["source_system"], "external-a")
+        self.assertEqual(payload["request_id"], "gateway-req")
+        self.assertEqual(payload["policy_id"], policy["id"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(payload["side_effects"])
+        self.assertFalse(payload["provider_calls_executed"])
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
 
 
 if __name__ == "__main__":

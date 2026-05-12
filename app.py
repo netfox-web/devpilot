@@ -46,6 +46,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "project_manager.db"))
 EXTERNAL_API_KEY_STORE_PATH = DATA_DIR / "external_api_keys.json"
+EXTERNAL_AI_POLICY_STORE_PATH = DATA_DIR / "external_ai_policies.json"
 API_TOKEN = os.getenv("API_TOKEN", "change-me-token")
 _DEV_PILOT_API_URL_RAW = os.getenv("DEV_PILOT_API_URL", "").strip().rstrip("/")
 # 一鍵複製回寫指令 / README 範例皆以 .env 的 DEV_PILOT_API_URL 為準；未設定時預設本機開發埠
@@ -1646,6 +1647,246 @@ def verify_managed_external_api_key(source_system, raw_key, records=None):
         if hmac.compare_digest(record.get("key_hash") or "", key_hash):
             return record
     return None
+
+
+AI_PROVIDER_CONFIGS = [
+    {
+        "id": "openai",
+        "name": "OpenAI",
+        "env_vars": ["OPENAI_API_KEY"],
+        "notes": "Env-based OpenAI key inspection only; no provider call is made.",
+    },
+    {
+        "id": "gemini",
+        "name": "Gemini",
+        "env_vars": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "notes": "Env-based Gemini/Google key inspection only; no provider call is made.",
+    },
+    {
+        "id": "claude",
+        "name": "Claude",
+        "env_vars": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
+        "notes": "Env-based Claude/Anthropic key inspection only; no provider call is made.",
+    },
+]
+
+
+def safe_secret_prefix(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) < 8:
+        return "[set]"
+    return f"{text[:6]}..."
+
+
+def ai_provider_config_status():
+    providers = []
+    for config in AI_PROVIDER_CONFIGS:
+        matched_var = ""
+        matched_value = ""
+        for env_var in config["env_vars"]:
+            value = os.getenv(env_var, "").strip()
+            if value:
+                matched_var = env_var
+                matched_value = value
+                break
+        configured = bool(matched_value)
+        providers.append({
+            "id": config["id"],
+            "name": config["name"],
+            "configured": configured,
+            "enabled": configured,
+            "key_prefix": safe_secret_prefix(matched_value),
+            "source": "env" if configured else "",
+            "env_var": matched_var,
+            "checked_env_vars": list(config["env_vars"]),
+            "notes": config["notes"] if configured else "No recognized environment variable is configured.",
+        })
+    return providers
+
+
+EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS = 1000
+EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT = 100
+EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT = 50000
+EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD = 10.0
+
+
+def external_ai_policy_store_path():
+    raw_path = os.getenv("DEVPILOT_EXTERNAL_AI_POLICY_STORE_PATH", "").strip()
+    return Path(raw_path) if raw_path else EXTERNAL_AI_POLICY_STORE_PATH
+
+
+def external_ai_policy_preview(value, limit=200):
+    return str(value or "").strip()[:limit]
+
+
+def external_ai_policy_list(value):
+    if isinstance(value, list):
+        items = value
+    else:
+        items = re.split(r"[,\r\n]+", str(value or ""))
+    cleaned = []
+    seen = set()
+    for item in items:
+        text = external_ai_policy_preview(item, 120).lower()
+        if not text or text in seen:
+            continue
+        cleaned.append(text)
+        seen.add(text)
+    return cleaned
+
+
+def external_ai_policy_int(value, default, minimum=0, maximum=10000000):
+    number = coerce_int(value, default)
+    return max(minimum, min(number, maximum))
+
+
+def external_ai_policy_float(value, default, minimum=0.0, maximum=1000000.0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(number, maximum))
+
+
+def normalize_external_ai_policy_record(record):
+    if not isinstance(record, dict):
+        return None
+    policy_id = external_ai_policy_preview(record.get("id"), 80)
+    source_system = external_ai_policy_preview(record.get("source_system"), 120)
+    if not policy_id or not source_system:
+        return None
+    return {
+        "id": policy_id,
+        "source_system": source_system,
+        "label": external_ai_policy_preview(record.get("label"), 160),
+        "enabled": boolish(record.get("enabled")),
+        "allowed_providers": external_ai_policy_list(record.get("allowed_providers")),
+        "allowed_models": external_ai_policy_list(record.get("allowed_models")),
+        "allowed_capabilities": external_ai_policy_list(record.get("allowed_capabilities")),
+        "max_tokens_per_request": external_ai_policy_int(record.get("max_tokens_per_request"), EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS, 1, 100000),
+        "daily_request_limit": external_ai_policy_int(record.get("daily_request_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT, 0, 1000000),
+        "daily_token_limit": external_ai_policy_int(record.get("daily_token_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT, 0, 100000000),
+        "monthly_budget_usd": external_ai_policy_float(record.get("monthly_budget_usd"), EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD, 0.0, 1000000.0),
+        "allow_streaming": boolish(record.get("allow_streaming")),
+        "allow_tool_calling": boolish(record.get("allow_tool_calling")),
+        "store_prompt": boolish(record.get("store_prompt")),
+        "store_response": boolish(record.get("store_response")),
+        "created_at": external_ai_policy_preview(record.get("created_at"), 64),
+        "updated_at": external_ai_policy_preview(record.get("updated_at"), 64),
+        "disabled_at": external_ai_policy_preview(record.get("disabled_at") or record.get("revoked_at"), 64),
+    }
+
+
+def load_external_ai_policy_records():
+    path = external_ai_policy_store_path()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, TypeError):
+        return []
+    items = raw.get("policies") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return []
+    records = []
+    for item in items:
+        record = normalize_external_ai_policy_record(item)
+        if record:
+            records.append(record)
+    return records
+
+
+def save_external_ai_policy_records(records):
+    path = external_ai_policy_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [record for record in (normalize_external_ai_policy_record(item) for item in records) if record]
+    payload = {"policies": normalized, "updated_at": now_str()}
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def external_ai_policy_payload(source):
+    source = source or {}
+    return {
+        "source_system": source.get("source_system"),
+        "label": source.get("label"),
+        "enabled": source.get("enabled"),
+        "allowed_providers": source.get("allowed_providers"),
+        "allowed_models": source.get("allowed_models"),
+        "allowed_capabilities": source.get("allowed_capabilities"),
+        "max_tokens_per_request": source.get("max_tokens_per_request"),
+        "daily_request_limit": source.get("daily_request_limit"),
+        "daily_token_limit": source.get("daily_token_limit"),
+        "monthly_budget_usd": source.get("monthly_budget_usd"),
+        "allow_streaming": source.get("allow_streaming"),
+        "allow_tool_calling": source.get("allow_tool_calling"),
+        "store_prompt": source.get("store_prompt"),
+        "store_response": source.get("store_response"),
+    }
+
+
+def create_external_ai_policy(payload):
+    payload = external_ai_policy_payload(payload)
+    now = now_str()
+    source_system = validate_external_source_system(payload.get("source_system"))
+    record = {
+        "id": f"aipolicy_{secrets.token_hex(12)}",
+        "source_system": source_system,
+        "label": external_ai_policy_preview(payload.get("label"), 160),
+        "enabled": boolish(payload.get("enabled")),
+        "allowed_providers": external_ai_policy_list(payload.get("allowed_providers")),
+        "allowed_models": external_ai_policy_list(payload.get("allowed_models")),
+        "allowed_capabilities": external_ai_policy_list(payload.get("allowed_capabilities")),
+        "max_tokens_per_request": external_ai_policy_int(payload.get("max_tokens_per_request"), EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS, 1, 100000),
+        "daily_request_limit": external_ai_policy_int(payload.get("daily_request_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT, 0, 1000000),
+        "daily_token_limit": external_ai_policy_int(payload.get("daily_token_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT, 0, 100000000),
+        "monthly_budget_usd": external_ai_policy_float(payload.get("monthly_budget_usd"), EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD, 0.0, 1000000.0),
+        "allow_streaming": boolish(payload.get("allow_streaming")),
+        "allow_tool_calling": boolish(payload.get("allow_tool_calling")),
+        "store_prompt": boolish(payload.get("store_prompt")),
+        "store_response": boolish(payload.get("store_response")),
+        "created_at": now,
+        "updated_at": now,
+        "disabled_at": "" if boolish(payload.get("enabled")) else now,
+    }
+    records = load_external_ai_policy_records()
+    records.append(record)
+    save_external_ai_policy_records(records)
+    return record
+
+
+def set_external_ai_policy_enabled(policy_id, enabled):
+    policy_id = external_ai_policy_preview(policy_id, 80)
+    records = load_external_ai_policy_records()
+    updated = None
+    now = now_str()
+    for record in records:
+        if record.get("id") == policy_id:
+            record["enabled"] = bool(enabled)
+            record["updated_at"] = now
+            record["disabled_at"] = "" if enabled else now
+            updated = record
+            break
+    if not updated:
+        raise LookupError("external AI policy not found")
+    save_external_ai_policy_records(records)
+    return updated
+
+
+def external_ai_policy_for_source(source_system, enabled_only=False):
+    source_system = str(source_system or "").strip()
+    matches = [record for record in load_external_ai_policy_records() if record.get("source_system") == source_system]
+    if enabled_only:
+        matches = [record for record in matches if record.get("enabled")]
+    if not matches:
+        return None
+    return sorted(matches, key=lambda item: (item.get("updated_at") or "", item.get("created_at") or ""), reverse=True)[0]
 
 
 def external_api_allow_all_sources():
@@ -13730,6 +13971,70 @@ def admin_external_api_key_revoke(key_id):
     return redirect(url_for("admin_external_api_keys_page"))
 
 
+@app.route("/admin/ai-providers")
+@require_roles("owner", "admin")
+def admin_ai_providers_page():
+    return render_template(
+        "ai_providers.html",
+        app_name=APP_NAME,
+        providers=ai_provider_config_status(),
+    )
+
+
+def render_external_ai_policies_page():
+    records = load_external_ai_policy_records()
+    records.sort(key=lambda item: (item.get("updated_at") or "", item.get("created_at") or "", item.get("id") or ""), reverse=True)
+    return render_template(
+        "external_ai_policies.html",
+        app_name=APP_NAME,
+        policies=records,
+        provider_choices=[item["id"] for item in AI_PROVIDER_CONFIGS],
+        key_store_path=str(external_ai_policy_store_path()),
+        default_max_tokens=EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS,
+        default_daily_requests=EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT,
+        default_daily_tokens=EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT,
+        default_monthly_budget=EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD,
+    )
+
+
+@app.route("/admin/external-ai-policies", methods=["GET", "POST"])
+@require_roles("owner", "admin")
+def admin_external_ai_policies_page():
+    if request.method == "POST":
+        payload = dict(request.form)
+        for key in ("enabled", "allow_streaming", "allow_tool_calling", "store_prompt", "store_response"):
+            payload[key] = request.form.get(key) == "1"
+        try:
+            record = create_external_ai_policy(payload)
+            flash(f"External AI policy created for {record['source_system']}.")
+            return redirect(url_for("admin_external_ai_policies_page"))
+        except ValueError as exc:
+            flash(str(exc))
+    return render_external_ai_policies_page()
+
+
+@app.route("/admin/external-ai-policies/<policy_id>/disable", methods=["POST"])
+@require_roles("owner", "admin")
+def admin_external_ai_policy_disable(policy_id):
+    try:
+        record = set_external_ai_policy_enabled(policy_id, False)
+        flash(f"External AI policy disabled for {record['source_system']}.")
+    except LookupError as exc:
+        flash(str(exc))
+    return redirect(url_for("admin_external_ai_policies_page"))
+
+
+@app.route("/admin/external-ai-policies/<policy_id>/enable", methods=["POST"])
+@require_roles("owner", "admin")
+def admin_external_ai_policy_enable(policy_id):
+    try:
+        record = set_external_ai_policy_enabled(policy_id, True)
+        flash(f"External AI policy enabled for {record['source_system']}.")
+    except LookupError as exc:
+        flash(str(exc))
+    return redirect(url_for("admin_external_ai_policies_page"))
+
+
 @app.route("/api/api-keys", methods=["POST"])
 @require_api_roles("owner")
 def api_api_key_create():
@@ -18276,6 +18581,60 @@ def api_admin_external_api_key_revoke(key_id):
     })
 
 
+@app.route("/api/admin/ai-providers", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_ai_providers():
+    providers = ai_provider_config_status()
+    return jsonify({
+        "ok": True,
+        "providers": providers,
+        "count": len(providers),
+        "read_only": True,
+        "provider_calls_executed": False,
+    })
+
+
+@app.route("/api/admin/external-ai-policies", methods=["GET", "POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_policies():
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        try:
+            record = create_external_ai_policy(payload)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "policy": record, "execution_allowed": False}), 201
+    records = load_external_ai_policy_records()
+    records.sort(key=lambda item: (item.get("updated_at") or "", item.get("created_at") or "", item.get("id") or ""), reverse=True)
+    return jsonify({
+        "ok": True,
+        "policies": records,
+        "count": len(records),
+        "read_only": True,
+        "execution_allowed": False,
+    })
+
+
+@app.route("/api/admin/external-ai-policies/<policy_id>/disable", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_policy_disable(policy_id):
+    try:
+        record = set_external_ai_policy_enabled(policy_id, False)
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    return jsonify({"ok": True, "policy": record, "execution_allowed": False})
+
+
+@app.route("/api/admin/external-ai-policies/<policy_id>/enable", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_policy_enable(policy_id):
+    try:
+        record = set_external_ai_policy_enabled(policy_id, True)
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    return jsonify({"ok": True, "policy": record, "execution_allowed": False})
+
+
 @app.route("/api/ai-handoffs", methods=["GET"])
 @require_api_roles("owner", "admin", "ai")
 def api_ai_handoffs():
@@ -18407,6 +18766,34 @@ def api_external_ai_handoff_detail(handoff_id):
         "read_only": True,
         "execution_allowed": False,
     })
+
+
+@app.route("/api/external/ai/generate", methods=["POST"])
+@require_external_api_key
+def api_external_ai_generate_disabled():
+    identity = g.external_api_identity
+    policy = external_ai_policy_for_source(identity["source_system"], enabled_only=True)
+    if not policy:
+        return jsonify({
+            "ok": False,
+            "error": "external_ai_policy_not_enabled",
+            "message": "External AI Gateway policy is not enabled for this source system.",
+            "source_system": identity["source_system"],
+            "request_id": identity.get("request_id") or "",
+            "execution_allowed": False,
+            "side_effects": False,
+        }), 403
+    return jsonify({
+        "ok": False,
+        "error": "external_ai_gateway_not_enabled",
+        "message": "External AI Gateway provider calls are not enabled yet.",
+        "source_system": identity["source_system"],
+        "request_id": identity.get("request_id") or "",
+        "policy_id": policy.get("id") or "",
+        "execution_allowed": False,
+        "side_effects": False,
+        "provider_calls_executed": False,
+    }), 501
 
 
 @app.route("/api/ai/dispatch", methods=["POST"])
