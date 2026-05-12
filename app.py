@@ -10358,6 +10358,12 @@ def ai_message_thread_summaries(limit=50, project_id=None):
 
 
 AI_TASK_HANDOFF_STATUSES = {"pending", "accepted", "completed", "rejected"}
+AI_TASK_HANDOFF_TRANSITIONS = {
+    "pending": {"accepted", "rejected"},
+    "accepted": {"completed", "rejected"},
+    "completed": set(),
+    "rejected": set(),
+}
 AI_TASK_HANDOFF_HIGH_RISK_LEVELS = {
     "high",
     "critical",
@@ -10460,7 +10466,7 @@ def ai_task_handoff_row(handoff_id):
     return item
 
 
-def ai_handoff_rows(limit=100, project_id=None, task_id=None, status=None, risk_level=None, from_agent=None, to_agent=None):
+def ai_handoff_rows(limit=100, project_id=None, task_id=None, status=None, risk_level=None, from_agent=None, to_agent=None, q=None):
     limit = max(1, min(coerce_int(limit, 100), 300))
     clauses = [
         "COALESCE(h.is_hidden, 0)=0",
@@ -10481,6 +10487,20 @@ def ai_handoff_rows(limit=100, project_id=None, task_id=None, status=None, risk_
         task_id_int = coerce_int(task_id, None)
         clauses.append("(h.conversation_ref=? OR COALESCE(h.api_payload, '') LIKE ? OR COALESCE(h.api_payload, '') LIKE ?)")
         params.extend([f"ai-task:{task_id_int}", f"%\"task_id\": {task_id_int}%", f"%\"task_id\":{task_id_int}%"])
+    if q not in (None, ""):
+        needle = f"%{str(q).strip()}%"
+        clauses.append(
+            """(
+                COALESCE(h.summary, '') LIKE ?
+                OR COALESCE(h.next_steps, '') LIKE ?
+                OR COALESCE(h.source, '') LIKE ?
+                OR COALESCE(h.agent_name, '') LIKE ?
+                OR COALESCE(h.conversation_ref, '') LIKE ?
+                OR COALESCE(h.api_payload, '') LIKE ?
+                OR COALESCE(p.name, '') LIKE ?
+            )"""
+        )
+        params.extend([needle, needle, needle, needle, needle, needle, needle])
     params.append(limit)
     rows = query_all(
         f"""SELECT h.*, p.name AS project_name
@@ -10583,12 +10603,18 @@ def update_ai_task_handoff_status(handoff_id, status, payload=None):
     next_status = normalize_ai_handoff_status(status, None)
     if not next_status:
         raise ValueError("invalid handoff status")
+    payload = payload or {}
     row = query_one("SELECT * FROM handoff_logs WHERE id=? AND COALESCE(is_hidden, 0)=0", (handoff_id,))
     if not row:
         raise LookupError("handoff not found")
     public = ai_task_handoff_public(row)
     if not public.get("task_id"):
         raise ValueError("handoff is not linked to an AI task")
+    current_status = normalize_ai_handoff_status(public.get("handoff_status") or public.get("status"), None)
+    if next_status not in AI_TASK_HANDOFF_TRANSITIONS.get(current_status, set()):
+        raise ValueError(f"invalid handoff transition: {current_status} -> {next_status}")
+    if next_status == "rejected" and not str(payload.get("reason") or payload.get("reject_reason") or payload.get("rejection_reason") or "").strip():
+        raise ValueError("reject reason is required")
     data = parse_json_object(row["api_payload"])
     now = now_str()
     data.update({
@@ -10622,8 +10648,7 @@ def update_ai_task_handoff_status(handoff_id, status, payload=None):
         data["completed_at"] = now
     if next_status == "rejected":
         data["rejected_at"] = now
-        if payload and payload.get("reason"):
-            data["rejection_reason"] = str(payload.get("reason")).strip()
+        data["rejection_reason"] = str(payload.get("reason") or payload.get("reject_reason") or payload.get("rejection_reason")).strip()
     execute(
         "UPDATE handoff_logs SET api_payload=? WHERE id=?",
         (json.dumps(data, ensure_ascii=False), handoff_id),
@@ -12725,6 +12750,7 @@ def ai_handoffs_page():
         "risk_level": request.args.get("risk_level") or "",
         "from_agent": request.args.get("from_agent") or "",
         "to_agent": request.args.get("to_agent") or "",
+        "q": request.args.get("q") or "",
         "limit": max(1, min(coerce_int(request.args.get("limit"), 100), 300)),
     }
     return render_template(
@@ -17695,6 +17721,7 @@ def api_ai_handoffs():
         risk_level=request.args.get("risk_level"),
         from_agent=request.args.get("from_agent"),
         to_agent=request.args.get("to_agent"),
+        q=request.args.get("q"),
     )
     return jsonify({
         "ok": True,

@@ -63,17 +63,19 @@ class AiManualHandoffTest(unittest.TestCase):
             sess["user_id"] = self.user_id
         return client
 
-    def handoff_payload(self, risk_level="low"):
-        return {
+    def handoff_payload(self, risk_level="low", **overrides):
+        payload = {
             "from_agent": "planner-ai",
             "to_agent": "executor-ai",
             "reason": f"Manual handoff fixture {self.marker}",
             "next_step": "Review the handoff and respond manually.",
             "risk_level": risk_level,
         }
+        payload.update(overrides)
+        return payload
 
-    def create_handoff(self, risk_level="low"):
-        response = self.client().post(f"/api/tasks/{self.task['id']}/handoff", json=self.handoff_payload(risk_level))
+    def create_handoff(self, risk_level="low", **overrides):
+        response = self.client().post(f"/api/tasks/{self.task['id']}/handoff", json=self.handoff_payload(risk_level, **overrides))
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
         return response.get_json()["handoff"]
 
@@ -124,14 +126,13 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("Manual AI Handoff", response.get_data(as_text=True))
 
     def test_accept_complete_reject_handoff(self):
-        accepted = self.create_handoff()
-        response = self.client().post(f"/api/handoffs/{accepted['id']}/accept", json={})
+        completed = self.create_handoff()
+        response = self.client().post(f"/api/handoffs/{completed['id']}/accept", json={})
         self.assertEqual(response.status_code, 200)
         handoff = response.get_json()["handoff"]
         self.assertEqual(handoff["handoff_status"], "accepted")
         self.assertTrue(handoff["accepted_at"])
 
-        completed = self.create_handoff()
         response = self.client().post(f"/api/handoffs/{completed['id']}/complete", json={})
         self.assertEqual(response.status_code, 200)
         handoff = response.get_json()["handoff"]
@@ -144,6 +145,45 @@ class AiManualHandoffTest(unittest.TestCase):
         handoff = response.get_json()["handoff"]
         self.assertEqual(handoff["handoff_status"], "rejected")
         self.assertTrue(handoff["rejected_at"])
+
+    def test_handoff_lifecycle_blocks_invalid_transitions_and_requires_reject_reason(self):
+        before = self.state_snapshot()
+        pending = self.create_handoff()
+
+        response = self.client().post(f"/api/handoffs/{pending['id']}/complete", json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("invalid handoff transition", response.get_json()["error"])
+
+        response = self.client().post(f"/api/handoffs/{pending['id']}/reject", json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("reject reason is required", response.get_json()["error"])
+
+        response = self.client().post(f"/api/handoffs/{pending['id']}/accept", json={})
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client().post(f"/api/handoffs/{pending['id']}/accept", json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("invalid handoff transition", response.get_json()["error"])
+
+        response = self.client().post(f"/api/handoffs/{pending['id']}/complete", json={})
+        self.assertEqual(response.status_code, 200)
+
+        for action in ("accept", "complete", "reject"):
+            body = {"reason": "Already completed."} if action == "reject" else {}
+            response = self.client().post(f"/api/handoffs/{pending['id']}/{action}", json=body)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("invalid handoff transition", response.get_json()["error"])
+
+        rejected = self.create_handoff()
+        response = self.client().post(f"/api/handoffs/{rejected['id']}/reject", json={"reason": "Not needed."})
+        self.assertEqual(response.status_code, 200)
+        for action in ("accept", "complete", "reject"):
+            body = {"reason": "Already rejected."} if action == "reject" else {}
+            response = self.client().post(f"/api/handoffs/{rejected['id']}/{action}", json=body)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("invalid handoff transition", response.get_json()["error"])
+
+        self.assertEqual(self.state_snapshot(), before)
 
     def test_high_risk_handoff_has_no_external_or_approval_side_effects(self):
         with self.app.app_context():
@@ -178,6 +218,38 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["execution_allowed"])
         self.assertTrue(any(item.get("id") == created["id"] for item in payload["items"]))
+
+    def test_ai_handoffs_filters_and_search(self):
+        match = self.create_handoff(
+            from_agent="planner-search",
+            to_agent="executor-search",
+            reason="Need focused verification for searchable handoff",
+            next_step="Searchable follow-up step",
+            risk_level="medium",
+        )
+        other = self.create_handoff(
+            from_agent="other-planner",
+            to_agent="other-executor",
+            reason="Different handoff fixture",
+            next_step="Different next step",
+            risk_level="low",
+        )
+        self.client().post(f"/api/handoffs/{match['id']}/accept", json={})
+
+        response = self.client().get("/api/ai-handoffs?q=searchable&status=accepted&risk_level=medium&from_agent=planner-search&to_agent=executor-search")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        ids = {item["id"] for item in payload["items"]}
+        self.assertIn(match["id"], ids)
+        self.assertNotIn(other["id"], ids)
+
+        response = self.client().get("/ai-handoffs?q=searchable&status=accepted&from_agent=planner-search&to_agent=executor-search")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("Searchable follow-up step", body)
+        self.assertIn("planner-search", body)
+        self.assertIn('name="q"', body)
+        self.assertIn('name="from_agent"', body)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,10 @@
 </div>
 
 <form class="row g-2 align-items-end mb-3" method="get" action="/ai-handoffs">
+  <div class="col-lg-3 col-md-6">
+    <label class="form-label small text-muted">Search</label>
+    <input class="form-control form-control-sm" name="q" value="{{ filters.q or '' }}" placeholder="Reason, next step, agent, project">
+  </div>
   <div class="col-lg-2 col-md-4">
     <label class="form-label small text-muted">Project</label>
     <select class="form-select form-select-sm" name="project_id">
@@ -44,6 +48,10 @@
   <div class="col-lg-2 col-md-4">
     <label class="form-label small text-muted">Risk</label>
     <input class="form-control form-control-sm" name="risk_level" value="{{ filters.risk_level or '' }}" placeholder="low / high">
+  </div>
+  <div class="col-lg-2 col-md-4">
+    <label class="form-label small text-muted">From agent</label>
+    <input class="form-control form-control-sm" name="from_agent" value="{{ filters.from_agent or '' }}">
   </div>
   <div class="col-lg-2 col-md-4">
     <label class="form-label small text-muted">To agent</label>
@@ -96,9 +104,9 @@
             <td class="small text-muted">{{ handoff.created_at or '-' }}</td>
             <td class="text-end">
               <div class="btn-group btn-group-sm">
-                <button class="btn btn-outline-primary js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="accept" {% if handoff.handoff_status == 'accepted' %}disabled{% endif %}>Accept</button>
-                <button class="btn btn-outline-success js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="complete" {% if handoff.handoff_status == 'completed' %}disabled{% endif %}>Complete</button>
-                <button class="btn btn-outline-danger js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="reject" {% if handoff.handoff_status == 'rejected' %}disabled{% endif %}>Reject</button>
+                <button class="btn btn-outline-primary js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="accept" {% if handoff.handoff_status != 'pending' %}disabled{% endif %}>Accept</button>
+                <button class="btn btn-outline-success js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="complete" {% if handoff.handoff_status != 'accepted' %}disabled{% endif %}>Complete</button>
+                <button class="btn btn-outline-danger js-handoff-action" data-handoff-id="{{ handoff.id }}" data-action="reject" {% if handoff.handoff_status not in ['pending', 'accepted'] %}disabled{% endif %}>Reject</button>
               </div>
             </td>
           </tr>
@@ -115,11 +123,19 @@ document.querySelectorAll('.js-handoff-action').forEach((button) => {
   button.addEventListener('click', async () => {
     const handoffId = button.dataset.handoffId;
     const action = button.dataset.action;
+    const body = {};
+    if (action === 'reject') {
+      const reason = window.prompt('Reject reason');
+      if (!reason || !reason.trim()) {
+        return;
+      }
+      body.reason = reason.trim();
+    }
     button.disabled = true;
     const response = await fetch(`/api/handoffs/${handoffId}/${action}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({})
+      body: JSON.stringify(body)
     });
     if (!response.ok) {
       button.disabled = false;
