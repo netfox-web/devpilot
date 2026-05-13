@@ -25,11 +25,15 @@ class AiManualHandoffTest(unittest.TestCase):
         self.key_store_path = Path(self.key_store_dir.name) / "external_api_keys.json"
         self.policy_store_path = Path(self.key_store_dir.name) / "external_ai_policies.json"
         self.profile_store_path = Path(self.key_store_dir.name) / "external_ai_permission_profiles.json"
+        self.generation_results_path = Path(self.key_store_dir.name) / "external_ai_generation_results.json"
+        self.usage_log_path = Path(self.key_store_dir.name) / "external_ai_usage_log.json"
         self.external_project_registry_path = Path(self.key_store_dir.name) / "external_project_registry.json"
         self.external_project_events_path = Path(self.key_store_dir.name) / "external_project_events.json"
         self.key_store_patch = patch.object(self.app_module, "EXTERNAL_API_KEY_STORE_PATH", self.key_store_path)
         self.policy_store_patch = patch.object(self.app_module, "EXTERNAL_AI_POLICY_STORE_PATH", self.policy_store_path)
         self.profile_store_patch = patch.object(self.app_module, "EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH", self.profile_store_path)
+        self.generation_results_patch = patch.object(self.app_module, "EXTERNAL_AI_GENERATION_RESULTS_STORE_PATH", self.generation_results_path)
+        self.usage_log_patch = patch.object(self.app_module, "EXTERNAL_AI_USAGE_LOG_STORE_PATH", self.usage_log_path)
         self.external_project_registry_patch = patch.object(self.app_module, "EXTERNAL_PROJECT_REGISTRY_STORE_PATH", self.external_project_registry_path)
         self.external_project_events_patch = patch.object(self.app_module, "EXTERNAL_PROJECT_EVENTS_STORE_PATH", self.external_project_events_path)
         self.key_store_env_patch = patch.dict(
@@ -38,6 +42,8 @@ class AiManualHandoffTest(unittest.TestCase):
                 "DEVPILOT_EXTERNAL_API_KEY_STORE_PATH": str(self.key_store_path),
                 "DEVPILOT_EXTERNAL_AI_POLICY_STORE_PATH": str(self.policy_store_path),
                 "DEVPILOT_EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH": str(self.profile_store_path),
+                "DEVPILOT_EXTERNAL_AI_GENERATION_RESULTS_PATH": str(self.generation_results_path),
+                "DEVPILOT_EXTERNAL_AI_USAGE_LOG_PATH": str(self.usage_log_path),
                 "DEVPILOT_EXTERNAL_PROJECT_REGISTRY_PATH": str(self.external_project_registry_path),
                 "DEVPILOT_EXTERNAL_PROJECT_EVENTS_PATH": str(self.external_project_events_path),
             },
@@ -46,6 +52,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.key_store_patch.start()
         self.policy_store_patch.start()
         self.profile_store_patch.start()
+        self.generation_results_patch.start()
+        self.usage_log_patch.start()
         self.external_project_registry_patch.start()
         self.external_project_events_patch.start()
         self.key_store_env_patch.start()
@@ -92,6 +100,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.key_store_env_patch.stop()
         self.external_project_events_patch.stop()
         self.external_project_registry_patch.stop()
+        self.usage_log_patch.stop()
+        self.generation_results_patch.stop()
         self.profile_store_patch.stop()
         self.policy_store_patch.stop()
         self.key_store_patch.stop()
@@ -1616,15 +1626,15 @@ class AiManualHandoffTest(unittest.TestCase):
         console_dispatch.assert_not_called()
         self.assertEqual(self.state_snapshot(), before)
 
-    def test_external_ai_generate_stub_is_auth_gated_policy_gated_and_side_effect_free(self):
+    def test_external_ai_generate_rejects_auth_policy_and_mvp_violations(self):
         before = self.state_snapshot()
         with self.app.app_context():
             approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
         body = {
             "capability": "summary",
-            "model": "gpt-4.1-mini",
+            "model": "gemini-1.5-flash",
             "prompt": "Summarize this safely.",
-            "external_ref": "stub-ticket-1",
+            "external_ref": "gateway-ticket-1",
         }
 
         with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
@@ -1645,6 +1655,315 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
         self.assertEqual(response.get_json()["error"], "external_ai_policy_not_enabled")
 
+        disabled_policy = self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": False,
+            "allowed_providers": ["gemini"],
+            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_capabilities": ["summary"],
+        })
+        self.assertFalse(disabled_policy["enabled"])
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+        self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["error"], "external_ai_policy_not_enabled")
+
+        policy_cases = [
+            (
+                "provider_not_allowed",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["openai"],
+                    "allowed_models": ["gpt-4.1-mini"],
+                    "allowed_capabilities": ["summary"],
+                },
+                body,
+                403,
+                "external_ai_provider_not_allowed",
+            ),
+            (
+                "model_not_allowed",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["gemini"],
+                    "allowed_models": ["gemini-1.5-pro"],
+                    "allowed_capabilities": ["summary"],
+                },
+                body,
+                403,
+                "external_ai_model_not_allowed",
+            ),
+            (
+                "capability_not_allowed",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["gemini"],
+                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_capabilities": ["rewrite"],
+                },
+                body,
+                403,
+                "external_ai_capability_not_allowed",
+            ),
+            (
+                "tools_not_supported",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["gemini"],
+                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_capabilities": ["summary"],
+                    "allow_tool_calling": True,
+                },
+                body,
+                403,
+                "external_ai_policy_not_supported_for_mvp",
+            ),
+            (
+                "streaming_not_supported",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["gemini"],
+                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_capabilities": ["summary"],
+                    "allow_streaming": True,
+                },
+                body,
+                403,
+                "external_ai_policy_not_supported_for_mvp",
+            ),
+            (
+                "unsupported_image_capability",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["gemini"],
+                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_capabilities": ["image_generation"],
+                },
+                {**body, "capability": "image_generation"},
+                403,
+                "external_ai_capability_not_supported_for_mvp",
+            ),
+            (
+                "oversized_prompt",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["gemini"],
+                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_capabilities": ["summary"],
+                    "max_tokens_per_request": 1,
+                },
+                {**body, "prompt": "This prompt is intentionally too long."},
+                413,
+                "external_ai_prompt_too_large",
+            ),
+        ]
+
+        with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+            for name, policy_payload, request_body, expected_status, expected_error in policy_cases:
+                self.policy_store_path.write_text('{"policies": []}', encoding="utf-8")
+                self.app_module.create_external_ai_policy(policy_payload)
+                with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "test-provider-key", "GOOGLE_API_KEY": ""}, clear=False):
+                    response = self.client().post(
+                        "/api/external/ai/generate",
+                        json=request_body,
+                        headers=self.external_headers(request_id=f"gateway-{name}", idempotency_key=f"gateway-{name}"),
+                    )
+                self.assertEqual(response.status_code, expected_status, response.get_data(as_text=True))
+                payload = response.get_json()
+                self.assertEqual(payload["error"], expected_error)
+                self.assertNotIn("test-provider-key", response.get_data(as_text=True))
+        gemini_call.assert_not_called()
+
+        self.policy_store_path.write_text('{"policies": []}', encoding="utf-8")
+        self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["gemini"],
+            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_capabilities": ["summary"],
+        })
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+        self.assertEqual(response.status_code, 503, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["error"], "provider_not_configured")
+        self.assertNotIn("GEMINI_API_KEY", response.get_data(as_text=True))
+        gemini_call.assert_not_called()
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_generate_calls_mocked_gemini_logs_usage_and_replays_idempotency(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        long_prompt = "Summarize this external project update. " * 12
+        long_response = "This is a concise Gemini summary. " * 8
+        body = {
+            "capability": "generate",
+            "model": "gemini-1.5-flash",
+            "prompt": long_prompt,
+            "external_ref": "gateway-ticket-2",
+            "metadata": {"project": "AD-Studio_AI"},
+        }
+        headers = self.external_headers(source="external-a", key="key-a", request_id="gateway-req-ok", idempotency_key="gateway-idem-ok")
+        self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["gemini"],
+            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_capabilities": ["generate", "summary", "rewrite", "classification", "extraction", "planning", "chat"],
+            "max_tokens_per_request": 1000,
+        })
+        provider_result = {
+            "ok": True,
+            "text": long_response,
+            "usage": {"input_tokens": 12, "output_tokens": 9, "total_tokens": 21},
+        }
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "test-provider-key", "GOOGLE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate", return_value=provider_result) as gemini_call:
+                with patch.object(self.app_module, "call_task_provider") as provider_call:
+                    with patch.object(self.app_module, "run_ai_task") as run_task:
+                        with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                            with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                with patch.object(self.app_module, "save_handoff") as legacy_save:
+                                    response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+                                    replay = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["idempotent_replay"])
+        self.assertEqual(payload["provider"], "gemini")
+        self.assertEqual(payload["model"], "gemini-1.5-flash")
+        self.assertEqual(payload["capability"], "generate")
+        self.assertEqual(payload["text"], long_response)
+        self.assertEqual(payload["usage"]["total_tokens"], 21)
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(payload["side_effects"])
+        self.assertTrue(payload["provider_calls_executed"])
+        self.assertNotIn("test-provider-key", response.get_data(as_text=True))
+
+        self.assertEqual(replay.status_code, 200, replay.get_data(as_text=True))
+        replay_payload = replay.get_json()
+        self.assertTrue(replay_payload["idempotent_replay"])
+        self.assertFalse(replay_payload["provider_calls_executed"])
+        self.assertEqual(replay_payload["text"], long_response)
+        gemini_call.assert_called_once_with(long_prompt, "gemini-1.5-flash", "test-provider-key")
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+
+        usage_records = self.app_module.load_external_ai_usage_log_records()
+        result_records = self.app_module.load_external_ai_generation_results()
+        self.assertEqual(len(usage_records), 1)
+        self.assertEqual(len(result_records), 1)
+        usage = usage_records[0]
+        self.assertEqual(usage["status"], "completed")
+        self.assertEqual(usage["source_system"], "external-a")
+        self.assertEqual(usage["provider"], "gemini")
+        self.assertEqual(usage["model"], "gemini-1.5-flash")
+        self.assertEqual(usage["capability"], "generate")
+        self.assertTrue(usage["prompt_hash"])
+        self.assertTrue(usage["response_hash"])
+        self.assertNotIn(long_prompt, self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn(long_response, self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn("test-provider-key", self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn(long_prompt, self.generation_results_path.read_text(encoding="utf-8"))
+        self.assertNotIn("test-provider-key", self.generation_results_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_records[0]["status"], "completed")
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_generate_invalid_stores_do_not_crash(self):
+        self.generation_results_path.write_text("{not json", encoding="utf-8")
+        self.usage_log_path.write_text("{not json", encoding="utf-8")
+        self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["gemini"],
+            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_capabilities": ["summary"],
+        })
+        body = {
+            "capability": "summary",
+            "model": "gemini-1.5-flash",
+            "prompt": "Summarize this safely.",
+            "external_ref": "gateway-ticket-invalid-store",
+        }
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "test-provider-key", "GOOGLE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate", return_value={
+                "ok": True,
+                "text": "Safe summary.",
+                "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            }) as gemini_call:
+                response = self.client().post(
+                    "/api/external/ai/generate",
+                    json=body,
+                    headers=self.external_headers(request_id="gateway-invalid-store", idempotency_key="gateway-invalid-store"),
+                )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        gemini_call.assert_called_once()
+        self.assertEqual(len(self.app_module.load_external_ai_generation_results()), 1)
+        self.assertEqual(len(self.app_module.load_external_ai_usage_log_records()), 1)
+
+    def test_external_ai_generate_failed_result_can_retry(self):
+        body = {
+            "capability": "summary",
+            "model": "gemini-1.5-flash",
+            "prompt": "Summarize this safely.",
+            "external_ref": "gateway-ticket-retry",
+        }
+        headers = self.external_headers(request_id="gateway-retry", idempotency_key="gateway-retry")
+        self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["gemini"],
+            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_capabilities": ["summary"],
+        })
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""}, clear=False):
+            first = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+        self.assertEqual(first.status_code, 503, first.get_data(as_text=True))
+        self.assertEqual(first.get_json()["error"], "provider_not_configured")
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "test-provider-key", "GOOGLE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate", return_value={
+                "ok": True,
+                "text": "Retry worked.",
+                "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            }) as gemini_call:
+                second = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+        self.assertEqual(second.status_code, 200, second.get_data(as_text=True))
+        self.assertFalse(second.get_json()["idempotent_replay"])
+        gemini_call.assert_called_once()
+        result_records = self.app_module.load_external_ai_generation_results()
+        self.assertEqual([record["status"] for record in result_records], ["failed", "completed"])
+
+    def test_external_ai_generate_legacy_openai_policy_still_rejects_without_provider_call(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        body = {
+            "capability": "summary",
+            "model": "gemini-1.5-flash",
+            "prompt": "Summarize this safely.",
+            "external_ref": "legacy-policy-ticket",
+        }
+        headers = self.external_headers(source="external-a", key="key-a", request_id="gateway-req", idempotency_key="legacy-policy-ticket")
         policy = self.app_module.create_external_ai_policy({
             "source_system": "external-a",
             "enabled": True,
@@ -1661,13 +1980,12 @@ class AiManualHandoffTest(unittest.TestCase):
                             with patch.object(self.app_module, "save_handoff") as legacy_save:
                                 response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
 
-        self.assertEqual(response.status_code, 501, response.get_data(as_text=True))
+        self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
         payload = response.get_json()
         self.assertFalse(payload["ok"])
-        self.assertEqual(payload["error"], "external_ai_gateway_not_enabled")
+        self.assertEqual(payload["error"], "external_ai_provider_not_allowed")
         self.assertEqual(payload["source_system"], "external-a")
         self.assertEqual(payload["request_id"], "gateway-req")
-        self.assertEqual(payload["policy_id"], policy["id"])
         self.assertFalse(payload["execution_allowed"])
         self.assertFalse(payload["side_effects"])
         self.assertFalse(payload["provider_calls_executed"])

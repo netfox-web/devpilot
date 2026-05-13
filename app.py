@@ -48,6 +48,8 @@ DB_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "project_manager.db"))
 EXTERNAL_API_KEY_STORE_PATH = DATA_DIR / "external_api_keys.json"
 EXTERNAL_AI_POLICY_STORE_PATH = DATA_DIR / "external_ai_policies.json"
 EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH = DATA_DIR / "external_ai_permission_profiles.json"
+EXTERNAL_AI_GENERATION_RESULTS_STORE_PATH = DATA_DIR / "external_ai_generation_results.json"
+EXTERNAL_AI_USAGE_LOG_STORE_PATH = DATA_DIR / "external_ai_usage_log.json"
 EXTERNAL_PROJECT_REGISTRY_STORE_PATH = DATA_DIR / "external_project_registry.json"
 EXTERNAL_PROJECT_EVENTS_STORE_PATH = DATA_DIR / "external_project_events.json"
 API_TOKEN = os.getenv("API_TOKEN", "change-me-token")
@@ -2545,6 +2547,11 @@ EXTERNAL_AI_CAPABILITY_GROUPS = {
     "Business creative": ["ad_creative", "product_image", "avatar_generation"],
 }
 EXTERNAL_AI_CAPABILITY_OPTIONS = [capability for capabilities in EXTERNAL_AI_CAPABILITY_GROUPS.values() for capability in capabilities]
+EXTERNAL_AI_GENERATE_MVP_PROVIDER = "gemini"
+EXTERNAL_AI_GENERATE_MVP_MODEL = "gemini-1.5-flash"
+EXTERNAL_AI_GENERATE_MVP_CAPABILITIES = set(EXTERNAL_AI_CAPABILITY_GROUPS["Text"])
+EXTERNAL_AI_GENERATE_PROMPT_SUMMARY_LIMIT = 120
+EXTERNAL_AI_GENERATE_RESPONSE_SUMMARY_LIMIT = 120
 EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
     {
         "id": "basic-text",
@@ -2671,6 +2678,16 @@ def external_ai_policy_store_path():
 def external_ai_permission_profile_store_path():
     raw_path = os.getenv("DEVPILOT_EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH", "").strip()
     return Path(raw_path) if raw_path else EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH
+
+
+def external_ai_generation_results_store_path():
+    raw_path = os.getenv("DEVPILOT_EXTERNAL_AI_GENERATION_RESULTS_PATH", "").strip()
+    return Path(raw_path) if raw_path else EXTERNAL_AI_GENERATION_RESULTS_STORE_PATH
+
+
+def external_ai_usage_log_store_path():
+    raw_path = os.getenv("DEVPILOT_EXTERNAL_AI_USAGE_LOG_PATH", "").strip()
+    return Path(raw_path) if raw_path else EXTERNAL_AI_USAGE_LOG_STORE_PATH
 
 
 def external_ai_policy_preview(value, limit=200):
@@ -3217,6 +3234,307 @@ def external_ai_policy_for_source(source_system, enabled_only=False):
     if not matches:
         return None
     return sorted(matches, key=lambda item: (item.get("updated_at") or "", item.get("created_at") or ""), reverse=True)[0]
+
+
+def load_external_ai_generation_results():
+    path = external_ai_generation_results_store_path()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, TypeError):
+        return []
+    items = raw.get("results") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def save_external_ai_generation_results(records):
+    path = external_ai_generation_results_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"results": [record for record in records if isinstance(record, dict)], "updated_at": now_str()}
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def find_external_ai_generation_result(source_system, idempotency_key):
+    source_system = str(source_system or "").strip()
+    idempotency_key = str(idempotency_key or "").strip()
+    if not source_system or not idempotency_key:
+        return None
+    matches = [
+        record for record in load_external_ai_generation_results()
+        if record.get("source_system") == source_system and record.get("idempotency_key") == idempotency_key
+    ]
+    if not matches:
+        return None
+    return sorted(matches, key=lambda item: item.get("created_at") or "", reverse=True)[0]
+
+
+def save_external_ai_generation_result(record):
+    records = load_external_ai_generation_results()
+    records.append(record)
+    save_external_ai_generation_results(records)
+    return record
+
+
+def load_external_ai_usage_log_records():
+    path = external_ai_usage_log_store_path()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, TypeError):
+        return []
+    items = raw.get("usage") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def save_external_ai_usage_log_records(records):
+    path = external_ai_usage_log_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"usage": [record for record in records if isinstance(record, dict)], "updated_at": now_str()}
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def append_external_ai_usage_log(record):
+    records = load_external_ai_usage_log_records()
+    records.append(record)
+    save_external_ai_usage_log_records(records)
+    return record
+
+
+def external_ai_text_hash(value):
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+
+
+def external_ai_text_summary(value, limit=120):
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def external_ai_gemini_api_key():
+    return os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
+
+
+def call_gemini_generate(prompt, model, api_key, timeout=60):
+    model_name = str(model or EXTERNAL_AI_GENERATE_MVP_MODEL).strip()
+    if model_name.startswith("models/"):
+        model_name = model_name[len("models/"):]
+    req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(model_name)}:generateContent"
+    req_url = f"{req_url}?key={urllib.parse.quote(str(api_key or ''))}"
+    payload = {
+        "contents": [{"parts": [{"text": str(prompt or "")}]}],
+        "generationConfig": {"temperature": 0.2},
+    }
+    req = urllib.request.Request(
+        req_url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "error": "gemini_http_error", "status_code": exc.code}
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+        return {"ok": False, "error": "gemini_network_error"}
+    except Exception:
+        return {"ok": False, "error": "gemini_call_failed"}
+    parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+    text = "\n".join(str(part.get("text") or "") for part in parts if isinstance(part, dict) and part.get("text")).strip()
+    usage = data.get("usageMetadata") or {}
+    return {
+        "ok": True,
+        "text": text,
+        "usage": {
+            "input_tokens": coerce_int(usage.get("promptTokenCount"), approx_ai_tokens(prompt)),
+            "output_tokens": coerce_int(usage.get("candidatesTokenCount"), approx_ai_tokens(text)),
+            "total_tokens": coerce_int(usage.get("totalTokenCount"), approx_ai_tokens(prompt) + approx_ai_tokens(text)),
+        },
+        "raw": {"usage": usage},
+    }
+
+
+def external_ai_generate_error_payload(identity, error, message, status_code=400, **extra):
+    payload = {
+        "ok": False,
+        "error": error,
+        "message": message,
+        "source_system": (identity or {}).get("source_system", ""),
+        "request_id": (identity or {}).get("request_id", ""),
+        "idempotency_key": (identity or {}).get("idempotency_key", ""),
+        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
+        "model": EXTERNAL_AI_GENERATE_MVP_MODEL,
+        "execution_allowed": False,
+        "side_effects": False,
+        "provider_calls_executed": False,
+    }
+    payload.update(extra)
+    return payload, status_code
+
+
+def external_ai_generate_validate_request(identity, payload):
+    if not isinstance(payload, dict):
+        return None, None, external_ai_generate_error_payload(identity, "invalid_request", "JSON object body is required.", 400)
+    capability = external_ai_policy_preview(payload.get("capability") or "generate", 80).lower()
+    model = external_ai_policy_preview(payload.get("model") or EXTERNAL_AI_GENERATE_MVP_MODEL, 120).lower()
+    prompt = str(payload.get("prompt") or "")
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    normalized = {
+        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
+        "model": model,
+        "capability": capability,
+        "prompt": prompt,
+        "external_ref": external_ai_policy_preview(payload.get("external_ref"), 200),
+        "metadata": metadata,
+    }
+    policy = external_ai_policy_for_source(identity["source_system"], enabled_only=True)
+    if not policy:
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_policy_not_enabled",
+            "External AI Gateway policy is not enabled for this source system.",
+            403,
+        )
+    if bool(policy.get("allow_tool_calling")) or bool(policy.get("allow_streaming")):
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_policy_not_supported_for_mvp",
+            "This MVP does not support tool calling or streaming policies.",
+            403,
+            policy_id=policy.get("id") or "",
+        )
+    if not prompt.strip():
+        return policy, normalized, external_ai_generate_error_payload(identity, "prompt_required", "prompt is required.", 400, policy_id=policy.get("id") or "")
+    if model != EXTERNAL_AI_GENERATE_MVP_MODEL:
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_model_not_supported_for_mvp",
+            "External AI Generate MVP supports gemini-1.5-flash only.",
+            403,
+            requested_model=model,
+            policy_id=policy.get("id") or "",
+        )
+    if capability not in EXTERNAL_AI_GENERATE_MVP_CAPABILITIES:
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_capability_not_supported_for_mvp",
+            "External AI Generate MVP supports text capabilities only.",
+            403,
+            capability=capability,
+            policy_id=policy.get("id") or "",
+        )
+    if EXTERNAL_AI_GENERATE_MVP_PROVIDER not in set(policy.get("allowed_providers") or []):
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_provider_not_allowed",
+            "Gemini is not allowed by this source policy.",
+            403,
+            policy_id=policy.get("id") or "",
+        )
+    if EXTERNAL_AI_GENERATE_MVP_MODEL not in set(policy.get("allowed_models") or []):
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_model_not_allowed",
+            "gemini-1.5-flash is not allowed by this source policy.",
+            403,
+            policy_id=policy.get("id") or "",
+        )
+    if capability not in set(policy.get("allowed_capabilities") or []):
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_capability_not_allowed",
+            "The requested capability is not allowed by this source policy.",
+            403,
+            capability=capability,
+            policy_id=policy.get("id") or "",
+        )
+    input_tokens = approx_ai_tokens(prompt)
+    max_tokens = external_ai_policy_int(policy.get("max_tokens_per_request"), EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS, 1, 100000)
+    if input_tokens > max_tokens:
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_prompt_too_large",
+            "Prompt exceeds this source policy max_tokens_per_request.",
+            413,
+            input_token_estimate=input_tokens,
+            max_tokens_per_request=max_tokens,
+            policy_id=policy.get("id") or "",
+        )
+    normalized["input_token_estimate"] = input_tokens
+    return policy, normalized, None
+
+
+def external_ai_generate_usage_record(identity, normalized, response_payload, status, error_code, latency_ms):
+    prompt = (normalized or {}).get("prompt") or ""
+    text = (response_payload or {}).get("text") or ""
+    usage = (response_payload or {}).get("usage") or {}
+    return {
+        "id": f"aiusage_{secrets.token_hex(12)}",
+        "source_system": identity.get("source_system") or "",
+        "request_id": identity.get("request_id") or "",
+        "idempotency_key": identity.get("idempotency_key") or "",
+        "external_ref": (normalized or {}).get("external_ref") or "",
+        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
+        "model": (normalized or {}).get("model") or EXTERNAL_AI_GENERATE_MVP_MODEL,
+        "capability": (normalized or {}).get("capability") or "",
+        "status": status,
+        "error_code": error_code or "",
+        "input_token_estimate": coerce_int(usage.get("input_tokens"), approx_ai_tokens(prompt)),
+        "output_token_estimate": coerce_int(usage.get("output_tokens"), approx_ai_tokens(text)),
+        "input_chars": len(str(prompt)),
+        "output_chars": len(str(text)),
+        "estimated_cost_usd": None,
+        "latency_ms": latency_ms,
+        "prompt_hash": external_ai_text_hash(prompt),
+        "prompt_summary": external_ai_text_summary(prompt, EXTERNAL_AI_GENERATE_PROMPT_SUMMARY_LIMIT),
+        "response_hash": external_ai_text_hash(text),
+        "response_summary": external_ai_text_summary(text, EXTERNAL_AI_GENERATE_RESPONSE_SUMMARY_LIMIT),
+        "prompt_stored_full": False,
+        "response_stored_full": False,
+        "created_at": now_str(),
+    }
+
+
+def external_ai_generation_result_record(identity, normalized, response_payload, status, http_status):
+    return {
+        "id": f"aigen_{secrets.token_hex(12)}",
+        "source_system": identity.get("source_system") or "",
+        "request_id": identity.get("request_id") or "",
+        "idempotency_key": identity.get("idempotency_key") or "",
+        "external_ref": (normalized or {}).get("external_ref") or "",
+        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
+        "model": (normalized or {}).get("model") or EXTERNAL_AI_GENERATE_MVP_MODEL,
+        "capability": (normalized or {}).get("capability") or "",
+        "status": status,
+        "http_status": http_status,
+        "response": response_payload,
+        "created_at": now_str(),
+    }
+
+
+def external_ai_generation_replay_response(record):
+    response_payload = dict(record.get("response") or {})
+    response_payload["idempotent_replay"] = True
+    response_payload["provider_calls_executed"] = False
+    status_code = coerce_int(record.get("http_status"), 200)
+    return response_payload, status_code
 
 
 def external_api_allow_all_sources():
@@ -20466,30 +20784,112 @@ def api_external_project_events(external_project_id):
 
 @app.route("/api/external/ai/generate", methods=["POST"])
 @require_external_api_key
-def api_external_ai_generate_disabled():
+def api_external_ai_generate():
     identity = g.external_api_identity
-    policy = external_ai_policy_for_source(identity["source_system"], enabled_only=True)
-    if not policy:
-        return jsonify({
-            "ok": False,
-            "error": "external_ai_policy_not_enabled",
-            "message": "External AI Gateway policy is not enabled for this source system.",
-            "source_system": identity["source_system"],
-            "request_id": identity.get("request_id") or "",
-            "execution_allowed": False,
-            "side_effects": False,
-        }), 403
-    return jsonify({
-        "ok": False,
-        "error": "external_ai_gateway_not_enabled",
-        "message": "External AI Gateway provider calls are not enabled yet.",
+    payload = request.get_json(silent=True) or {}
+    idempotency_key = identity.get("idempotency_key") or ""
+    if idempotency_key:
+        existing = find_external_ai_generation_result(identity["source_system"], idempotency_key)
+        if existing and existing.get("status") == "completed":
+            replay_payload, replay_status = external_ai_generation_replay_response(existing)
+            return jsonify(replay_payload), replay_status
+
+    started_at = time.time()
+    policy, normalized, validation_error = external_ai_generate_validate_request(identity, payload)
+    if validation_error:
+        error_payload, status_code = validation_error
+        latency_ms = int((time.time() - started_at) * 1000)
+        append_external_ai_usage_log(external_ai_generate_usage_record(
+            identity,
+            normalized or {},
+            error_payload,
+            "rejected",
+            error_payload.get("error"),
+            latency_ms,
+        ))
+        return jsonify(error_payload), status_code
+
+    api_key = external_ai_gemini_api_key()
+    if not api_key:
+        error_payload, status_code = external_ai_generate_error_payload(
+            identity,
+            "provider_not_configured",
+            "Gemini provider key is not configured.",
+            503,
+            policy_id=policy.get("id") if policy else "",
+        )
+        latency_ms = int((time.time() - started_at) * 1000)
+        append_external_ai_usage_log(external_ai_generate_usage_record(
+            identity,
+            normalized,
+            error_payload,
+            "failed",
+            "provider_not_configured",
+            latency_ms,
+        ))
+        if idempotency_key:
+            save_external_ai_generation_result(external_ai_generation_result_record(identity, normalized, error_payload, "failed", status_code))
+        return jsonify(error_payload), status_code
+
+    provider_result = call_gemini_generate(normalized["prompt"], normalized["model"], api_key)
+    latency_ms = int((time.time() - started_at) * 1000)
+    if not provider_result.get("ok"):
+        error_code = provider_result.get("error") or "external_ai_provider_call_failed"
+        error_payload, status_code = external_ai_generate_error_payload(
+            identity,
+            "external_ai_provider_call_failed",
+            "Gemini provider call failed.",
+            502,
+            provider_error=error_code,
+            policy_id=policy.get("id") if policy else "",
+        )
+        append_external_ai_usage_log(external_ai_generate_usage_record(
+            identity,
+            normalized,
+            error_payload,
+            "failed",
+            error_code,
+            latency_ms,
+        ))
+        if idempotency_key:
+            save_external_ai_generation_result(external_ai_generation_result_record(identity, normalized, error_payload, "failed", status_code))
+        return jsonify(error_payload), status_code
+
+    usage = provider_result.get("usage") or {}
+    response_payload = {
+        "ok": True,
         "source_system": identity["source_system"],
         "request_id": identity.get("request_id") or "",
-        "policy_id": policy.get("id") or "",
+        "idempotency_key": idempotency_key,
+        "idempotent_replay": False,
+        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
+        "model": EXTERNAL_AI_GENERATE_MVP_MODEL,
+        "capability": normalized["capability"],
+        "text": str(provider_result.get("text") or ""),
+        "usage": {
+            "input_tokens": coerce_int(usage.get("input_tokens"), normalized.get("input_token_estimate") or approx_ai_tokens(normalized["prompt"])),
+            "output_tokens": coerce_int(usage.get("output_tokens"), approx_ai_tokens(provider_result.get("text"))),
+            "total_tokens": coerce_int(
+                usage.get("total_tokens"),
+                coerce_int(usage.get("input_tokens"), approx_ai_tokens(normalized["prompt"])) + coerce_int(usage.get("output_tokens"), approx_ai_tokens(provider_result.get("text"))),
+            ),
+        },
+        "estimated_cost_usd": None,
         "execution_allowed": False,
         "side_effects": False,
-        "provider_calls_executed": False,
-    }), 501
+        "provider_calls_executed": True,
+    }
+    append_external_ai_usage_log(external_ai_generate_usage_record(
+        identity,
+        normalized,
+        response_payload,
+        "completed",
+        "",
+        latency_ms,
+    ))
+    if idempotency_key:
+        save_external_ai_generation_result(external_ai_generation_result_record(identity, normalized, response_payload, "completed", 200))
+    return jsonify(response_payload)
 
 
 @app.route("/api/ai/dispatch", methods=["POST"])
