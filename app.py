@@ -1958,9 +1958,11 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
     {
         "id": "basic-text",
         "name": "Basic Text",
+        "description": "Conservative text summary, rewrite, and classification.",
+        "enabled": True,
         "allowed_providers": ["openai"],
         "allowed_models": ["gpt-4.1-mini"],
-        "allowed_capabilities": ["summary", "rewrite", "classification"],
+        "allowed_capabilities": ["summary", "classification", "rewrite"],
         "max_tokens_per_request": 2000,
         "daily_request_limit": 1000,
         "daily_token_limit": 500000,
@@ -1973,8 +1975,29 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
         "note": "Text summary, rewrite, and classification only.",
     },
     {
+        "id": "text-multi-provider",
+        "name": "Text Multi Provider",
+        "description": "Text work across approved small models from OpenAI, Gemini, and Claude.",
+        "enabled": True,
+        "allowed_providers": ["openai", "gemini", "claude"],
+        "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku"],
+        "allowed_capabilities": ["summary", "classification", "rewrite", "extraction", "planning"],
+        "max_tokens_per_request": 2000,
+        "daily_request_limit": 1000,
+        "daily_token_limit": 500000,
+        "monthly_budget_usd": 50.0,
+        "allow_streaming": False,
+        "allow_tool_calling": False,
+        "store_prompt": False,
+        "store_response": False,
+        "enabled_by_default": True,
+        "note": "Multi-provider text governance without tools or full prompt retention.",
+    },
+    {
         "id": "image-basic",
         "name": "Image Basic",
+        "description": "Entry-level image generation and prompt rewrite.",
+        "enabled": True,
         "allowed_providers": ["openai", "replicate", "fal"],
         "allowed_models": ["gpt-image-1", "flux-schnell", "fal-flux-schnell"],
         "allowed_capabilities": ["image_generation", "prompt_rewrite"],
@@ -1992,9 +2015,11 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
     {
         "id": "image-pro",
         "name": "Image Pro",
+        "description": "Higher-volume image creative work with editing and variation.",
+        "enabled": True,
         "allowed_providers": ["openai", "replicate", "fal"],
         "allowed_models": ["gpt-image-1", "flux-pro", "fal-flux-pro"],
-        "allowed_capabilities": ["image_generation", "image_editing", "image_variation", "prompt_rewrite"],
+        "allowed_capabilities": ["image_generation", "image_editing", "image_variation", "prompt_rewrite", "ad_creative", "product_image"],
         "max_tokens_per_request": 2000,
         "daily_request_limit": 1000,
         "daily_token_limit": 1000000,
@@ -2007,13 +2032,15 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
         "note": "Higher-volume image generation, editing, and variation.",
     },
     {
-        "id": "video-basic",
-        "name": "Video Basic",
-        "allowed_providers": ["runway", "kling", "fal"],
-        "allowed_models": [],
+        "id": "video-review-only",
+        "name": "Video Review Only",
+        "description": "Disabled-by-default video governance placeholder.",
+        "enabled": False,
+        "allowed_providers": ["fal"],
+        "allowed_models": ["fal-flux-pro"],
         "allowed_capabilities": ["video_generation", "image_to_video"],
         "max_tokens_per_request": 2000,
-        "daily_request_limit": 50,
+        "daily_request_limit": 20,
         "daily_token_limit": 100000,
         "monthly_budget_usd": 100.0,
         "allow_streaming": False,
@@ -2021,7 +2048,26 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
         "store_prompt": False,
         "store_response": False,
         "enabled_by_default": False,
-        "note": "Video governance placeholder. Provider calls remain disabled until a later gateway phase.",
+        "note": "Video provider calls are not enabled yet.",
+    },
+    {
+        "id": "internal-advanced-draft",
+        "name": "Internal Advanced Draft",
+        "description": "Disabled-by-default internal/testing draft profile.",
+        "enabled": False,
+        "allowed_providers": ["openai", "gemini", "claude"],
+        "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku"],
+        "allowed_capabilities": ["summary", "rewrite", "planning", "chat", "generate"],
+        "max_tokens_per_request": 2000,
+        "daily_request_limit": 100,
+        "daily_token_limit": 100000,
+        "monthly_budget_usd": 25.0,
+        "allow_streaming": False,
+        "allow_tool_calling": False,
+        "store_prompt": False,
+        "store_response": False,
+        "enabled_by_default": False,
+        "note": "Enable only for internal/testing use.",
     },
 ]
 
@@ -2083,6 +2129,52 @@ def validate_external_ai_policy_allowlists(providers, models, capabilities):
             raise ValueError(f"model/provider mismatch: {model} requires {required_provider}")
 
 
+def evaluate_external_ai_policy_warnings(policy):
+    policy = policy or {}
+    providers = external_ai_policy_list(policy.get("allowed_providers"))
+    models = external_ai_policy_list(policy.get("allowed_models"))
+    capabilities = external_ai_policy_list(policy.get("allowed_capabilities"))
+    warnings = []
+    if boolish(policy.get("allow_tool_calling")):
+        warnings.append("Tool calling is enabled. This should require approval before production use.")
+    if boolish(policy.get("allow_streaming")):
+        warnings.append("Streaming is enabled. Confirm client timeout, retry, and logging behavior.")
+    if boolish(policy.get("store_prompt")):
+        warnings.append("Full prompt storage is enabled. Confirm data retention policy.")
+    if boolish(policy.get("store_response")):
+        warnings.append("Full response storage is enabled. Confirm data retention policy.")
+    if len(capabilities) > 8:
+        warnings.append("Many capabilities selected. Consider using a narrower permission profile.")
+    if len(capabilities) >= max(1, len(EXTERNAL_AI_CAPABILITY_OPTIONS) - 2):
+        warnings.append("Nearly all capabilities are selected. Review whether this source needs broad access.")
+    if "video_generation" in capabilities or "image_to_video" in capabilities:
+        warnings.append("Video capability is enabled. Confirm budget and provider cost.")
+    try:
+        validate_external_ai_policy_allowlists(providers, models, capabilities)
+    except ValueError as exc:
+        warnings.append(str(exc))
+    selected_models = set(models)
+    for provider in providers:
+        provider_models = set(EXTERNAL_AI_MODEL_OPTIONS.get(provider) or [])
+        if not provider_models:
+            warnings.append(f"Provider {provider} has no controlled model selected or available.")
+        elif not selected_models.intersection(provider_models):
+            warnings.append(f"Provider {provider} is selected but no matching model is selected.")
+    if external_ai_policy_float(policy.get("monthly_budget_usd"), 0.0, 0.0, 1000000.0) > 100:
+        warnings.append("Monthly budget is high. Confirm approval before production use.")
+    if external_ai_policy_int(policy.get("daily_request_limit"), 0, 0, 10000000) > 1000:
+        warnings.append("Daily request limit is high. Confirm expected traffic.")
+    if external_ai_policy_int(policy.get("daily_token_limit"), 0, 0, 100000000) > 500000:
+        warnings.append("Daily token limit is high. Confirm budget guardrails.")
+    cleaned = []
+    seen = set()
+    for warning in warnings:
+        if warning not in seen:
+            cleaned.append(warning)
+            seen.add(warning)
+    return cleaned
+
+
 def normalize_external_ai_permission_profile(record):
     if not isinstance(record, dict):
         return None
@@ -2097,9 +2189,13 @@ def normalize_external_ai_permission_profile(record):
         validate_external_ai_policy_allowlists(providers, models, capabilities)
     except ValueError:
         return None
+    enabled = boolish(record.get("enabled")) if "enabled" in record else boolish(record.get("enabled_by_default"))
+    enabled_by_default = boolish(record.get("enabled_by_default")) if "enabled_by_default" in record else enabled
     return {
         "id": profile_id,
         "name": name,
+        "description": external_ai_policy_preview(record.get("description") or record.get("note"), 240),
+        "enabled": enabled,
         "allowed_providers": providers,
         "allowed_models": models,
         "allowed_capabilities": capabilities,
@@ -2111,8 +2207,10 @@ def normalize_external_ai_permission_profile(record):
         "allow_tool_calling": boolish(record.get("allow_tool_calling")),
         "store_prompt": boolish(record.get("store_prompt")),
         "store_response": boolish(record.get("store_response")),
-        "enabled_by_default": boolish(record.get("enabled_by_default")),
+        "enabled_by_default": enabled_by_default,
         "note": external_ai_policy_preview(record.get("note"), 240),
+        "created_at": external_ai_policy_preview(record.get("created_at"), 64),
+        "updated_at": external_ai_policy_preview(record.get("updated_at"), 64),
     }
 
 
@@ -2148,12 +2246,146 @@ def load_external_ai_permission_profiles():
     return profiles or default_external_ai_permission_profiles()
 
 
+def save_external_ai_permission_profiles(profiles):
+    path = external_ai_permission_profile_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [profile for profile in (normalize_external_ai_permission_profile(item) for item in profiles) if profile]
+    payload = {"profiles": normalized, "updated_at": now_str()}
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
 def external_ai_permission_profile_by_id(profile_id):
     profile_id = external_ai_policy_preview(profile_id, 80)
     for profile in load_external_ai_permission_profiles():
         if profile.get("id") == profile_id:
             return profile
     return None
+
+
+def external_ai_profile_id(value):
+    profile_id = slugify_filename(value, "")
+    if not profile_id:
+        raise ValueError("profile id is required")
+    return profile_id[:80]
+
+
+def external_ai_permission_profile_payload(source):
+    source = source or {}
+    return {
+        "id": source.get("id"),
+        "name": source.get("name"),
+        "description": source.get("description"),
+        "enabled": source.get("enabled"),
+        "enabled_by_default": source.get("enabled_by_default"),
+        "allowed_providers": source.get("allowed_providers"),
+        "allowed_models": source.get("allowed_models"),
+        "allowed_capabilities": source.get("allowed_capabilities"),
+        "max_tokens_per_request": source.get("max_tokens_per_request"),
+        "daily_request_limit": source.get("daily_request_limit"),
+        "daily_token_limit": source.get("daily_token_limit"),
+        "monthly_budget_usd": source.get("monthly_budget_usd"),
+        "allow_streaming": source.get("allow_streaming"),
+        "allow_tool_calling": source.get("allow_tool_calling"),
+        "store_prompt": source.get("store_prompt"),
+        "store_response": source.get("store_response"),
+        "note": source.get("note"),
+    }
+
+
+def external_ai_permission_profile_record_from_payload(payload, existing=None):
+    payload = external_ai_permission_profile_payload(payload)
+    now = now_str()
+    existing = existing if isinstance(existing, dict) else {}
+    providers = external_ai_policy_list(payload.get("allowed_providers"))
+    models = external_ai_policy_list(payload.get("allowed_models"))
+    capabilities = external_ai_policy_list(payload.get("allowed_capabilities"))
+    validate_external_ai_policy_allowlists(providers, models, capabilities)
+    profile_id = existing.get("id") or external_ai_profile_id(payload.get("id") or payload.get("name"))
+    name = external_ai_policy_preview(payload.get("name"), 160)
+    if not name:
+        raise ValueError("profile name is required")
+    enabled = boolish(payload.get("enabled"))
+    enabled_by_default = boolish(payload.get("enabled_by_default"))
+    record = {
+        "id": profile_id,
+        "name": name,
+        "description": external_ai_policy_preview(payload.get("description"), 240),
+        "enabled": enabled,
+        "allowed_providers": providers,
+        "allowed_models": models,
+        "allowed_capabilities": capabilities,
+        "max_tokens_per_request": external_ai_policy_int(payload.get("max_tokens_per_request"), EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS, 1, 100000),
+        "daily_request_limit": external_ai_policy_int(payload.get("daily_request_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT, 0, 1000000),
+        "daily_token_limit": external_ai_policy_int(payload.get("daily_token_limit"), EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT, 0, 100000000),
+        "monthly_budget_usd": external_ai_policy_float(payload.get("monthly_budget_usd"), EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD, 0.0, 1000000.0),
+        "allow_streaming": boolish(payload.get("allow_streaming")),
+        "allow_tool_calling": boolish(payload.get("allow_tool_calling")),
+        "store_prompt": boolish(payload.get("store_prompt")),
+        "store_response": boolish(payload.get("store_response")),
+        "enabled_by_default": enabled_by_default,
+        "note": external_ai_policy_preview(payload.get("note"), 240),
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+    }
+    return record
+
+
+def create_external_ai_permission_profile(payload):
+    record = external_ai_permission_profile_record_from_payload(payload)
+    profiles = load_external_ai_permission_profiles()
+    if any(profile.get("id") == record["id"] for profile in profiles):
+        raise ValueError("permission profile already exists")
+    profiles.append(record)
+    save_external_ai_permission_profiles(profiles)
+    return record
+
+
+def update_external_ai_permission_profile(profile_id, payload):
+    profile_id = external_ai_profile_id(profile_id)
+    profiles = load_external_ai_permission_profiles()
+    updated = None
+    for index, existing in enumerate(profiles):
+        if existing.get("id") == profile_id:
+            update_payload = dict(payload or {})
+            update_payload["id"] = profile_id
+            updated = external_ai_permission_profile_record_from_payload(update_payload, existing=existing)
+            profiles[index] = updated
+            break
+    if not updated:
+        raise LookupError("permission profile not found")
+    save_external_ai_permission_profiles(profiles)
+    return updated
+
+
+def set_external_ai_permission_profile_enabled(profile_id, enabled):
+    profile_id = external_ai_profile_id(profile_id)
+    profiles = load_external_ai_permission_profiles()
+    updated = None
+    now = now_str()
+    for profile in profiles:
+        if profile.get("id") == profile_id:
+            profile["enabled"] = bool(enabled)
+            profile["updated_at"] = now
+            updated = profile
+            break
+    if not updated:
+        raise LookupError("permission profile not found")
+    save_external_ai_permission_profiles(profiles)
+    return updated
+
+
+def external_ai_policy_with_warnings(record):
+    item = dict(record or {})
+    item["warnings"] = evaluate_external_ai_policy_warnings(item)
+    return item
+
+
+def external_ai_profiles_with_warnings(profiles=None):
+    return [external_ai_policy_with_warnings(profile) for profile in (profiles if profiles is not None else load_external_ai_permission_profiles())]
 
 
 def external_ai_policy_int(value, default, minimum=0, maximum=10000000):
@@ -2335,6 +2567,8 @@ def apply_external_ai_permission_profile(profile_id, source_systems, enabled_ove
     profile = external_ai_permission_profile_by_id(profile_id)
     if not profile:
         raise ValueError("unknown permission profile")
+    if not profile.get("enabled"):
+        raise ValueError("permission profile is disabled")
     result = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "policies": []}
     seen = set()
     source_items = external_ai_policy_list(source_systems) if isinstance(source_systems, str) else (source_systems or [])
@@ -2356,7 +2590,7 @@ def apply_external_ai_permission_profile(profile_id, source_systems, enabled_ove
             result["skipped"] += 1
             result["errors"].append({"source_system": source_system, "error": str(exc)})
             continue
-        result["policies"].append(record)
+        result["policies"].append(external_ai_policy_with_warnings(record))
         if created:
             result["created"] += 1
         else:
@@ -14498,15 +14732,93 @@ def admin_ai_providers_page():
     )
 
 
+def external_ai_permission_profile_form_payload(form, profile_id=None):
+    payload = dict(form)
+    if profile_id:
+        payload["id"] = profile_id
+    payload["allowed_providers"] = form.getlist("allowed_providers")
+    payload["allowed_models"] = form.getlist("allowed_models")
+    payload["allowed_capabilities"] = form.getlist("allowed_capabilities")
+    for key in ("enabled", "enabled_by_default", "allow_streaming", "allow_tool_calling", "store_prompt", "store_response"):
+        payload[key] = form.get(key) == "1"
+    return payload
+
+
+def render_external_ai_permission_profiles_page():
+    profiles = external_ai_profiles_with_warnings()
+    profiles.sort(key=lambda item: (item.get("enabled"), item.get("updated_at") or "", item.get("name") or ""), reverse=True)
+    return render_template(
+        "external_ai_permission_profiles.html",
+        app_name=APP_NAME,
+        profiles=profiles,
+        provider_choices=EXTERNAL_AI_PROVIDER_OPTIONS,
+        model_choices=EXTERNAL_AI_MODEL_OPTIONS,
+        capability_groups=EXTERNAL_AI_CAPABILITY_GROUPS,
+        profile_store_path=str(external_ai_permission_profile_store_path()),
+        default_max_tokens=EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS,
+        default_daily_requests=EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT,
+        default_daily_tokens=EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT,
+        default_monthly_budget=EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD,
+    )
+
+
+@app.route("/admin/external-ai-permission-profiles", methods=["GET", "POST"])
+@require_roles("owner", "admin")
+def admin_external_ai_permission_profiles_page():
+    if request.method == "POST":
+        try:
+            record = create_external_ai_permission_profile(external_ai_permission_profile_form_payload(request.form))
+            flash(f"Permission profile created: {record['name']}.")
+            return redirect(url_for("admin_external_ai_permission_profiles_page"))
+        except ValueError as exc:
+            flash(str(exc))
+    return render_external_ai_permission_profiles_page()
+
+
+@app.route("/admin/external-ai-permission-profiles/<profile_id>/update", methods=["POST"])
+@require_roles("owner", "admin")
+def admin_external_ai_permission_profile_update(profile_id):
+    try:
+        record = update_external_ai_permission_profile(profile_id, external_ai_permission_profile_form_payload(request.form, profile_id=profile_id))
+        flash(f"Permission profile updated: {record['name']}.")
+    except (LookupError, ValueError) as exc:
+        flash(str(exc))
+    return redirect(url_for("admin_external_ai_permission_profiles_page"))
+
+
+@app.route("/admin/external-ai-permission-profiles/<profile_id>/disable", methods=["POST"])
+@require_roles("owner", "admin")
+def admin_external_ai_permission_profile_disable(profile_id):
+    try:
+        record = set_external_ai_permission_profile_enabled(profile_id, False)
+        flash(f"Permission profile disabled: {record['name']}.")
+    except LookupError as exc:
+        flash(str(exc))
+    return redirect(url_for("admin_external_ai_permission_profiles_page"))
+
+
+@app.route("/admin/external-ai-permission-profiles/<profile_id>/enable", methods=["POST"])
+@require_roles("owner", "admin")
+def admin_external_ai_permission_profile_enable(profile_id):
+    try:
+        record = set_external_ai_permission_profile_enabled(profile_id, True)
+        flash(f"Permission profile enabled: {record['name']}.")
+    except LookupError as exc:
+        flash(str(exc))
+    return redirect(url_for("admin_external_ai_permission_profiles_page"))
+
+
 def render_external_ai_policies_page():
     records = load_external_ai_policy_records()
     records.sort(key=lambda item: (item.get("updated_at") or "", item.get("created_at") or "", item.get("id") or ""), reverse=True)
+    profiles = external_ai_profiles_with_warnings()
     return render_template(
         "external_ai_policies.html",
         app_name=APP_NAME,
-        policies=records,
+        policies=[external_ai_policy_with_warnings(record) for record in records],
         source_options=external_api_key_source_options(),
-        permission_profiles=load_external_ai_permission_profiles(),
+        permission_profiles=profiles,
+        enabled_permission_profiles=[profile for profile in profiles if profile.get("enabled")],
         provider_choices=EXTERNAL_AI_PROVIDER_OPTIONS,
         model_choices=EXTERNAL_AI_MODEL_OPTIONS,
         capability_choices=EXTERNAL_AI_CAPABILITY_OPTIONS,
@@ -19146,6 +19458,70 @@ def api_admin_ai_providers():
     })
 
 
+@app.route("/api/admin/external-ai-permission-profiles", methods=["GET", "POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_permission_profiles():
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        try:
+            record = create_external_ai_permission_profile(payload)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({
+            "ok": True,
+            "profile": external_ai_policy_with_warnings(record),
+            "execution_allowed": False,
+            "provider_calls_executed": False,
+        }), 201
+    profiles = external_ai_profiles_with_warnings()
+    return jsonify({
+        "ok": True,
+        "profiles": profiles,
+        "count": len(profiles),
+        "read_only": True,
+        "execution_allowed": False,
+        "provider_calls_executed": False,
+    })
+
+
+@app.route("/api/admin/external-ai-permission-profiles/<profile_id>/update", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_permission_profile_update(profile_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        record = update_external_ai_permission_profile(profile_id, payload)
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({
+        "ok": True,
+        "profile": external_ai_policy_with_warnings(record),
+        "execution_allowed": False,
+        "provider_calls_executed": False,
+    })
+
+
+@app.route("/api/admin/external-ai-permission-profiles/<profile_id>/disable", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_permission_profile_disable(profile_id):
+    try:
+        record = set_external_ai_permission_profile_enabled(profile_id, False)
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    return jsonify({"ok": True, "profile": external_ai_policy_with_warnings(record), "execution_allowed": False})
+
+
+@app.route("/api/admin/external-ai-permission-profiles/<profile_id>/enable", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_permission_profile_enable(profile_id):
+    try:
+        record = set_external_ai_permission_profile_enabled(profile_id, True)
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    return jsonify({"ok": True, "profile": external_ai_policy_with_warnings(record), "execution_allowed": False})
+
+
 @app.route("/api/admin/external-ai-policies", methods=["GET", "POST"])
 @require_api_roles("owner", "admin")
 def api_admin_external_ai_policies():
@@ -19155,14 +19531,14 @@ def api_admin_external_ai_policies():
             record = create_external_ai_policy(payload)
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
-        return jsonify({"ok": True, "policy": record, "execution_allowed": False}), 201
+        return jsonify({"ok": True, "policy": external_ai_policy_with_warnings(record), "execution_allowed": False}), 201
     records = load_external_ai_policy_records()
     records.sort(key=lambda item: (item.get("updated_at") or "", item.get("created_at") or "", item.get("id") or ""), reverse=True)
     return jsonify({
         "ok": True,
-        "policies": records,
+        "policies": [external_ai_policy_with_warnings(record) for record in records],
         "source_options": external_api_key_source_options(),
-        "permission_profiles": load_external_ai_permission_profiles(),
+        "permission_profiles": external_ai_profiles_with_warnings(),
         "count": len(records),
         "read_only": True,
         "execution_allowed": False,

@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">External AI Permission Profiles</h1>
+    <div class="text-muted small">Profile store: <code>{{ profile_store_path }}</code>. Profiles define reusable provider/model/capability groups. No provider calls are made here.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/external-ai-policies">External AI Policies</a>
+    <a class="btn btn-outline-secondary" href="/admin/ai-providers">AI Providers</a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-4">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Create Profile</div>
+      <div class="card-body">
+        <form method="post" action="/admin/external-ai-permission-profiles">
+          <label class="form-label">Profile ID</label>
+          <input class="form-control mb-2" name="id" placeholder="customer-text-basic" autocomplete="off" required>
+
+          <label class="form-label">Name</label>
+          <input class="form-control mb-2" name="name" placeholder="Customer Text Basic" autocomplete="off" required>
+
+          <label class="form-label">Description</label>
+          <input class="form-control mb-2" name="description" placeholder="Short operator-facing description" autocomplete="off">
+
+          <div class="form-label">Allowed providers</div>
+          <div class="d-flex flex-wrap gap-2 mb-2">
+            {% for provider in provider_choices %}
+              <label class="form-check border rounded px-2 py-1">
+                <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}">
+                <span class="form-check-label">{{ provider }}</span>
+              </label>
+            {% endfor %}
+          </div>
+
+          <label class="form-label">Allowed models</label>
+          <select class="form-select mb-2" name="allowed_models" multiple size="7">
+            {% for provider, models in model_choices.items() %}
+              {% if models %}
+              <optgroup label="{{ provider }}">
+                {% for model in models %}
+                  <option value="{{ model }}">{{ model }}</option>
+                {% endfor %}
+              </optgroup>
+              {% endif %}
+            {% endfor %}
+          </select>
+
+          <div class="form-label">Allowed capabilities</div>
+          {% for group, capabilities in capability_groups.items() %}
+            <div class="small text-muted mt-2">{{ group }}</div>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+              {% for capability in capabilities %}
+                <label class="form-check border rounded px-2 py-1">
+                  <input class="form-check-input me-1" type="checkbox" name="allowed_capabilities" value="{{ capability }}">
+                  <span class="form-check-label">{{ capability }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          {% endfor %}
+
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Max tokens/request</label>
+              <input class="form-control mb-2" name="max_tokens_per_request" type="number" min="1" value="{{ default_max_tokens }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Daily requests</label>
+              <input class="form-control mb-2" name="daily_request_limit" type="number" min="0" value="{{ default_daily_requests }}">
+            </div>
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Daily tokens</label>
+              <input class="form-control mb-2" name="daily_token_limit" type="number" min="0" value="{{ default_daily_tokens }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Monthly budget USD</label>
+              <input class="form-control mb-2" name="monthly_budget_usd" type="number" min="0" step="0.01" value="{{ default_monthly_budget }}">
+            </div>
+          </div>
+
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="enabled" value="1" id="newProfileEnabled" checked>
+            <label class="form-check-label" for="newProfileEnabled">Available for batch apply</label>
+          </div>
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="enabled_by_default" value="1" id="newProfileDefaultEnabled">
+            <label class="form-check-label" for="newProfileDefaultEnabled">Policies created from this profile are enabled by default</label>
+          </div>
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="allow_streaming" value="1" id="newProfileStreaming">
+            <label class="form-check-label" for="newProfileStreaming">Allow streaming</label>
+          </div>
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="allow_tool_calling" value="1" id="newProfileTools">
+            <label class="form-check-label" for="newProfileTools">Allow tool calling</label>
+          </div>
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" name="store_prompt" value="1" id="newProfilePrompt">
+            <label class="form-check-label" for="newProfilePrompt">Store full prompt</label>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="store_response" value="1" id="newProfileResponse">
+            <label class="form-check-label" for="newProfileResponse">Store full response</label>
+          </div>
+
+          <label class="form-label">Note</label>
+          <input class="form-control mb-3" name="note" placeholder="Optional safety note" autocomplete="off">
+
+          <button class="btn btn-primary w-100">Create profile</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-8">
+    {% for profile in profiles %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header d-flex justify-content-between align-items-start gap-2">
+        <div>
+          <div class="fw-bold">{{ profile.name }} <span class="text-muted small">{{ profile.id }}</span></div>
+          <div class="small text-muted">{{ profile.description or profile.note or '-' }}</div>
+        </div>
+        <div class="text-end">
+          {% if profile.enabled %}
+            <span class="badge text-bg-success">enabled</span>
+          {% else %}
+            <span class="badge text-bg-secondary">disabled</span>
+          {% endif %}
+          <div class="small text-muted">default {{ 'enabled' if profile.enabled_by_default else 'disabled' }}</div>
+        </div>
+      </div>
+      <div class="card-body">
+        {% if profile.warnings %}
+          <div class="alert alert-warning small">
+            {% for warning in profile.warnings %}
+              <div>{{ warning }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <form method="post" action="/admin/external-ai-permission-profiles/{{ profile.id }}/update">
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Name</label>
+              <input class="form-control mb-2" name="name" value="{{ profile.name }}" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Description</label>
+              <input class="form-control mb-2" name="description" value="{{ profile.description }}">
+            </div>
+          </div>
+
+          <div class="form-label">Allowed providers</div>
+          <div class="d-flex flex-wrap gap-2 mb-2">
+            {% for provider in provider_choices %}
+              <label class="form-check border rounded px-2 py-1">
+                <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" {% if provider in profile.allowed_providers %}checked{% endif %}>
+                <span class="form-check-label">{{ provider }}</span>
+              </label>
+            {% endfor %}
+          </div>
+
+          <label class="form-label">Allowed models</label>
+          <select class="form-select mb-2" name="allowed_models" multiple size="7">
+            {% for provider, models in model_choices.items() %}
+              {% if models %}
+              <optgroup label="{{ provider }}">
+                {% for model in models %}
+                  <option value="{{ model }}" {% if model in profile.allowed_models %}selected{% endif %}>{{ model }}</option>
+                {% endfor %}
+              </optgroup>
+              {% endif %}
+            {% endfor %}
+          </select>
+
+          <div class="form-label">Allowed capabilities</div>
+          {% for group, capabilities in capability_groups.items() %}
+            <div class="small text-muted mt-2">{{ group }}</div>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+              {% for capability in capabilities %}
+                <label class="form-check border rounded px-2 py-1">
+                  <input class="form-check-input me-1" type="checkbox" name="allowed_capabilities" value="{{ capability }}" {% if capability in profile.allowed_capabilities %}checked{% endif %}>
+                  <span class="form-check-label">{{ capability }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          {% endfor %}
+
+          <div class="row g-2">
+            <div class="col-md-3">
+              <label class="form-label">Max/request</label>
+              <input class="form-control mb-2" name="max_tokens_per_request" type="number" min="1" value="{{ profile.max_tokens_per_request }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Daily requests</label>
+              <input class="form-control mb-2" name="daily_request_limit" type="number" min="0" value="{{ profile.daily_request_limit }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Daily tokens</label>
+              <input class="form-control mb-2" name="daily_token_limit" type="number" min="0" value="{{ profile.daily_token_limit }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Budget USD</label>
+              <input class="form-control mb-2" name="monthly_budget_usd" type="number" min="0" step="0.01" value="{{ profile.monthly_budget_usd }}">
+            </div>
+          </div>
+
+          <div class="d-flex flex-wrap gap-3 mb-3">
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="enabled" value="1" {% if profile.enabled %}checked{% endif %}>
+              <span class="form-check-label">Available</span>
+            </label>
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="enabled_by_default" value="1" {% if profile.enabled_by_default %}checked{% endif %}>
+              <span class="form-check-label">Default enabled</span>
+            </label>
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="allow_streaming" value="1" {% if profile.allow_streaming %}checked{% endif %}>
+              <span class="form-check-label">Streaming</span>
+            </label>
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="allow_tool_calling" value="1" {% if profile.allow_tool_calling %}checked{% endif %}>
+              <span class="form-check-label">Tools</span>
+            </label>
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="store_prompt" value="1" {% if profile.store_prompt %}checked{% endif %}>
+              <span class="form-check-label">Store prompt</span>
+            </label>
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="store_response" value="1" {% if profile.store_response %}checked{% endif %}>
+              <span class="form-check-label">Store response</span>
+            </label>
+          </div>
+
+          <label class="form-label">Note</label>
+          <input class="form-control mb-3" name="note" value="{{ profile.note }}">
+
+          <div class="d-flex gap-2 justify-content-end">
+            <button class="btn btn-sm btn-primary">Update profile</button>
+          </div>
+        </form>
+
+        <div class="d-flex gap-2 justify-content-end mt-2">
+          {% if profile.enabled %}
+          <form method="post" action="/admin/external-ai-permission-profiles/{{ profile.id }}/disable">
+            <button class="btn btn-sm btn-outline-danger">Disable</button>
+          </form>
+          {% else %}
+          <form method="post" action="/admin/external-ai-permission-profiles/{{ profile.id }}/enable">
+            <button class="btn btn-sm btn-outline-success">Enable</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+      <div class="card shadow-sm">
+        <div class="card-body text-muted">No permission profiles found.</div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="alert alert-warning mt-3 mb-0">
+  Permission profiles prepare future gateway governance only. They never call providers or expose provider keys.
+</div>
+{% endblock %}

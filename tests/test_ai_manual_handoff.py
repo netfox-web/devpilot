@@ -1016,9 +1016,11 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('name="source_systems"', page_body)
         self.assertIn("Apply Permission Profile", page_body)
         self.assertIn("Basic Text", page_body)
+        self.assertIn("Text Multi Provider", page_body)
         self.assertIn("Image Basic", page_body)
         self.assertIn("Image Pro", page_body)
-        self.assertIn("Video Basic", page_body)
+        self.assertIn("Video Review Only", page_body)
+        self.assertIn("/admin/external-ai-permission-profiles", page_body)
         self.assertIn("Select a managed source system", page_body)
         self.assertIn("dropdown-source", page_body)
         self.assertIn("Dropdown source label", page_body)
@@ -1056,15 +1058,20 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         profiles = {item["id"]: item for item in response.get_json()["permission_profiles"]}
         self.assertIn("basic-text", profiles)
+        self.assertIn("text-multi-provider", profiles)
         self.assertIn("image-basic", profiles)
         self.assertIn("image-pro", profiles)
-        self.assertIn("video-basic", profiles)
+        self.assertIn("video-review-only", profiles)
         self.assertEqual(profiles["basic-text"]["daily_request_limit"], 1000)
+        self.assertEqual(profiles["text-multi-provider"]["allowed_providers"], ["openai", "gemini", "claude"])
+        self.assertEqual(profiles["text-multi-provider"]["allowed_models"], ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku"])
         self.assertEqual(profiles["image-basic"]["daily_request_limit"], 300)
         self.assertEqual(profiles["image-pro"]["daily_request_limit"], 1000)
-        self.assertEqual(profiles["video-basic"]["daily_request_limit"], 50)
-        self.assertEqual(profiles["video-basic"]["allowed_providers"], ["runway", "kling", "fal"])
-        self.assertFalse(profiles["video-basic"]["enabled_by_default"])
+        self.assertEqual(profiles["video-review-only"]["daily_request_limit"], 20)
+        self.assertEqual(profiles["video-review-only"]["allowed_providers"], ["fal"])
+        self.assertEqual(profiles["video-review-only"]["allowed_models"], ["fal-flux-pro"])
+        self.assertFalse(profiles["video-review-only"]["enabled"])
+        self.assertFalse(profiles["video-review-only"]["enabled_by_default"])
 
         self.profile_store_path.write_text("{not-json", encoding="utf-8")
         response = self.client().get("/api/admin/external-ai-policies")
@@ -1096,8 +1103,22 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(policies["profile-a"]["enabled"])
         self.assertEqual(policies["profile-a"]["allowed_providers"], ["openai"])
         self.assertEqual(policies["profile-a"]["allowed_models"], ["gpt-4.1-mini"])
-        self.assertEqual(policies["profile-a"]["allowed_capabilities"], ["summary", "rewrite", "classification"])
+        self.assertEqual(policies["profile-a"]["allowed_capabilities"], ["summary", "classification", "rewrite"])
         self.assertEqual(policies["profile-a"]["daily_request_limit"], 1000)
+
+        response = self.client().post(
+            "/api/admin/external-ai-policies/apply-profile",
+            json={
+                "profile_id": "text-multi-provider",
+                "source_systems": ["profile-b"],
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        response = self.client().get("/api/admin/external-ai-policies")
+        policies = {item["source_system"]: item for item in response.get_json()["policies"]}
+        self.assertEqual(policies["profile-b"]["profile_id"], "text-multi-provider")
+        self.assertEqual(policies["profile-b"]["allowed_providers"], ["openai", "gemini", "claude"])
+        self.assertEqual(policies["profile-b"]["allowed_models"], ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku"])
 
         response = self.client().post(
             "/api/admin/external-ai-policies/apply-profile",
@@ -1128,21 +1149,17 @@ class AiManualHandoffTest(unittest.TestCase):
         response = self.client().post(
             "/api/admin/external-ai-policies/apply-profile",
             json={
-                "profile_id": "video-basic",
+                "profile_id": "video-review-only",
                 "source_systems": ["profile-c"],
             },
         )
-        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("permission profile is disabled", response.get_json()["error"])
         response = self.client().get("/api/admin/external-ai-policies")
         policies = {item["source_system"]: item for item in response.get_json()["policies"]}
         self.assertEqual(policies["profile-b"]["profile_id"], "image-pro")
         self.assertEqual(policies["profile-b"]["allowed_models"], ["gpt-image-1", "flux-pro", "fal-flux-pro"])
-        self.assertEqual(policies["profile-c"]["profile_id"], "video-basic")
-        self.assertEqual(policies["profile-c"]["allowed_providers"], ["runway", "kling", "fal"])
-        self.assertEqual(policies["profile-c"]["allowed_models"], [])
-        self.assertEqual(policies["profile-c"]["allowed_capabilities"], ["video_generation", "image_to_video"])
-        self.assertEqual(policies["profile-c"]["daily_request_limit"], 50)
-        self.assertFalse(policies["profile-c"]["enabled"])
+        self.assertNotIn("profile-c", policies)
 
         response = self.client().post(
             "/api/admin/external-ai-policies/apply-profile",
@@ -1150,6 +1167,163 @@ class AiManualHandoffTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("unknown permission profile", response.get_json()["error"])
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_permission_profile_manager_crud_validation_and_warnings(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        page = self.client().get("/admin/external-ai-permission-profiles")
+        self.assertEqual(page.status_code, 200)
+        page_body = page.get_data(as_text=True)
+        self.assertIn("External AI Permission Profiles", page_body)
+        self.assertIn("Basic Text", page_body)
+        self.assertIn("Text Multi Provider", page_body)
+        self.assertIn("Image Basic", page_body)
+        self.assertIn("Image Pro", page_body)
+        self.assertIn("Video Review Only", page_body)
+        self.assertIn('name="allowed_providers"', page_body)
+        self.assertIn('value="openai"', page_body)
+        self.assertIn('value="runway"', page_body)
+        self.assertIn('name="allowed_models" multiple', page_body)
+        self.assertIn('value="gpt-image-1"', page_body)
+        self.assertIn('value="fal-flux-pro"', page_body)
+        self.assertNotIn("key_hash", page_body)
+
+        high_risk_payload = {
+            "id": "custom-high-risk",
+            "name": "Custom High Risk",
+            "description": "Exercises warning behavior",
+            "enabled": True,
+            "enabled_by_default": True,
+            "allowed_providers": ["openai", "gemini", "claude", "replicate", "fal"],
+            "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku", "flux-schnell", "fal-flux-pro"],
+            "allowed_capabilities": [
+                "summary",
+                "classification",
+                "rewrite",
+                "extraction",
+                "planning",
+                "chat",
+                "generate",
+                "image_generation",
+                "prompt_rewrite",
+                "video_generation",
+                "image_to_video",
+            ],
+            "max_tokens_per_request": 5000,
+            "daily_request_limit": 1500,
+            "daily_token_limit": 600000,
+            "monthly_budget_usd": 150,
+            "allow_streaming": True,
+            "allow_tool_calling": True,
+            "store_prompt": True,
+            "store_response": True,
+            "note": "High risk test profile",
+        }
+
+        with patch.object(self.app_module, "call_task_provider") as provider_call:
+            with patch.object(self.app_module, "run_ai_task") as run_task:
+                with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                    with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                        with patch.object(self.app_module, "save_handoff") as legacy_save:
+                            response = self.client().post("/api/admin/external-ai-permission-profiles", json=high_risk_payload)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        profile = response.get_json()["profile"]
+        warning_text = "\n".join(profile["warnings"])
+        self.assertIn("Tool calling is enabled", warning_text)
+        self.assertIn("Streaming is enabled", warning_text)
+        self.assertIn("Full prompt storage is enabled", warning_text)
+        self.assertIn("Full response storage is enabled", warning_text)
+        self.assertIn("Many capabilities selected", warning_text)
+        self.assertIn("Video capability is enabled", warning_text)
+        self.assertIn("Monthly budget is high", warning_text)
+        self.assertIn("Daily request limit is high", warning_text)
+        self.assertIn("Daily token limit is high", warning_text)
+
+        page = self.client().get("/admin/external-ai-permission-profiles")
+        self.assertEqual(page.status_code, 200)
+        page_body = page.get_data(as_text=True)
+        self.assertIn("Custom High Risk", page_body)
+        self.assertIn("Policy", self.client().get("/admin/external-ai-policies").get_data(as_text=True))
+        self.assertIn("Tool calling is enabled", page_body)
+
+        update_payload = {
+            "name": "Custom Safer",
+            "description": "Updated safer profile",
+            "enabled": True,
+            "enabled_by_default": False,
+            "allowed_providers": ["openai", "gemini"],
+            "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash"],
+            "allowed_capabilities": ["summary", "extraction"],
+            "max_tokens_per_request": 2000,
+            "daily_request_limit": 200,
+            "daily_token_limit": 100000,
+            "monthly_budget_usd": 20,
+            "allow_streaming": False,
+            "allow_tool_calling": False,
+            "store_prompt": False,
+            "store_response": False,
+        }
+        response = self.client().post("/api/admin/external-ai-permission-profiles/custom-high-risk/update", json=update_payload)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["profile"]["name"], "Custom Safer")
+        self.assertEqual(response.get_json()["profile"]["allowed_providers"], ["openai", "gemini"])
+
+        response = self.client().post("/api/admin/external-ai-permission-profiles/custom-high-risk/disable", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["profile"]["enabled"])
+        response = self.client().post(
+            "/api/admin/external-ai-policies/apply-profile",
+            json={"profile_id": "custom-high-risk", "source_systems": ["custom-profile-source"]},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("permission profile is disabled", response.get_json()["error"])
+        response = self.client().post("/api/admin/external-ai-permission-profiles/custom-high-risk/enable", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["profile"]["enabled"])
+        response = self.client().post(
+            "/api/admin/external-ai-policies/apply-profile",
+            json={"profile_id": "custom-high-risk", "source_systems": ["custom-profile-source"]},
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        applied = response.get_json()["result"]["policies"][0]
+        self.assertEqual(applied["source_system"], "custom-profile-source")
+        self.assertEqual(applied["profile_id"], "custom-high-risk")
+        self.assertEqual(applied["allowed_capabilities"], ["summary", "extraction"])
+
+        cases = [
+            ({"id": "bad-provider", "name": "Bad Provider", "allowed_providers": ["unknown-provider"]}, "unknown provider"),
+            ({"id": "bad-model", "name": "Bad Model", "allowed_providers": ["openai"], "allowed_models": ["unknown-model"]}, "unknown model"),
+            ({"id": "bad-capability", "name": "Bad Capability", "allowed_providers": ["openai"], "allowed_capabilities": ["unknown-capability"]}, "unknown capability"),
+            ({"id": "bad-mismatch", "name": "Bad Mismatch", "allowed_providers": ["openai"], "allowed_models": ["gemini-1.5-flash"]}, "model/provider mismatch"),
+        ]
+        for payload, expected_error in cases:
+            response = self.client().post("/api/admin/external-ai-permission-profiles", json=payload)
+            self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+            self.assertIn(expected_error, response.get_json()["error"])
+
+        warning_policy = self.client().post(
+            "/api/admin/external-ai-policies",
+            json=dict(high_risk_payload, source_system="warning-source", id=None, name=None, label="Warning source"),
+        )
+        self.assertEqual(warning_policy.status_code, 201, warning_policy.get_data(as_text=True))
+        policy_warnings = "\n".join(warning_policy.get_json()["policy"]["warnings"])
+        self.assertIn("Tool calling is enabled", policy_warnings)
+        policy_page = self.client().get("/admin/external-ai-policies")
+        self.assertEqual(policy_page.status_code, 200)
+        self.assertIn("Policy warnings", policy_page.get_data(as_text=True))
+        self.assertIn("Video capability is enabled", policy_page.get_data(as_text=True))
 
         with self.app.app_context():
             approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]

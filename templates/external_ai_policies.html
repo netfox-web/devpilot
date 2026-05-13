@@ -6,6 +6,7 @@
     <div class="text-muted small">Policy store: <code>{{ key_store_path }}</code>. Profile store: <code>{{ profile_store_path }}</code>. No provider calls are made from this page.</div>
   </div>
   <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/external-ai-permission-profiles">Permission Profiles</a>
     <a class="btn btn-outline-secondary" href="/admin/ai-providers">AI Providers</a>
     <a class="btn btn-outline-secondary" href="/admin/external-api-keys">External API Keys</a>
   </div>
@@ -46,10 +47,13 @@
           <label class="form-label">Permission profile</label>
           <select class="form-select mb-2" name="profile_id" required>
             <option value="">Choose profile</option>
-            {% for profile in permission_profiles %}
+            {% for profile in enabled_permission_profiles %}
               <option value="{{ profile.id }}">{{ profile.name }} ({{ profile.id }})</option>
             {% endfor %}
           </select>
+          {% if not enabled_permission_profiles %}
+            <div class="text-muted small mb-2">No enabled permission profiles are available.</div>
+          {% endif %}
 
           <label class="form-label">Enabled state</label>
           <select class="form-select mb-3" name="profile_enabled_mode">
@@ -68,13 +72,27 @@
       <div class="card-body">
         {% for profile in permission_profiles %}
           <div class="border rounded p-2 mb-2">
-            <div class="fw-semibold">{{ profile.name }} <span class="text-muted small">{{ profile.id }}</span></div>
+            <div class="fw-semibold">
+              {{ profile.name }} <span class="text-muted small">{{ profile.id }}</span>
+              {% if profile.enabled %}
+                <span class="badge text-bg-success">enabled</span>
+              {% else %}
+                <span class="badge text-bg-secondary">disabled</span>
+              {% endif %}
+            </div>
             <div class="small"><span class="text-muted">providers:</span> {{ profile.allowed_providers|join(', ') or '-' }}</div>
             <div class="small"><span class="text-muted">models:</span> {{ profile.allowed_models|join(', ') or '-' }}</div>
             <div class="small"><span class="text-muted">capabilities:</span> {{ profile.allowed_capabilities|join(', ') or '-' }}</div>
             <div class="small"><span class="text-muted">daily:</span> {{ profile.daily_request_limit }} requests - {{ profile.daily_token_limit }} tokens</div>
             <div class="small"><span class="text-muted">budget:</span> ${{ profile.monthly_budget_usd }} - default {{ 'enabled' if profile.enabled_by_default else 'disabled' }}</div>
             {% if profile.note %}<div class="small text-muted">{{ profile.note }}</div>{% endif %}
+            {% if profile.warnings %}
+              <div class="alert alert-warning small mt-2 mb-0">
+                {% for warning in profile.warnings %}
+                  <div>{{ warning }}</div>
+                {% endfor %}
+              </div>
+            {% endif %}
           </div>
         {% endfor %}
       </div>
@@ -212,6 +230,7 @@
               <td>
                 <div class="fw-semibold">{{ policy.source_system }}</div>
                 <div class="small text-muted">{{ policy.label or '-' }}</div>
+                {% if policy.profile_id %}<div class="small text-muted">profile: {{ policy.profile_id }}</div>{% endif %}
               </td>
               <td>
                 {% if policy.enabled %}
@@ -251,6 +270,17 @@
                 {% endif %}
               </td>
             </tr>
+            {% if policy.warnings %}
+            <tr class="table-warning">
+              <td></td>
+              <td colspan="6" class="small">
+                <div class="fw-semibold">Policy warnings</div>
+                {% for warning in policy.warnings %}
+                  <div>{{ warning }}</div>
+                {% endfor %}
+              </td>
+            </tr>
+            {% endif %}
             {% else %}
             <tr><td colspan="7" class="text-center text-muted py-4">No external AI policies yet</td></tr>
             {% endfor %}
