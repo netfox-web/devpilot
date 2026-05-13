@@ -15783,6 +15783,343 @@ def admin_external_api_key_integration_doc(key_id):
     return Response(external_api_key_integration_doc(record), mimetype="text/markdown", headers=headers)
 
 
+INTEGRATION_TOOLBOX_FILE_RESOURCES = {
+    "devpilot-integration-settings-spec": {
+        "title": "DevPilot Integration Settings Spec",
+        "description": "Standard admin settings page every external project should implement.",
+        "path": BASE_DIR / "docs" / "devpilot_integration_settings_spec.md",
+        "filename": "devpilot_integration_settings_spec.md",
+        "mimetype": "text/markdown",
+    },
+    "external-project-registry-api": {
+        "title": "External Project Registry API",
+        "description": "Register project metadata, local/NAS paths, domains, containers.",
+        "path": BASE_DIR / "docs" / "external_project_registry_api.md",
+        "filename": "external_project_registry_api.md",
+        "mimetype": "text/markdown",
+    },
+    "external-api-onboarding-admin-guide": {
+        "title": "External API Onboarding Admin Guide",
+        "description": "Admin workflow for key generation, policy profiles, docs handoff.",
+        "path": BASE_DIR / "docs" / "external_api_onboarding_admin_guide.md",
+        "filename": "external_api_onboarding_admin_guide.md",
+        "mimetype": "text/markdown",
+    },
+    "external-ai-gateway-plan": {
+        "title": "External AI Gateway Plan",
+        "description": "Future provider/model governance and AI gateway plan.",
+        "path": BASE_DIR / "docs" / "external_ai_gateway_phase_plan.md",
+        "filename": "external_ai_gateway_phase_plan.md",
+        "mimetype": "text/markdown",
+    },
+    "external-ai-gateway-admin-guide": {
+        "title": "External AI Gateway Admin Guide",
+        "description": "Provider and policy governance admin guide.",
+        "path": BASE_DIR / "docs" / "external_ai_gateway_admin_guide.md",
+        "filename": "external_ai_gateway_admin_guide.md",
+        "mimetype": "text/markdown",
+    },
+    "external-project-communication-plan": {
+        "title": "External Project Communication Plan",
+        "description": "Future project-to-project communication plan.",
+        "path": BASE_DIR / "docs" / "external_project_communication_phase_plan.md",
+        "filename": "external_project_communication_phase_plan.md",
+        "mimetype": "text/markdown",
+    },
+    "external-handoff-api-guide": {
+        "title": "External Handoff API Guide",
+        "description": "Create and read safe external handoffs through DevPilot.",
+        "path": BASE_DIR / "docs" / "integration_toolbox" / "external_handoff_api_guide.md",
+        "filename": "external_handoff_api_guide.md",
+        "mimetype": "text/markdown",
+    },
+    "external-project-events-guide": {
+        "title": "External Project Events Guide",
+        "description": "Report build, deploy, domain, healthcheck, and usage events.",
+        "path": BASE_DIR / "docs" / "integration_toolbox" / "external_project_events_guide.md",
+        "filename": "external_project_events_guide.md",
+        "mimetype": "text/markdown",
+    },
+    "external-ai-gateway-future-api-guide": {
+        "title": "External AI Gateway Future API Guide",
+        "description": "Future generate/chat integration guidance for policy-gated AI usage.",
+        "path": BASE_DIR / "docs" / "integration_toolbox" / "external_ai_gateway_future_api_guide.md",
+        "filename": "external_ai_gateway_future_api_guide.md",
+        "mimetype": "text/markdown",
+    },
+}
+
+
+def devpilot_js_client_example():
+    return """// DevPilot external integration client example.
+// Keep this file server-side. Never expose DEVPILOT_API_KEY to browser JavaScript.
+import crypto from "node:crypto";
+
+const DEVPILOT_API_BASE_URL = process.env.DEVPILOT_API_BASE_URL || "https://YOUR_DEVPILOT_DOMAIN";
+const DEVPILOT_SOURCE_SYSTEM = process.env.DEVPILOT_SOURCE_SYSTEM || "YOUR_SOURCE_SYSTEM";
+const DEVPILOT_API_KEY = process.env.DEVPILOT_API_KEY || "<paste-the-key-shown-once>";
+
+function required(value, name) {
+  if (!value || value.startsWith("YOUR_") || value.includes("paste-the-key")) {
+    throw new Error(`${name} is not configured`);
+  }
+  return value;
+}
+
+function baseUrl() {
+  return required(DEVPILOT_API_BASE_URL, "DEVPILOT_API_BASE_URL").replace(/\\/+$/, "");
+}
+
+async function devpilotFetch(path, { method = "GET", body, idempotencyKey } = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`${baseUrl()}${path}`, {
+      method,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "X-DevPilot-Source-System": required(DEVPILOT_SOURCE_SYSTEM, "DEVPILOT_SOURCE_SYSTEM"),
+        "X-DevPilot-Api-Key": required(DEVPILOT_API_KEY, "DEVPILOT_API_KEY"),
+        "X-DevPilot-Request-Id": crypto.randomUUID(),
+        "X-DevPilot-Idempotency-Key": idempotencyKey || crypto.randomUUID()
+      },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) : {};
+    if (!response.ok) {
+      throw new Error(payload.error || `DevPilot request failed with ${response.status}`);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function testConnection() {
+  return devpilotFetch("/api/external/projects");
+}
+
+export async function registerProject(project) {
+  return devpilotFetch("/api/external/projects/register", {
+    method: "POST",
+    idempotencyKey: `register:${project.external_project_id}`,
+    body: project
+  });
+}
+
+export async function sendProjectEvent(externalProjectId, event) {
+  return devpilotFetch(`/api/external/projects/${encodeURIComponent(externalProjectId)}/events`, {
+    method: "POST",
+    idempotencyKey: `event:${externalProjectId}:${event.event_type}:${event.commit_sha || crypto.randomUUID()}`,
+    body: event
+  });
+}
+
+export async function createHandoff(taskId, handoff) {
+  return devpilotFetch(`/api/external/tasks/${encodeURIComponent(taskId)}/handoffs`, {
+    method: "POST",
+    idempotencyKey: `handoff:${taskId}:${handoff.external_ref || crypto.randomUUID()}`,
+    body: handoff
+  });
+}
+"""
+
+
+def devpilot_python_client_example():
+    return '''"""DevPilot external integration client example.
+
+Keep this module server-side. Never print or log DEVPILOT_API_KEY.
+"""
+import os
+import uuid
+
+import requests
+
+DEVPILOT_API_BASE_URL = os.getenv("DEVPILOT_API_BASE_URL", "https://YOUR_DEVPILOT_DOMAIN").rstrip("/")
+DEVPILOT_SOURCE_SYSTEM = os.getenv("DEVPILOT_SOURCE_SYSTEM", "YOUR_SOURCE_SYSTEM")
+DEVPILOT_API_KEY = os.getenv("DEVPILOT_API_KEY", "<paste-the-key-shown-once>")
+TIMEOUT_SECONDS = 15
+
+
+def _require(value, name):
+    if not value or value.startswith("YOUR_") or "paste-the-key" in value:
+        raise RuntimeError(f"{name} is not configured")
+    return value
+
+
+def _headers(idempotency_key=None):
+    return {
+        "Content-Type": "application/json",
+        "X-DevPilot-Source-System": _require(DEVPILOT_SOURCE_SYSTEM, "DEVPILOT_SOURCE_SYSTEM"),
+        "X-DevPilot-Api-Key": _require(DEVPILOT_API_KEY, "DEVPILOT_API_KEY"),
+        "X-DevPilot-Request-Id": str(uuid.uuid4()),
+        "X-DevPilot-Idempotency-Key": idempotency_key or str(uuid.uuid4()),
+    }
+
+
+def devpilot_request(method, path, payload=None, idempotency_key=None):
+    url = f"{_require(DEVPILOT_API_BASE_URL, 'DEVPILOT_API_BASE_URL')}{path}"
+    response = requests.request(
+        method,
+        url,
+        json=payload,
+        headers=_headers(idempotency_key),
+        timeout=TIMEOUT_SECONDS,
+    )
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    if not response.ok:
+        raise RuntimeError(body.get("error") or f"DevPilot request failed with {response.status_code}")
+    return body
+
+
+def test_connection():
+    return devpilot_request("GET", "/api/external/projects")
+
+
+def register_project(project):
+    return devpilot_request(
+        "POST",
+        "/api/external/projects/register",
+        project,
+        idempotency_key=f"register:{project['external_project_id']}",
+    )
+
+
+def send_project_event(external_project_id, event):
+    stable = event.get("commit_sha") or event.get("message") or str(uuid.uuid4())
+    return devpilot_request(
+        "POST",
+        f"/api/external/projects/{external_project_id}/events",
+        event,
+        idempotency_key=f"event:{external_project_id}:{event['event_type']}:{stable}",
+    )
+
+
+def create_handoff(task_id, handoff):
+    stable = handoff.get("external_ref") or str(uuid.uuid4())
+    return devpilot_request(
+        "POST",
+        f"/api/external/tasks/{task_id}/handoffs",
+        handoff,
+        idempotency_key=f"handoff:{task_id}:{stable}",
+    )
+'''
+
+
+def devpilot_env_template():
+    return """# DevPilot external integration settings.
+# Fill these in on the external project's server only. Do not commit real secrets.
+DEVPILOT_API_BASE_URL=
+DEVPILOT_SOURCE_SYSTEM=
+DEVPILOT_API_KEY=
+
+EXTERNAL_PROJECT_ID=
+PROJECT_NAME=
+APP_URL=
+PRIMARY_DOMAIN=
+"""
+
+
+INTEGRATION_TOOLBOX_GENERATED_RESOURCES = {
+    "devpilot-js-client-example": {
+        "title": "JS client example",
+        "description": "Server-side JavaScript example for test connection, register project, events, and handoffs.",
+        "filename": "devpilot_external_client.js",
+        "mimetype": "application/javascript",
+        "generator": devpilot_js_client_example,
+    },
+    "devpilot-python-client-example": {
+        "title": "Python client example",
+        "description": "Python requests example for test connection, register project, events, and handoffs.",
+        "filename": "devpilot_external_client.py",
+        "mimetype": "text/x-python",
+        "generator": devpilot_python_client_example,
+    },
+    "devpilot-env-template": {
+        "title": ".env template",
+        "description": "Environment variable template for external project DevPilot integration settings.",
+        "filename": "devpilot.env.example",
+        "mimetype": "text/plain",
+        "generator": devpilot_env_template,
+    },
+}
+
+
+def integration_toolbox_resources(include_missing=False):
+    resources = []
+    for resource_id, item in INTEGRATION_TOOLBOX_FILE_RESOURCES.items():
+        exists = item["path"].exists()
+        if exists or include_missing:
+            resources.append({
+                "id": resource_id,
+                "title": item["title"],
+                "description": item["description"],
+                "filename": item["filename"],
+                "kind": "doc",
+                "exists": exists,
+                "download_url": f"/admin/integration-toolbox/download/{resource_id}",
+            })
+    for resource_id, item in INTEGRATION_TOOLBOX_GENERATED_RESOURCES.items():
+        resources.append({
+            "id": resource_id,
+            "title": item["title"],
+            "description": item["description"],
+            "filename": item["filename"],
+            "kind": "generated",
+            "exists": True,
+            "download_url": f"/admin/integration-toolbox/download/{resource_id}",
+        })
+    return resources
+
+
+def integration_toolbox_resource_payload(resource_id):
+    if not resource_id or "/" in resource_id or "\\" in resource_id or ".." in resource_id:
+        return None
+    if resource_id in INTEGRATION_TOOLBOX_FILE_RESOURCES:
+        item = INTEGRATION_TOOLBOX_FILE_RESOURCES[resource_id]
+        path = item["path"]
+        if not path.exists() or not path.is_file():
+            return None
+        return {
+            "body": path.read_text(encoding="utf-8"),
+            "filename": item["filename"],
+            "mimetype": item["mimetype"],
+        }
+    if resource_id in INTEGRATION_TOOLBOX_GENERATED_RESOURCES:
+        item = INTEGRATION_TOOLBOX_GENERATED_RESOURCES[resource_id]
+        return {
+            "body": item["generator"](),
+            "filename": item["filename"],
+            "mimetype": item["mimetype"],
+        }
+    return None
+
+
+@app.route("/admin/integration-toolbox")
+@require_roles("owner", "admin")
+def admin_integration_toolbox_page():
+    return render_template(
+        "integration_toolbox.html",
+        app_name=APP_NAME,
+        resources=integration_toolbox_resources(),
+    )
+
+
+@app.route("/admin/integration-toolbox/download/<path:resource_id>")
+@require_roles("owner", "admin")
+def admin_integration_toolbox_download(resource_id):
+    payload = integration_toolbox_resource_payload(resource_id)
+    if not payload:
+        return "Integration resource not found", 404
+    headers = {"Content-Disposition": f'attachment; filename="{payload["filename"]}"'}
+    return Response(payload["body"], mimetype=payload["mimetype"], headers=headers)
+
+
 @app.route("/admin/ai-providers")
 @require_roles("owner", "admin")
 def admin_ai_providers_page():

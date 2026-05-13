@@ -1432,6 +1432,101 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertNotIn(raw_key, revoked_doc.get_data(as_text=True))
         self.assertEqual(self.state_snapshot(), before)
 
+    def test_integration_toolbox_page_and_downloads_are_safe(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        key_response = self.client().post(
+            "/api/admin/external-api-keys",
+            json={"source_system": "toolbox-source", "label": "Toolbox source label"},
+        )
+        self.assertEqual(key_response.status_code, 201, key_response.get_data(as_text=True))
+        raw_key = key_response.get_json()["api_key"]
+        key_hash = json.loads(self.key_store_path.read_text(encoding="utf-8"))["keys"][0]["key_hash"]
+
+        unauthenticated = self.app.test_client().get("/admin/integration-toolbox")
+        unauthenticated_download = self.app.test_client().get("/admin/integration-toolbox/download/devpilot-env-template")
+        self.assertEqual(unauthenticated.status_code, 302)
+        self.assertEqual(unauthenticated_download.status_code, 302)
+
+        with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+            with patch.object(self.app_module, "call_task_provider") as provider_call:
+                with patch.object(self.app_module, "run_ai_task") as run_task:
+                    with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                            page = self.client().get("/admin/integration-toolbox")
+                            doc_download = self.client().get("/admin/integration-toolbox/download/devpilot-integration-settings-spec")
+                            registry_download = self.client().get("/admin/integration-toolbox/download/external-project-registry-api")
+                            js_download = self.client().get("/admin/integration-toolbox/download/devpilot-js-client-example")
+                            py_download = self.client().get("/admin/integration-toolbox/download/devpilot-python-client-example")
+                            env_download = self.client().get("/admin/integration-toolbox/download/devpilot-env-template")
+                            unknown = self.client().get("/admin/integration-toolbox/download/not-real")
+                            traversal = self.client().get("/admin/integration-toolbox/download/..%2Fapp.py")
+
+        self.assertEqual(page.status_code, 200, page.get_data(as_text=True))
+        page_body = page.get_data(as_text=True)
+        for expected in (
+            "Integration Toolbox",
+            "DevPilot Integration Settings Spec",
+            "External Project Registry API",
+            "External API Onboarding Admin Guide",
+            "External AI Gateway Plan",
+            "External AI Gateway Admin Guide",
+            "External Project Communication Plan",
+            "JS client example",
+            "Python client example",
+            ".env template",
+        ):
+            self.assertIn(expected, page_body)
+        self.assertNotIn(raw_key, page_body)
+        self.assertNotIn(key_hash, page_body)
+        self.assertNotIn("key_hash", page_body)
+
+        for response in (doc_download, registry_download, js_download, py_download, env_download):
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            self.assertIn("attachment", response.headers.get("Content-Disposition", ""))
+
+        self.assertIn("DevPilot Integration", doc_download.get_data(as_text=True))
+        self.assertIn("register project metadata", registry_download.get_data(as_text=True))
+
+        js_body = js_download.get_data(as_text=True)
+        self.assertIn("DEVPILOT_API_KEY", js_body)
+        self.assertIn("<paste-the-key-shown-once>", js_body)
+        self.assertIn("AbortController", js_body)
+        self.assertIn("crypto.randomUUID", js_body)
+        self.assertIn("Never expose DEVPILOT_API_KEY", js_body)
+
+        py_body = py_download.get_data(as_text=True)
+        self.assertIn("DEVPILOT_API_KEY", py_body)
+        self.assertIn("<paste-the-key-shown-once>", py_body)
+        self.assertIn("requests.request", py_body)
+        self.assertIn("timeout=TIMEOUT_SECONDS", py_body)
+        self.assertIn("Never print or log DEVPILOT_API_KEY", py_body)
+
+        env_body = env_download.get_data(as_text=True)
+        self.assertIn("DEVPILOT_API_BASE_URL=", env_body)
+        self.assertIn("DEVPILOT_SOURCE_SYSTEM=", env_body)
+        self.assertIn("DEVPILOT_API_KEY=", env_body)
+        self.assertIn("EXTERNAL_PROJECT_ID=", env_body)
+
+        combined_generated = "\n".join((js_body, py_body, env_body))
+        self.assertNotIn(raw_key, combined_generated)
+        self.assertNotIn(key_hash, combined_generated)
+        self.assertNotIn("key_hash", combined_generated)
+        self.assertNotIn("sk-test", combined_generated)
+        self.assertEqual(unknown.status_code, 404)
+        self.assertEqual(traversal.status_code, 404)
+
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
     def test_ai_provider_config_inspection_is_masked_and_read_only(self):
         before = self.state_snapshot()
         env = {
