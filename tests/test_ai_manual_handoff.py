@@ -1668,6 +1668,155 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(approval_count_after, approval_count_before)
         self.assertEqual(self.state_snapshot(), before)
 
+    def test_external_source_detail_page_is_read_only_and_secret_safe(self):
+        active_record, raw_key = self.app_module.generate_external_api_key("source-detail", "Source detail key")
+        revoked_record, revoked_key = self.app_module.generate_external_api_key("source-detail", "Old source detail key")
+        self.app_module.revoke_external_api_key(revoked_record["id"])
+        store_text = self.key_store_path.read_text(encoding="utf-8")
+        stored_hashes = [item["key_hash"] for item in json.loads(store_text)["keys"]]
+        self.app_module.create_external_ai_policy({
+            "source_system": "source-detail",
+            "profile_id": "text-multi-provider",
+            "label": "Source Detail Policy",
+            "enabled": True,
+            "allowed_providers": ["gemini"],
+            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_capabilities": ["summary", "rewrite"],
+            "daily_request_limit": 100,
+            "daily_token_limit": 1000,
+            "monthly_budget_usd": 10,
+        })
+        self.app_module.save_external_project_registry_records([
+            {
+                "source_system": "source-detail",
+                "external_project_id": "source-detail-project",
+                "name": "Source Detail Project",
+                "project_type": "ai-saas",
+                "environment": "production",
+                "status": "active",
+                "app_url": "https://source-detail.example.com",
+                "primary_domain": "source-detail.example.com",
+                "created_at": "2026-05-13 11:00:00",
+                "updated_at": "2026-05-13 11:00:00",
+                "last_seen_at": "2026-05-13 11:00:00",
+            }
+        ])
+        self.app_module.save_external_project_event_records([
+            {
+                "source_system": "source-detail",
+                "external_project_id": "source-detail-project",
+                "event_type": "deploy_success",
+                "status": "success",
+                "message": "Source detail deploy event",
+                "environment": "production",
+                "created_at": "2026-05-13 11:05:00",
+            }
+        ])
+        self.app_module.save_external_ai_usage_log_records([
+            {
+                "id": "source-detail-usage",
+                "source_system": "source-detail",
+                "request_id": "source-detail-req",
+                "idempotency_key": "source-detail-usage",
+                "external_ref": "source-detail-ref",
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "capability": "summary",
+                "status": "completed",
+                "input_chars": 33,
+                "output_chars": 44,
+                "latency_ms": 55,
+                "prompt_hash": "source-detail-prompt-hash",
+                "prompt_summary": "Source detail safe prompt summary",
+                "response_hash": "source-detail-response-hash",
+                "response_summary": "Source detail safe response summary",
+                "created_at": "2026-05-13 11:10:00",
+            }
+        ])
+        with self.app.app_context():
+            now = self.app_module.now_str()
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+            self.app_module.execute(
+                """INSERT INTO handoff_logs
+                   (project_id, source, agent_name, work_mode, conversation_ref, risk_level, summary, next_steps, warnings, api_payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.project_id,
+                    "external-api",
+                    "source-detail",
+                    "ai-task-handoff",
+                    f"ai-task:{self.task['id']}",
+                    "medium",
+                    "Source detail handoff reason",
+                    "Source detail handoff next step",
+                    "",
+                    json.dumps({
+                        "record_type": "ai_task_handoff",
+                        "source_system": "source-detail",
+                        "external_ref": "source-detail-handoff",
+                        "reason": "Source detail handoff reason",
+                        "next_step": "Source detail handoff next step",
+                        "status": "pending",
+                        "api_key": raw_key,
+                    }),
+                    now,
+                ),
+            )
+        before = self.state_snapshot()
+
+        unauthenticated = self.app.test_client().get("/admin/external-sources/source-detail")
+        self.assertEqual(unauthenticated.status_code, 302)
+        with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+            with patch.object(self.app_module, "call_task_provider") as provider_call:
+                with patch.object(self.app_module, "run_ai_task") as run_task:
+                    with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                            index = self.client().get("/admin/external-sources")
+                            detail = self.client().get("/admin/external-sources/source-detail")
+                            unknown = self.client().get("/admin/external-sources/missing-source")
+                            diagnostics = self.client().get("/admin/external-integration-diagnostics?source_system=source-detail")
+
+        self.assertEqual(index.status_code, 200, index.get_data(as_text=True))
+        self.assertEqual(detail.status_code, 200, detail.get_data(as_text=True))
+        self.assertEqual(unknown.status_code, 200, unknown.get_data(as_text=True))
+        self.assertEqual(diagnostics.status_code, 200, diagnostics.get_data(as_text=True))
+        page = detail.get_data(as_text=True)
+        self.assertIn("External Source Detail", page)
+        self.assertIn("source-detail", page)
+        self.assertIn(active_record["key_prefix"], page)
+        self.assertIn(revoked_record["key_prefix"], page)
+        self.assertIn("Source Detail Policy", page)
+        self.assertIn("gemini-1.5-flash", page)
+        self.assertIn("summary, rewrite", page)
+        self.assertIn("Source Detail Project", page)
+        self.assertIn("deploy_success", page)
+        self.assertIn("Source detail handoff reason", page)
+        self.assertIn("Source detail safe prompt summary", page)
+        self.assertIn("Diagnostics Summary", page)
+        self.assertIn("Safe Env Snippet", page)
+        self.assertIn("Safe Curl Snippets", page)
+        self.assertIn("&lt;paste-devpilot-external-api-key&gt;", page)
+        self.assertIn("/admin/external-integration-diagnostics?source_system=source-detail", page)
+        self.assertIn("/admin/external-projects?source_system=source-detail", page)
+        self.assertIn("/admin/external-ai-usage?source_system=source-detail", page)
+        self.assertIn("/admin/external-sources/source-detail", diagnostics.get_data(as_text=True))
+        self.assertIn("Source system", unknown.get_data(as_text=True))
+        self.assertIn("was not found", unknown.get_data(as_text=True))
+        self.assertNotIn(raw_key, page)
+        self.assertNotIn(revoked_key, page)
+        for stored_hash in stored_hashes:
+            self.assertNotIn(stored_hash, page)
+        self.assertNotIn("key_hash", page)
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
     def test_ai_provider_config_inspection_is_masked_and_read_only(self):
         before = self.state_snapshot()
         env = {

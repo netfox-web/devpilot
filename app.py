@@ -16314,6 +16314,103 @@ def external_integration_diagnostics_payload(source_system=None):
     }
 
 
+def external_source_catalog_item(source_system):
+    source_system = external_api_key_preview(source_system, 120)
+    for item in external_integration_source_catalog():
+        if item.get("source_system") == source_system:
+            return item
+    return {
+        "source_system": source_system,
+        "has_env_key": False,
+        "managed_active_count": 0,
+        "managed_revoked_count": 0,
+        "project_count": 0,
+        "event_count": 0,
+        "usage_count": 0,
+        "handoff_count": 0,
+    }
+
+
+def external_source_policy_summary(source_system):
+    source_system = external_api_key_preview(source_system, 120)
+    policy = external_ai_policy_for_source(source_system, enabled_only=True) or external_ai_policy_for_source(source_system)
+    if not policy:
+        return {
+            "exists": False,
+            "policy": None,
+            "profile": None,
+            "budget": None,
+        }
+    policy = external_ai_policy_with_warnings(policy)
+    profile = external_ai_permission_profile_by_id(policy.get("profile_id")) if policy.get("profile_id") else None
+    usage_summary = summarize_external_ai_usage(external_ai_usage_rows({"source_system": source_system}))
+    return {
+        "exists": True,
+        "policy": policy,
+        "profile": external_ai_policy_with_warnings(profile) if profile else None,
+        "budget": external_ai_usage_within_policy(policy, usage_summary),
+    }
+
+
+def external_source_diagnostic_summary(source_system, source_exists, key_status, projects, events, handoffs, usage_rows):
+    active_records = [record for record in key_status.get("records", []) if record.get("status") == "active"]
+    active_key_exists = bool(active_records)
+    active_key_used = any(record.get("last_used_at") and record.get("last_used_at") != "not available" for record in active_records)
+    recent_success_events = [event for event in events if event.get("status") in ("success", "info", "running")]
+    recent_failed_events = [event for event in events if event.get("status") in ("failed", "blocked", "warning")]
+    recent_success_usage = [item for item in usage_rows if item.get("status") in ("completed", "success")]
+    recent_failed_usage = [item for item in usage_rows if item.get("status") in ("failed", "rejected", "error")]
+    return {
+        "source_system": source_system,
+        "source_exists": bool(source_exists),
+        "active_key_exists": active_key_exists,
+        "active_key_never_used": active_key_exists and not active_key_used,
+        "has_registered_projects": bool(projects),
+        "recent_event_count": len(events),
+        "recent_success_event_count": len(recent_success_events),
+        "recent_failed_event_count": len(recent_failed_events),
+        "recent_handoff_count": len(handoffs),
+        "recent_usage_count": len(usage_rows),
+        "recent_success_usage_count": len(recent_success_usage),
+        "recent_failed_usage_count": len(recent_failed_usage),
+        "hints": [
+            "Create or activate a managed External API Key." if not active_key_exists else "",
+            "Run a safe GET /api/external/projects connection test from the external backend." if active_key_exists and not active_key_used else "",
+            "Register the project through POST /api/external/projects/register." if not projects else "",
+            "Send healthcheck/deploy events through the project events API." if projects and not events else "",
+        ],
+    }
+
+
+def external_source_detail_payload(source_system=None):
+    sources = external_integration_source_catalog()
+    selected_source = external_api_key_preview(source_system, 120)
+    source_exists = bool(selected_source and any(item["source_system"] == selected_source for item in sources))
+    key_status = external_integration_key_status(selected_source) if selected_source else {"records": [], "active_count": 0, "revoked_count": 0, "env_configured": False}
+    projects = external_integration_recent_projects(selected_source, limit=20)
+    events = external_integration_recent_events(selected_source, limit=20)
+    handoffs = external_integration_recent_handoffs(selected_source, limit=20)
+    usage_rows = external_ai_usage_rows({"source_system": selected_source}) if selected_source else []
+    usage_summary = summarize_external_ai_usage(usage_rows)
+    return {
+        "sources": sources,
+        "selected_source": selected_source,
+        "source_exists": source_exists,
+        "source_summary": external_source_catalog_item(selected_source) if selected_source else None,
+        "key_status": key_status,
+        "policy": external_source_policy_summary(selected_source) if selected_source else {"exists": False, "policy": None, "profile": None, "budget": None},
+        "projects": projects,
+        "recent_events": events[:12],
+        "recent_handoffs": handoffs[:12],
+        "recent_usage": usage_rows[:12],
+        "usage_summary": usage_summary,
+        "diagnostics": external_source_diagnostic_summary(selected_source, source_exists, key_status, projects, events, handoffs, usage_rows) if selected_source else None,
+        "curl_examples": external_integration_safe_curl_examples(selected_source),
+        "env_checklist": external_integration_env_checklist(selected_source),
+        "error_hints": external_integration_error_hints()[:8],
+    }
+
+
 @app.route("/admin/external-integration-diagnostics")
 @require_roles("owner", "admin")
 def admin_external_integration_diagnostics_page():
@@ -16322,6 +16419,29 @@ def admin_external_integration_diagnostics_page():
         "external_integration_diagnostics.html",
         app_name=APP_NAME,
         diagnostics=diagnostics,
+    )
+
+
+@app.route("/admin/external-sources")
+@require_roles("owner", "admin")
+def admin_external_sources_page():
+    source_system = request.args.get("source_system")
+    if source_system:
+        return redirect(url_for("admin_external_source_detail_page", source_system=source_system))
+    return render_template(
+        "external_source_detail.html",
+        app_name=APP_NAME,
+        detail=external_source_detail_payload(),
+    )
+
+
+@app.route("/admin/external-sources/<path:source_system>")
+@require_roles("owner", "admin")
+def admin_external_source_detail_page(source_system):
+    return render_template(
+        "external_source_detail.html",
+        app_name=APP_NAME,
+        detail=external_source_detail_payload(source_system),
     )
 
 

@@ -25,6 +25,9 @@
         {% endfor %}
       </select>
       <button class="btn btn-primary">Inspect</button>
+      {% if diagnostics.selected_source %}
+        <a class="btn btn-outline-primary" href="{{ url_for('admin_external_source_detail_page', source_system=diagnostics.selected_source) }}">Source Detail</a>
+      {% endif %}
       <a class="btn btn-outline-secondary" href="/admin/external-integration-diagnostics">Clear</a>
     </div>
     {% if diagnostics.selected_source and not diagnostics.source_exists %}

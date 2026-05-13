@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">External Source Detail</h1>
+    <div class="text-muted small">Read-only source_system status across keys, policy, projects, events, handoffs, usage, and diagnostics.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/external-integration-diagnostics{% if detail.selected_source %}?source_system={{ detail.selected_source|urlencode }}{% endif %}">Diagnostics</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-projects{% if detail.selected_source %}?source_system={{ detail.selected_source|urlencode }}{% endif %}">External Projects</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-ai-usage{% if detail.selected_source %}?source_system={{ detail.selected_source|urlencode }}{% endif %}">Usage Dashboard</a>
+    <a class="btn btn-outline-secondary" href="/admin/integration-toolbox">Integration Toolbox</a>
+  </div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="/admin/external-sources">
+  <div class="card-body">
+    <label class="form-label">Source system</label>
+    <div class="d-flex gap-2">
+      <select class="form-select" name="source_system">
+        <option value="">Choose a source_system</option>
+        {% for item in detail.sources %}
+          <option value="{{ item.source_system }}" {% if detail.selected_source == item.source_system %}selected{% endif %}>
+            {{ item.source_system }}{% if item.managed_active_count %} - active {{ item.managed_active_count }}{% endif %}{% if item.managed_revoked_count %} - revoked {{ item.managed_revoked_count }}{% endif %}{% if item.project_count %} - projects {{ item.project_count }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-primary">Open</button>
+      <a class="btn btn-outline-secondary" href="/admin/external-sources">Clear</a>
+    </div>
+    {% if detail.selected_source and not detail.source_exists %}
+      <div class="alert alert-warning mt-3 mb-0">Source system <code>{{ detail.selected_source }}</code> was not found in managed keys, env keys, project registry, events, usage, or handoffs.</div>
+    {% elif not detail.selected_source %}
+      <div class="alert alert-light border mt-3 mb-0">Select a source_system to see a complete read-only integration view.</div>
+    {% endif %}
+  </div>
+</form>
+
+{% if detail.selected_source %}
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Source</div><div class="h5 mb-0 text-break"><code>{{ detail.selected_source }}</code></div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Active keys</div><div class="h4 mb-0">{{ detail.key_status.active_count }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Projects</div><div class="h4 mb-0">{{ detail.source_summary.project_count if detail.source_summary else 0 }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Recent usage</div><div class="h4 mb-0">{{ detail.usage_summary.total_requests }}</div></div></div></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">External API Key Status</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Label</th><th>Identifier</th><th>Status</th><th>Created</th><th>Last used</th></tr></thead>
+          <tbody>
+            {% for item in detail.key_status.records %}
+              <tr>
+                <td>{{ item.label or '-' }}</td>
+                <td><code>{{ item.key_prefix or 'not available' }}</code></td>
+                <td><span class="badge {% if item.status == 'active' %}text-bg-success{% else %}text-bg-danger{% endif %}">{{ item.status }}</span></td>
+                <td>{{ item.created_at or 'not available' }}</td>
+                <td>{{ item.last_used_at or 'not available' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="text-muted text-center py-3">No key records found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Diagnostics Summary</div>
+      <div class="card-body">
+        <dl class="row small mb-0">
+          <dt class="col-5">source exists</dt><dd class="col-7">{{ 'yes' if detail.diagnostics.source_exists else 'no' }}</dd>
+          <dt class="col-5">active key exists</dt><dd class="col-7">{{ 'yes' if detail.diagnostics.active_key_exists else 'no' }}</dd>
+          <dt class="col-5">active key never used</dt><dd class="col-7">{{ 'yes' if detail.diagnostics.active_key_never_used else 'no' }}</dd>
+          <dt class="col-5">registered projects</dt><dd class="col-7">{{ 'yes' if detail.diagnostics.has_registered_projects else 'no' }}</dd>
+          <dt class="col-5">recent events</dt><dd class="col-7">{{ detail.diagnostics.recent_event_count }}</dd>
+          <dt class="col-5">recent handoffs</dt><dd class="col-7">{{ detail.diagnostics.recent_handoff_count }}</dd>
+          <dt class="col-5">recent usage</dt><dd class="col-7">{{ detail.diagnostics.recent_usage_count }}</dd>
+        </dl>
+        {% set hints = detail.diagnostics.hints | select | list %}
+        {% if hints %}
+          <hr>
+          <ul class="small mb-0">
+            {% for hint in hints %}
+              <li>{{ hint }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">External AI Policy / Permission Profile</div>
+      <div class="card-body">
+        {% if detail.policy.exists %}
+          {% set policy = detail.policy.policy %}
+          <div class="mb-2"><span class="badge {% if policy.enabled %}text-bg-success{% else %}text-bg-secondary{% endif %}">{{ 'enabled' if policy.enabled else 'disabled' }}</span> <code>{{ policy.id }}</code></div>
+          <div class="small"><strong>Label:</strong> {{ policy.label or 'not available' }}</div>
+          <div class="small"><strong>Profile:</strong> {{ detail.policy.profile.name if detail.policy.profile else (policy.profile_id or 'not available') }}</div>
+          <div class="small"><strong>Providers:</strong> {{ policy.allowed_providers|join(', ') if policy.allowed_providers else 'none' }}</div>
+          <div class="small"><strong>Models:</strong> {{ policy.allowed_models|join(', ') if policy.allowed_models else 'none' }}</div>
+          <div class="small"><strong>Capabilities:</strong> {{ policy.allowed_capabilities|join(', ') if policy.allowed_capabilities else 'none' }}</div>
+          <div class="small"><strong>Max tokens:</strong> {{ policy.max_tokens_per_request }}</div>
+          <div class="small"><strong>Daily requests:</strong> {{ policy.daily_request_limit }}</div>
+          <div class="small"><strong>Daily tokens:</strong> {{ policy.daily_token_limit }}</div>
+          <div class="small"><strong>Monthly budget USD:</strong> {{ policy.monthly_budget_usd }}</div>
+          <div class="small"><strong>Streaming:</strong> {{ 'yes' if policy.allow_streaming else 'no' }} / <strong>Tool calling:</strong> {{ 'yes' if policy.allow_tool_calling else 'no' }}</div>
+          {% if policy.warnings %}
+            <div class="alert alert-warning small mt-2 mb-0">{{ policy.warnings|join(', ') }}</div>
+          {% endif %}
+          {% if detail.policy.budget and detail.policy.budget.warnings %}
+            <div class="alert alert-info small mt-2 mb-0">Budget warnings: {{ detail.policy.budget.warnings|join(', ') }}</div>
+          {% endif %}
+        {% else %}
+          <div class="text-muted">No External AI Policy found for this source_system.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Usage Summary</div>
+      <div class="card-body">
+        <dl class="row small mb-0">
+          <dt class="col-6">total requests</dt><dd class="col-6">{{ detail.usage_summary.total_requests }}</dd>
+          <dt class="col-6">success</dt><dd class="col-6">{{ detail.usage_summary.success_count }}</dd>
+          <dt class="col-6">failed</dt><dd class="col-6">{{ detail.usage_summary.failed_count }}</dd>
+          <dt class="col-6">input chars</dt><dd class="col-6">{{ detail.usage_summary.total_input_chars }}</dd>
+          <dt class="col-6">output chars</dt><dd class="col-6">{{ detail.usage_summary.total_output_chars }}</dd>
+          <dt class="col-6">average latency ms</dt><dd class="col-6">{{ detail.usage_summary.average_latency_ms }}</dd>
+          <dt class="col-6">estimated cost USD</dt><dd class="col-6">{{ detail.usage_summary.estimated_cost_usd if detail.usage_summary.estimated_cost_usd is not none else 'not available' }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">External Project Registry</div>
+      <div class="list-group list-group-flush">
+        {% for project in detail.projects %}
+          <div class="list-group-item">
+            <div class="fw-semibold">{{ project.name or project.external_project_id }}</div>
+            <div class="small text-muted">{{ project.external_project_id }} / {{ project.project_type }} / {{ project.environment }} / {{ project.status }}</div>
+            <div class="small">app: {{ project.app_url or '-' }}</div>
+            <div class="small">domain: {{ project.primary_domain or '-' }} / domain status: {{ project.domain_status }}</div>
+            <div class="small">updated: {{ project.updated_at or '-' }}</div>
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No registered projects found.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent Events</div>
+      <div class="list-group list-group-flush">
+        {% for item in detail.recent_events %}
+          <div class="list-group-item">
+            <div class="fw-semibold">{{ item.event_type }} <span class="badge text-bg-secondary">{{ item.status }}</span></div>
+            <div class="small text-muted">{{ item.external_project_id }} / {{ item.environment or '-' }} / {{ item.created_at }}</div>
+            <div class="small">{{ item.message or '-' }}</div>
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No events found.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent Handoffs</div>
+      <div class="list-group list-group-flush">
+        {% for item in detail.recent_handoffs %}
+          <div class="list-group-item">
+            <div class="fw-semibold">#{{ item.id }} <span class="badge text-bg-secondary">{{ item.status }}</span> risk {{ item.risk_level }}</div>
+            <div class="small text-muted">{{ item.external_ref or '-' }} / {{ item.created_at or '-' }}</div>
+            <div class="small">{{ item.reason or '-' }}</div>
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No handoffs found.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent Usage</div>
+      <div class="list-group list-group-flush">
+        {% for item in detail.recent_usage %}
+          <div class="list-group-item">
+            <div class="fw-semibold">{{ item.provider or '-' }} / {{ item.model or '-' }} <span class="badge text-bg-secondary">{{ item.status }}</span></div>
+            <div class="small text-muted">{{ item.capability or '-' }} / {{ item.external_ref or '-' }} / {{ item.created_at or '-' }}</div>
+            <div class="small">chars in {{ item.input_chars }} / out {{ item.output_chars }}</div>
+            {% if item.prompt_summary %}<div class="small">prompt: {{ item.prompt_summary }}</div>{% endif %}
+            {% if item.response_summary %}<div class="small">response: {{ item.response_summary }}</div>{% endif %}
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No usage found.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safe Env Snippet</div>
+      <div class="card-body">
+        {% for item in detail.env_checklist %}
+          <div class="mb-2">
+            <div class="small text-muted">{{ item.name }}</div>
+            <code>{{ item.example }}</code>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safe Curl Snippets</div>
+      <div class="card-body">
+        {% for item in detail.curl_examples %}
+          <div class="mb-3">
+            <div class="fw-semibold">{{ item.title }}</div>
+            <pre class="bg-light border rounded p-2 mb-0"><code>{{ item.command }}</code></pre>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-header fw-bold">Common Hints</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th>Error</th><th>Meaning</th><th>Fix</th></tr></thead>
+      <tbody>
+        {% for item in detail.error_hints %}
+          <tr>
+            <td><code>{{ item.error }}</code></td>
+            <td>{{ item.meaning }}</td>
+            <td>{{ item.fix }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">Known External Sources</div>
+  <div class="list-group list-group-flush">
+    {% for item in detail.sources %}
+      <a class="list-group-item list-group-item-action" href="{{ url_for('admin_external_source_detail_page', source_system=item.source_system) }}">
+        <div class="fw-semibold"><code>{{ item.source_system }}</code></div>
+        <div class="small text-muted">active {{ item.managed_active_count }} / revoked {{ item.managed_revoked_count }} / projects {{ item.project_count }} / events {{ item.event_count }} / handoffs {{ item.handoff_count }} / usage {{ item.usage_count }}</div>
+      </a>
+    {% else %}
+      <div class="list-group-item text-muted">No external sources found yet.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}
