@@ -2000,6 +2000,217 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(approval_count_after, approval_count_before)
         self.assertEqual(self.state_snapshot(), before)
 
+    def test_external_ai_usage_api_is_source_isolated_filtered_and_summarized(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        records = [
+            {
+                "id": "usage-a-1",
+                "source_system": "external-a",
+                "request_id": "req-a-1",
+                "idempotency_key": "idem-a-1",
+                "external_ref": "ticket-a",
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "capability": "summary",
+                "status": "completed",
+                "error_code": "",
+                "input_token_estimate": 10,
+                "output_token_estimate": 5,
+                "input_chars": 100,
+                "output_chars": 50,
+                "latency_ms": 100,
+                "prompt_hash": "prompt-hash-a",
+                "prompt_summary": "Safe prompt summary",
+                "response_hash": "response-hash-a",
+                "response_summary": "Safe response summary",
+                "prompt": "FULL_PROMPT_SECRET_SHOULD_NOT_LEAK",
+                "response": "FULL_RESPONSE_SECRET_SHOULD_NOT_LEAK",
+                "created_at": "2026-05-13 10:00:00",
+            },
+            {
+                "id": "usage-a-2",
+                "source_system": "external-a",
+                "request_id": "req-a-2",
+                "idempotency_key": "idem-a-2",
+                "external_ref": "ticket-b",
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "capability": "rewrite",
+                "status": "failed",
+                "error_code": "provider_not_configured",
+                "input_token_estimate": 6,
+                "output_token_estimate": 0,
+                "input_chars": 60,
+                "output_chars": 0,
+                "latency_ms": 200,
+                "prompt_hash": "prompt-hash-b",
+                "prompt_summary": "Safe failure prompt summary",
+                "response_hash": "response-hash-b",
+                "response_summary": "",
+                "created_at": "2026-05-13 11:00:00",
+            },
+            {
+                "id": "usage-b-1",
+                "source_system": "external-b",
+                "request_id": "req-b-1",
+                "idempotency_key": "idem-b-1",
+                "external_ref": "ticket-other",
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "capability": "summary",
+                "status": "completed",
+                "input_chars": 999,
+                "output_chars": 999,
+                "latency_ms": 999,
+                "prompt_hash": "prompt-hash-other",
+                "prompt_summary": "Other source summary",
+                "response_hash": "response-hash-other",
+                "response_summary": "Other source response",
+                "created_at": "2026-05-13 12:00:00",
+            },
+        ]
+        self.app_module.save_external_ai_usage_log_records(records)
+
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": ""}, clear=False):
+            missing = self.client().get("/api/external/ai/usage")
+        self.assertEqual(missing.status_code, 403)
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            wrong = self.client().get("/api/external/ai/usage", headers=self.external_headers(key="wrong"))
+            response = self.client().get("/api/external/ai/usage", headers=self.external_headers())
+            filtered = self.client().get(
+                "/api/external/ai/usage?provider=gemini&model=gemini-1.5-flash&capability=summary&status=completed&external_ref=ticket-a&from=2026-05-13&to=2026-05-13",
+                headers=self.external_headers(),
+            )
+            forced_other = self.client().get("/api/external/ai/usage?source_system=external-b", headers=self.external_headers())
+
+        self.assertEqual(wrong.status_code, 403)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual({item["source_system"] for item in payload["items"]}, {"external-a"})
+        self.assertEqual(payload["summary"]["total_requests"], 2)
+        self.assertEqual(payload["summary"]["success_count"], 1)
+        self.assertEqual(payload["summary"]["failed_count"], 1)
+        self.assertEqual(payload["summary"]["total_input_chars"], 160)
+        self.assertEqual(payload["summary"]["total_output_chars"], 50)
+        self.assertEqual(payload["summary"]["average_latency_ms"], 150)
+        self.assertIn("gemini-1.5-flash", payload["summary"]["grouped_by_model"])
+        self.assertIn("summary", payload["summary"]["grouped_by_capability"])
+        response_text = response.get_data(as_text=True)
+        self.assertNotIn("FULL_PROMPT_SECRET_SHOULD_NOT_LEAK", response_text)
+        self.assertNotIn("FULL_RESPONSE_SECRET_SHOULD_NOT_LEAK", response_text)
+        self.assertNotIn("ticket-other", response_text)
+
+        self.assertEqual(filtered.status_code, 200, filtered.get_data(as_text=True))
+        self.assertEqual(filtered.get_json()["count"], 1)
+        self.assertEqual(filtered.get_json()["items"][0]["id"], "usage-a-1")
+        self.assertEqual(forced_other.status_code, 200)
+        self.assertEqual(forced_other.get_json()["count"], 0)
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_usage_admin_dashboard_invalid_store_and_budget_warnings(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.usage_log_path.write_text("{not json", encoding="utf-8")
+        invalid_response = self.client().get("/admin/external-ai-usage")
+        self.assertEqual(invalid_response.status_code, 200, invalid_response.get_data(as_text=True))
+        self.assertIn("External AI Usage", invalid_response.get_data(as_text=True))
+
+        records = [
+            {
+                "id": "usage-budget-1",
+                "source_system": "external-a",
+                "request_id": "req-budget-1",
+                "idempotency_key": "idem-budget-1",
+                "external_ref": "budget-ticket",
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "capability": "summary",
+                "status": "completed",
+                "input_token_estimate": 9,
+                "output_token_estimate": 6,
+                "input_chars": 90,
+                "output_chars": 60,
+                "latency_ms": 100,
+                "prompt_hash": "budget-prompt-hash",
+                "prompt_summary": "Budget safe prompt summary",
+                "response_hash": "budget-response-hash",
+                "response_summary": "Budget safe response summary",
+                "created_at": "2026-05-13 10:00:00",
+            },
+            {
+                "id": "usage-budget-2",
+                "source_system": "external-a",
+                "request_id": "req-budget-2",
+                "idempotency_key": "idem-budget-2",
+                "external_ref": "budget-ticket",
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "capability": "summary",
+                "status": "completed",
+                "input_token_estimate": 9,
+                "output_token_estimate": 6,
+                "input_chars": 90,
+                "output_chars": 60,
+                "latency_ms": 300,
+                "prompt_hash": "budget-prompt-hash-2",
+                "prompt_summary": "Second budget safe prompt summary",
+                "response_hash": "budget-response-hash-2",
+                "response_summary": "Second budget safe response summary",
+                "created_at": "2026-05-13 10:05:00",
+            },
+        ]
+        self.app_module.save_external_ai_usage_log_records(records)
+        policy = self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["gemini"],
+            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_capabilities": ["summary"],
+            "daily_request_limit": 2,
+            "daily_token_limit": 20,
+            "monthly_budget_usd": 50,
+        })
+        response = self.client().get("/admin/external-ai-usage?source_system=external-a&q=budget-ticket&provider=gemini&model=gemini-1.5-flash&capability=summary&status=completed")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        page = response.get_data(as_text=True)
+        self.assertIn("budget-ticket", page)
+        self.assertIn("daily_request_limit_exceeded", page)
+        self.assertIn("daily_token_limit_exceeded", page)
+        self.assertIn("monthly_budget_not_enforced_yet", page)
+        self.assertIn("Budget safe prompt summary", page)
+
+        summary = self.app_module.summarize_external_ai_usage(self.app_module.external_ai_usage_rows({"source_system": "external-a"}))
+        budget = self.app_module.external_ai_usage_within_policy(policy, summary)
+        self.assertFalse(budget["ok"])
+        self.assertIn("daily_request_limit_exceeded", budget["warnings"])
+        self.assertIn("daily_token_limit_exceeded", budget["warnings"])
+
+        with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+            with patch.object(self.app_module, "call_task_provider") as provider_call:
+                with patch.object(self.app_module, "run_ai_task") as run_task:
+                    with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                            followup = self.client().get("/admin/external-ai-usage?source_system=external-a")
+        self.assertEqual(followup.status_code, 200)
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
     def test_external_project_registry_register_read_isolated_and_safe(self):
         before = self.state_snapshot()
         with self.app.app_context():

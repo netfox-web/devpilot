@@ -3316,6 +3316,158 @@ def append_external_ai_usage_log(record):
     return record
 
 
+def external_ai_usage_date(value):
+    return external_ai_policy_preview(value, 32)
+
+
+def external_ai_usage_cost(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def external_ai_usage_record_public(record):
+    record = record if isinstance(record, dict) else {}
+    cost = external_ai_usage_cost(record.get("estimated_cost_usd"))
+    return {
+        "id": external_ai_policy_preview(record.get("id"), 120),
+        "source_system": external_ai_policy_preview(record.get("source_system"), 120),
+        "request_id": external_ai_policy_preview(record.get("request_id"), 160),
+        "idempotency_key": external_ai_policy_preview(record.get("idempotency_key"), 160),
+        "external_ref": external_ai_policy_preview(record.get("external_ref"), 200),
+        "provider": external_ai_policy_preview(record.get("provider"), 80),
+        "model": external_ai_policy_preview(record.get("model"), 120),
+        "capability": external_ai_policy_preview(record.get("capability"), 80),
+        "status": external_ai_policy_preview(record.get("status"), 80),
+        "error_code": external_ai_policy_preview(record.get("error_code"), 120),
+        "input_token_estimate": external_ai_policy_int(record.get("input_token_estimate"), 0, 0, 100000000),
+        "output_token_estimate": external_ai_policy_int(record.get("output_token_estimate"), 0, 0, 100000000),
+        "input_chars": external_ai_policy_int(record.get("input_chars"), 0, 0, 1000000000),
+        "output_chars": external_ai_policy_int(record.get("output_chars"), 0, 0, 1000000000),
+        "estimated_cost_usd": cost,
+        "latency_ms": external_ai_policy_int(record.get("latency_ms"), 0, 0, 100000000),
+        "prompt_hash": external_ai_policy_preview(record.get("prompt_hash"), 128),
+        "prompt_summary": external_ai_policy_preview(record.get("prompt_summary"), EXTERNAL_AI_GENERATE_PROMPT_SUMMARY_LIMIT + 3),
+        "response_hash": external_ai_policy_preview(record.get("response_hash"), 128),
+        "response_summary": external_ai_policy_preview(record.get("response_summary"), EXTERNAL_AI_GENERATE_RESPONSE_SUMMARY_LIMIT + 3),
+        "created_at": external_ai_policy_preview(record.get("created_at"), 64),
+    }
+
+
+def external_ai_usage_matches_filters(record, args, source_system=None):
+    item = external_ai_usage_record_public(record)
+    if source_system and item.get("source_system") != source_system:
+        return False
+    query = str(args.get("q") or "").strip().lower()
+    if query:
+        haystack = " ".join(str(item.get(key) or "") for key in (
+            "source_system", "request_id", "idempotency_key", "external_ref",
+            "provider", "model", "capability", "status", "error_code",
+            "prompt_summary", "response_summary",
+        )).lower()
+        if query not in haystack:
+            return False
+    for key in ("source_system", "provider", "model", "capability", "status", "external_ref"):
+        expected = str(args.get(key) or "").strip()
+        if expected and item.get(key) != expected:
+            return False
+    from_date = external_ai_usage_date(args.get("from"))
+    to_date = external_ai_usage_date(args.get("to"))
+    created = item.get("created_at") or ""
+    created_date = created[:10]
+    if from_date and created_date and created_date < from_date[:10]:
+        return False
+    if to_date and created_date and created_date > to_date[:10]:
+        return False
+    return True
+
+
+def external_ai_usage_rows(args=None, source_system=None):
+    args = args or {}
+    rows = [
+        external_ai_usage_record_public(record)
+        for record in load_external_ai_usage_log_records()
+        if external_ai_usage_matches_filters(record, args, source_system=source_system)
+    ]
+    rows.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
+    return rows
+
+
+def summarize_external_ai_usage(rows):
+    items = [external_ai_usage_record_public(row) for row in rows]
+    total_requests = len(items)
+    success_count = sum(1 for item in items if item.get("status") in ("completed", "success"))
+    failed_count = sum(1 for item in items if item.get("status") in ("failed", "rejected", "error"))
+    total_input_chars = sum(item.get("input_chars") or 0 for item in items)
+    total_output_chars = sum(item.get("output_chars") or 0 for item in items)
+    total_input_tokens = sum(item.get("input_token_estimate") or 0 for item in items)
+    total_output_tokens = sum(item.get("output_token_estimate") or 0 for item in items)
+    total_latency_ms = sum(item.get("latency_ms") or 0 for item in items)
+    costs = [item.get("estimated_cost_usd") for item in items if item.get("estimated_cost_usd") is not None]
+    summary = {
+        "total_requests": total_requests,
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "total_input_chars": total_input_chars,
+        "total_output_chars": total_output_chars,
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "total_tokens": total_input_tokens + total_output_tokens,
+        "total_latency_ms": total_latency_ms,
+        "average_latency_ms": round(total_latency_ms / total_requests, 2) if total_requests else 0,
+        "estimated_cost_usd": round(sum(costs), 6) if costs else None,
+        "grouped_by_model": {},
+        "grouped_by_capability": {},
+    }
+    for group_key, target_key in (("model", "grouped_by_model"), ("capability", "grouped_by_capability")):
+        grouped = {}
+        for item in items:
+            name = item.get(group_key) or "unknown"
+            bucket = grouped.setdefault(name, {"total_requests": 0, "success_count": 0, "failed_count": 0, "input_chars": 0, "output_chars": 0})
+            bucket["total_requests"] += 1
+            bucket["success_count"] += 1 if item.get("status") in ("completed", "success") else 0
+            bucket["failed_count"] += 1 if item.get("status") in ("failed", "rejected", "error") else 0
+            bucket["input_chars"] += item.get("input_chars") or 0
+            bucket["output_chars"] += item.get("output_chars") or 0
+        summary[target_key] = grouped
+    return summary
+
+
+def external_ai_usage_within_policy(policy, usage_summary):
+    policy = policy or {}
+    usage_summary = usage_summary or {}
+    warnings = []
+    daily_request_limit = external_ai_policy_int(policy.get("daily_request_limit"), 0, 0, 1000000)
+    daily_token_limit = external_ai_policy_int(policy.get("daily_token_limit"), 0, 0, 100000000)
+    monthly_budget_usd = external_ai_policy_float(policy.get("monthly_budget_usd"), 0.0, 0.0, 1000000.0)
+    total_requests = external_ai_policy_int(usage_summary.get("total_requests"), 0, 0, 100000000)
+    total_tokens = external_ai_policy_int(usage_summary.get("total_tokens"), 0, 0, 1000000000)
+    estimated_cost = external_ai_usage_cost(usage_summary.get("estimated_cost_usd"))
+    if daily_request_limit:
+        if total_requests >= daily_request_limit:
+            warnings.append("daily_request_limit_exceeded")
+        elif total_requests >= int(daily_request_limit * 0.8):
+            warnings.append("daily_request_limit_near")
+    if daily_token_limit:
+        if total_tokens >= daily_token_limit:
+            warnings.append("daily_token_limit_exceeded")
+        elif total_tokens >= int(daily_token_limit * 0.8):
+            warnings.append("daily_token_limit_near")
+    if monthly_budget_usd and estimated_cost is None:
+        warnings.append("monthly_budget_not_enforced_yet")
+    return {
+        "ok": not any(item.endswith("_exceeded") for item in warnings),
+        "warnings": warnings,
+        "daily_request_limit": daily_request_limit,
+        "daily_token_limit": daily_token_limit,
+        "monthly_budget_usd": monthly_budget_usd,
+        "enforcement_enabled": False,
+    }
+
+
 def external_ai_text_hash(value):
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
@@ -15641,6 +15793,43 @@ def admin_ai_providers_page():
     )
 
 
+def render_external_ai_usage_page():
+    rows = external_ai_usage_rows(request.args)
+    summary = summarize_external_ai_usage(rows)
+    records = [external_ai_usage_record_public(record) for record in load_external_ai_usage_log_records()]
+    source_options = sorted({record.get("source_system") for record in records if record.get("source_system")})
+    provider_options = sorted({record.get("provider") for record in records if record.get("provider")})
+    model_options = sorted({record.get("model") for record in records if record.get("model")})
+    capability_options = sorted({record.get("capability") for record in records if record.get("capability")})
+    status_options = sorted({record.get("status") for record in records if record.get("status")})
+    selected_source = (request.args.get("source_system") or "").strip()
+    budget_warnings = None
+    if selected_source:
+        policy = external_ai_policy_for_source(selected_source, enabled_only=True) or external_ai_policy_for_source(selected_source)
+        if policy:
+            budget_warnings = external_ai_usage_within_policy(policy, summary)
+    return render_template(
+        "external_ai_usage.html",
+        app_name=APP_NAME,
+        rows=rows,
+        summary=summary,
+        budget_warnings=budget_warnings,
+        source_options=source_options,
+        provider_options=provider_options,
+        model_options=model_options,
+        capability_options=capability_options,
+        status_options=status_options,
+        filters=request.args,
+        usage_store_path=str(external_ai_usage_log_store_path()),
+    )
+
+
+@app.route("/admin/external-ai-usage")
+@require_roles("owner", "admin")
+def admin_external_ai_usage_page():
+    return render_external_ai_usage_page()
+
+
 def external_ai_permission_profile_form_payload(form, profile_id=None):
     payload = dict(form)
     if profile_id:
@@ -20540,6 +20729,27 @@ def api_admin_external_ai_policy_enable(policy_id):
     except LookupError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 404
     return jsonify({"ok": True, "policy": record, "execution_allowed": False})
+
+
+@app.route("/api/external/ai/usage", methods=["GET"])
+@require_external_api_key
+def api_external_ai_usage():
+    identity = g.external_api_identity
+    rows = external_ai_usage_rows(request.args, source_system=identity["source_system"])
+    summary = summarize_external_ai_usage(rows)
+    policy = external_ai_policy_for_source(identity["source_system"], enabled_only=True) or external_ai_policy_for_source(identity["source_system"])
+    return jsonify({
+        "ok": True,
+        "items": rows,
+        "usage": rows,
+        "count": len(rows),
+        "summary": summary,
+        "budget": external_ai_usage_within_policy(policy, summary) if policy else None,
+        "source_system": identity["source_system"],
+        "read_only": True,
+        "execution_allowed": False,
+        "side_effects": False,
+    })
 
 
 @app.route("/api/ai-handoffs", methods=["GET"])

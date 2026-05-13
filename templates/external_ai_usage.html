@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">External AI Usage</h1>
+    <div class="text-muted small">Usage store: <code>{{ usage_store_path }}</code>. Read-only dashboard; no provider calls are made here.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/external-ai-policies">External AI Policies</a>
+    <a class="btn btn-outline-secondary" href="/admin/ai-providers">AI Providers</a>
+  </div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="/admin/external-ai-usage">
+  <div class="card-body">
+    <div class="row g-2">
+      <div class="col-lg-3">
+        <label class="form-label">Search</label>
+        <input class="form-control" name="q" value="{{ filters.get('q', '') }}" placeholder="source, ref, summary, status">
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">Source</label>
+        <select class="form-select" name="source_system">
+          <option value="">All sources</option>
+          {% for item in source_options %}
+            <option value="{{ item }}" {% if filters.get('source_system') == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">Provider</label>
+        <select class="form-select" name="provider">
+          <option value="">All providers</option>
+          {% for item in provider_options %}
+            <option value="{{ item }}" {% if filters.get('provider') == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">Model</label>
+        <select class="form-select" name="model">
+          <option value="">All models</option>
+          {% for item in model_options %}
+            <option value="{{ item }}" {% if filters.get('model') == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">Capability</label>
+        <select class="form-select" name="capability">
+          <option value="">All capabilities</option>
+          {% for item in capability_options %}
+            <option value="{{ item }}" {% if filters.get('capability') == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-1">
+        <label class="form-label">Status</label>
+        <select class="form-select" name="status">
+          <option value="">All</option>
+          {% for item in status_options %}
+            <option value="{{ item }}" {% if filters.get('status') == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">From</label>
+        <input class="form-control" type="date" name="from" value="{{ filters.get('from', '') }}">
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">To</label>
+        <input class="form-control" type="date" name="to" value="{{ filters.get('to', '') }}">
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label">External ref</label>
+        <input class="form-control" name="external_ref" value="{{ filters.get('external_ref', '') }}" placeholder="ticket/job id">
+      </div>
+      <div class="col-lg-2 d-flex align-items-end">
+        <button class="btn btn-primary w-100">Filter</button>
+      </div>
+      <div class="col-lg-2 d-flex align-items-end">
+        <a class="btn btn-outline-secondary w-100" href="/admin/external-ai-usage">Clear</a>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-2"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Requests</div><div class="h4 mb-0">{{ summary.total_requests }}</div></div></div></div>
+  <div class="col-md-2"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Success</div><div class="h4 mb-0">{{ summary.success_count }}</div></div></div></div>
+  <div class="col-md-2"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Failed</div><div class="h4 mb-0">{{ summary.failed_count }}</div></div></div></div>
+  <div class="col-md-2"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Input chars</div><div class="h4 mb-0">{{ summary.total_input_chars }}</div></div></div></div>
+  <div class="col-md-2"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Output chars</div><div class="h4 mb-0">{{ summary.total_output_chars }}</div></div></div></div>
+  <div class="col-md-2"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Avg latency</div><div class="h4 mb-0">{{ summary.average_latency_ms }} ms</div></div></div></div>
+</div>
+
+{% if budget_warnings %}
+  <div class="alert {% if budget_warnings.warnings %}alert-warning{% else %}alert-success{% endif %}">
+    <div class="fw-semibold">Budget warning status</div>
+    {% if budget_warnings.warnings %}
+      <div class="small">{{ budget_warnings.warnings|join(', ') }}</div>
+    {% else %}
+      <div class="small">No warning thresholds crossed for the selected source.</div>
+    {% endif %}
+    <div class="small text-muted">Warning-only groundwork. Hard budget enforcement is planned for Slice 5C.</div>
+  </div>
+{% endif %}
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">Usage Records</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Created</th>
+          <th>Source</th>
+          <th>Provider / Model</th>
+          <th>Capability</th>
+          <th>Status</th>
+          <th>External ref</th>
+          <th>Chars</th>
+          <th>Latency</th>
+          <th>Safe summaries</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in rows %}
+        <tr>
+          <td class="text-nowrap">{{ item.created_at or '-' }}</td>
+          <td><code>{{ item.source_system }}</code></td>
+          <td>
+            <div>{{ item.provider or '-' }}</div>
+            <div class="small text-muted">{{ item.model or '-' }}</div>
+          </td>
+          <td>{{ item.capability or '-' }}</td>
+          <td>
+            <span class="badge {% if item.status in ['completed', 'success'] %}text-bg-success{% elif item.status in ['failed', 'rejected', 'error'] %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ item.status or '-' }}</span>
+            {% if item.error_code %}<div class="small text-muted">{{ item.error_code }}</div>{% endif %}
+          </td>
+          <td>{{ item.external_ref or '-' }}</td>
+          <td class="small">
+            <div>in {{ item.input_chars }}</div>
+            <div>out {{ item.output_chars }}</div>
+          </td>
+          <td>{{ item.latency_ms }} ms</td>
+          <td class="small" style="min-width: 260px;">
+            <div><span class="text-muted">prompt:</span> {{ item.prompt_summary or '-' }}</div>
+            <div><span class="text-muted">response:</span> {{ item.response_summary or '-' }}</div>
+            <details class="mt-1">
+              <summary class="text-muted">hashes</summary>
+              <div><code>{{ item.prompt_hash or '-' }}</code></div>
+              <div><code>{{ item.response_hash or '-' }}</code></div>
+            </details>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="text-center text-muted py-4">No usage records match the current filters.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
