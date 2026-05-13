@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">Automation Planner</h1>
+    <div class="text-muted small">MVP planning only. This page is read-only except for displaying existing draft plan records.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/external-sources{% if planner.selected_source %}/{{ planner.selected_source|urlencode }}{% endif %}">External Sources</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-integration-diagnostics{% if planner.selected_source %}?source_system={{ planner.selected_source|urlencode }}{% endif %}">Diagnostics</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-projects{% if planner.selected_source %}?source_system={{ planner.selected_source|urlencode }}{% endif %}">External Projects</a>
+  </div>
+</div>
+
+<div class="alert alert-warning page-note">
+  <div class="fw-semibold">MVP planning only / no execution</div>
+  <div class="small">
+    Automation Planner AP-2 only reads external source context and existing draft plans.
+    It does not generate plans, call AI providers, create approvals, run workers, execute shell commands,
+    deploy, restart, rebuild, or mutate project/task/phase records. Suggested commands are display-only text.
+  </div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="/admin/automation-planner">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label">Source system</label>
+        <select class="form-select" name="source_system">
+          <option value="">All sources</option>
+          {% for source in planner.sources %}
+            <option value="{{ source.source_system }}" {% if planner.selected_source == source.source_system %}selected{% endif %}>
+              {{ source.source_system }}{% if source.project_count %} - projects {{ source.project_count }}{% endif %}{% if source.event_count %} - events {{ source.event_count }}{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label">External project</label>
+        <select class="form-select" name="external_project_id">
+          <option value="">All projects</option>
+          {% for project in planner.projects %}
+            <option value="{{ project.external_project_id }}" {% if planner.selected_project_id == project.external_project_id %}selected{% endif %}>
+              {{ project.name or project.external_project_id }} / {{ project.external_project_id }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-primary">View Context</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Sources</div><div class="h4 mb-0">{{ planner.sources|length }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Projects in view</div><div class="h4 mb-0">{{ planner.projects|length }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Recent signals</div><div class="h4 mb-0">{{ planner.recent_events|length + planner.recent_handoffs|length + planner.recent_usage|length }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Draft plans</div><div class="h4 mb-0">{{ planner.draft_plans|length }}</div></div></div></div>
+</div>
+
+{% if planner.plan_store_error %}
+  <div class="alert alert-warning">Plan store could not be read safely. Showing an empty draft plan list for review.</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-bold">Existing Draft Plans</span>
+        <span class="badge text-bg-secondary">{{ planner.draft_plans|length }}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Plan</th>
+              <th>Scope</th>
+              <th>Risk</th>
+              <th>Status</th>
+              <th>Commands</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for plan in planner.draft_plans %}
+            <tr>
+              <td class="small text-muted">{{ plan.created_at }}</td>
+              <td>
+                <div class="fw-semibold">{{ plan.title }}</div>
+                <div class="small text-muted text-break">{{ plan.objective }}</div>
+              </td>
+              <td class="small">
+                <div><code>{{ plan.source_system or '-' }}</code></div>
+                <div><code>{{ plan.external_project_id or '-' }}</code></div>
+              </td>
+              <td><span class="badge text-bg-secondary">{{ plan.risk_level }}</span></td>
+              <td>{{ plan.status }}</td>
+              <td class="small">
+                {% for command in plan.suggested_commands %}
+                  <div><code>{{ command.label or 'display-only command' }}</code>: execution_allowed={{ 'true' if command.execution_allowed else 'false' }}</div>
+                {% else %}
+                  <span class="text-muted">none</span>
+                {% endfor %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-muted text-center py-3">No draft automation plans found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safety Explanation</div>
+      <div class="card-body small">
+        <ul class="mb-0">
+          <li>Plan records are read from <code>{{ planner.plan_store_path }}</code>.</li>
+          <li>Suggested commands are shown as display-only text and must keep <code>execution_allowed=false</code>.</li>
+          <li>There is no execute control in AP-2.</li>
+          <li>Plan generation, approval integration, and execution bridges belong to later gated phases.</li>
+          <li>No provider call, live ping, worker execution, shell command, DNS, Cloudflare, R2, deploy, restart, or rebuild action is performed here.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent External Project Signals</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Type</th><th>Source / Project</th><th>Status</th><th>Seen</th></tr></thead>
+          <tbody>
+            {% for project in planner.recent_projects %}
+            <tr>
+              <td class="small">project</td>
+              <td class="small"><code>{{ project.source_system }}</code> / <code>{{ project.external_project_id }}</code><div>{{ project.name }}</div></td>
+              <td class="small">{{ project.status }}</td>
+              <td class="small text-muted">{{ project.updated_at or project.last_seen_at or project.created_at }}</td>
+            </tr>
+            {% endfor %}
+            {% for event in planner.recent_events %}
+            <tr>
+              <td class="small">event</td>
+              <td class="small"><code>{{ event.source_system }}</code> / <code>{{ event.external_project_id }}</code><div>{{ event.event_type }}</div></td>
+              <td class="small"><span class="badge text-bg-secondary">{{ event.status }}</span></td>
+              <td class="small text-muted">{{ event.created_at }}</td>
+            </tr>
+            {% endfor %}
+            {% if not planner.recent_projects and not planner.recent_events %}
+            <tr><td colspan="4" class="text-muted text-center py-3">No project or event signals found.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent Handoffs / Usage</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Type</th><th>Source</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>
+            {% for handoff in planner.recent_handoffs %}
+            <tr>
+              <td class="small">handoff</td>
+              <td class="small"><code>{{ handoff.source_system or '-' }}</code></td>
+              <td class="small">{{ handoff.handoff_status or handoff.status or '-' }}</td>
+              <td class="small text-muted">{{ handoff.created_at }}</td>
+            </tr>
+            {% endfor %}
+            {% for usage in planner.recent_usage %}
+            <tr>
+              <td class="small">usage</td>
+              <td class="small"><code>{{ usage.source_system or '-' }}</code><div>{{ usage.provider }} / {{ usage.model }}</div></td>
+              <td class="small">{{ usage.status }}</td>
+              <td class="small text-muted">{{ usage.created_at }}</td>
+            </tr>
+            {% endfor %}
+            {% if not planner.recent_handoffs and not planner.recent_usage %}
+            <tr><td colspan="4" class="text-muted text-center py-3">No handoff or usage signals found.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

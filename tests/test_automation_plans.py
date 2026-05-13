@@ -161,12 +161,11 @@ class AutomationPlanStoreTest(unittest.TestCase):
 
         self.assertFalse(self.store_path.exists())
 
-    def test_no_route_api_or_admin_ui_is_added_in_ap1(self):
+    def test_store_layer_does_not_add_admin_api_or_draft_endpoint(self):
         import app as app_module
 
         routes = {rule.rule for rule in app_module.app.url_map.iter_rules()}
 
-        self.assertNotIn("/admin/automation-planner", routes)
         self.assertNotIn("/api/admin/automation-plans", routes)
         self.assertNotIn("/api/admin/automation-plans/draft", routes)
 

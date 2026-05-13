@@ -35,6 +35,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import docker_ssh
 from services import ai_tasks as ai_task_services
+from services import automation_plans as automation_plan_services
 from services import flow_runs as flow_run_services
 from services import product_domains as product_domain_services
 from services import reports as report_services
@@ -16479,6 +16480,48 @@ def external_source_detail_payload(source_system=None):
     }
 
 
+def automation_planner_payload(args=None):
+    args = args or {}
+    selected_source = external_api_key_preview(args.get("source_system"), 120)
+    selected_project_id = external_api_key_preview(args.get("external_project_id"), 160)
+    sources = external_integration_source_catalog()
+    records = [external_project_record_public(record) for record in load_external_project_registry_records()]
+    project_options = records
+    if selected_source:
+        project_options = [record for record in project_options if record.get("source_system") == selected_source]
+    project_options.sort(key=lambda item: (item.get("updated_at") or "", item.get("last_seen_at") or "", item.get("created_at") or ""), reverse=True)
+
+    recent_projects = external_integration_recent_projects(selected_source, limit=8)
+    recent_events = external_integration_recent_events(selected_source, limit=12)
+    if selected_project_id:
+        recent_projects = [record for record in recent_projects if record.get("external_project_id") == selected_project_id]
+        recent_events = [record for record in recent_events if record.get("external_project_id") == selected_project_id]
+    recent_handoffs = external_integration_recent_handoffs(selected_source, limit=8)
+    recent_usage = external_integration_recent_usage(selected_source, limit=8)
+
+    plan_store = automation_plan_services.load_automation_plan_store()
+    draft_plans = automation_plan_services.list_automation_plans()
+    if selected_source:
+        draft_plans = [plan for plan in draft_plans if plan.get("source_system") == selected_source]
+    if selected_project_id:
+        draft_plans = [plan for plan in draft_plans if plan.get("external_project_id") == selected_project_id]
+    draft_plans.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+
+    return {
+        "sources": sources,
+        "projects": project_options,
+        "selected_source": selected_source,
+        "selected_project_id": selected_project_id,
+        "recent_projects": recent_projects,
+        "recent_events": recent_events,
+        "recent_handoffs": recent_handoffs,
+        "recent_usage": recent_usage,
+        "draft_plans": draft_plans,
+        "plan_store_error": plan_store.get("error", ""),
+        "plan_store_path": str(automation_plan_services.automation_plan_store_path()),
+    }
+
+
 @app.route("/admin/external-integration-diagnostics")
 @require_roles("owner", "admin")
 def admin_external_integration_diagnostics_page():
@@ -16510,6 +16553,16 @@ def admin_external_source_detail_page(source_system):
         "external_source_detail.html",
         app_name=APP_NAME,
         detail=external_source_detail_payload(source_system),
+    )
+
+
+@app.route("/admin/automation-planner")
+@require_roles("owner", "admin")
+def admin_automation_planner_page():
+    return render_template(
+        "automation_planner.html",
+        app_name=APP_NAME,
+        planner=automation_planner_payload(request.args),
     )
 
 

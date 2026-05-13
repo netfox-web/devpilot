@@ -1936,6 +1936,120 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("Claude provider key is not configured in runtime env.", body)
         self.assertEqual(anonymous.status_code, 302)
 
+    def test_automation_planner_admin_page_is_read_only_and_lists_context(self):
+        from services import automation_plans
+
+        before = self.state_snapshot()
+        plan_store_path = Path(self.key_store_dir.name) / "automation_plans.json"
+        self.app_module.upsert_external_project_registry_record(
+            "planner-source",
+            {
+                "external_project_id": "planner-project",
+                "name": "Planner Project",
+                "project_type": "ai-saas",
+                "environment": "production",
+                "status": "active",
+                "app_url": "https://planner.example.test",
+                "primary_domain": "planner.example.test",
+            },
+        )
+        self.app_module.create_external_project_event(
+            "planner-source",
+            "planner-project",
+            {
+                "event_type": "healthcheck_ok",
+                "status": "success",
+                "message": "Planner source healthcheck passed.",
+                "environment": "production",
+            },
+        )
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_AUTOMATION_PLAN_STORE_PATH": str(plan_store_path)}, clear=False):
+            created_plan = automation_plans.create_automation_plan({
+                "source_system": "planner-source",
+                "external_project_id": "planner-project",
+                "title": "Review planner source",
+                "objective": "Inspect current external source context.",
+                "risk_level": "low",
+                "recommended_actions": [],
+                "required_approvals": [],
+                "blocked_by": [],
+                "safety_checks": [{"name": "No execution", "status": "pass", "details": "Planning only."}],
+                "suggested_commands": [
+                    {
+                        "label": "Display healthcheck",
+                        "command": "curl -I https://planner.example.test",
+                        "execution_allowed": True,
+                    }
+                ],
+                "affected_systems": [{"type": "external_project", "name": "planner-project", "impact": "Read-only planning view."}],
+            })
+
+            with self.app.app_context():
+                approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_task_provider") as provider_call:
+                    with patch.object(self.app_module, "run_ai_task") as run_task:
+                        with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                            with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                response = self.client().get("/admin/automation-planner?source_system=planner-source&external_project_id=planner-project")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        page = response.get_data(as_text=True)
+        self.assertIn("Automation Planner", page)
+        self.assertIn("MVP planning only / no execution", page)
+        self.assertIn("Suggested commands are display-only", page)
+        self.assertIn("Source system", page)
+        self.assertIn("External project", page)
+        self.assertIn("planner-source", page)
+        self.assertIn("planner-project", page)
+        self.assertIn("Planner Project", page)
+        self.assertIn("healthcheck_ok", page)
+        self.assertIn("Existing Draft Plans", page)
+        self.assertIn(created_plan["title"], page)
+        self.assertIn("execution_allowed=false", page)
+        self.assertIn("/admin/automation-planner", page)
+        self.assertNotIn(">Execute<", page)
+        self.assertNotIn("name=\"execute\"", page)
+        self.assertNotIn("Authorization:", page)
+        self.assertNotIn("key_hash", page)
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_automation_planner_handles_missing_and_malformed_plan_store(self):
+        missing_store_path = Path(self.key_store_dir.name) / "missing_automation_plans.json"
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_AUTOMATION_PLAN_STORE_PATH": str(missing_store_path)}, clear=False):
+            missing = self.client().get("/admin/automation-planner")
+
+        self.assertEqual(missing.status_code, 200, missing.get_data(as_text=True))
+        self.assertIn("No draft automation plans found.", missing.get_data(as_text=True))
+
+        malformed_store_path = Path(self.key_store_dir.name) / "malformed_automation_plans.json"
+        malformed_store_path.write_text("{not-json", encoding="utf-8")
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_AUTOMATION_PLAN_STORE_PATH": str(malformed_store_path)}, clear=False):
+            malformed = self.client().get("/admin/automation-planner")
+
+        self.assertEqual(malformed.status_code, 200, malformed.get_data(as_text=True))
+        body = malformed.get_data(as_text=True)
+        self.assertIn("Plan store could not be read safely", body)
+        self.assertIn("No draft automation plans found.", body)
+
+    def test_automation_planner_requires_auth_and_has_no_post_or_api_endpoint(self):
+        anonymous = self.app.test_client().get("/admin/automation-planner")
+        self.assertEqual(anonymous.status_code, 302)
+
+        routes = {rule.rule: rule.methods for rule in self.app.url_map.iter_rules()}
+        self.assertIn("/admin/automation-planner", routes)
+        self.assertNotIn("POST", routes["/admin/automation-planner"])
+        self.assertNotIn("/api/admin/automation-plans", routes)
+        self.assertNotIn("/api/admin/automation-plans/draft", routes)
+
     def test_external_ai_policy_manager_create_list_toggle_and_safe_defaults(self):
         before = self.state_snapshot()
         with self.app.app_context():
