@@ -2050,6 +2050,149 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertNotIn("/api/admin/automation-plans", routes)
         self.assertNotIn("/api/admin/automation-plans/draft", routes)
 
+    def test_automation_planner_draft_generator_creates_low_risk_plan_from_context(self):
+        from services import automation_plans
+
+        active_record, raw_key = self.app_module.generate_external_api_key("gpcarai", "GPCarai live loop")
+        project, created = self.app_module.upsert_external_project_registry_record(
+            "gpcarai",
+            {
+                "external_project_id": "gpcarai-prod",
+                "name": "GPCarai Dispatch",
+                "project_type": "ai-saas",
+                "environment": "production",
+                "status": "active",
+                "app_url": "https://go.carai.tw",
+                "primary_domain": "go.carai.tw",
+                "runtime": "python/docker",
+                "container_name": "gkh-dispatch",
+                "compose_project": "gkh-dispatch",
+                "service_name": "gkh-dispatch",
+                "host_port": "5011",
+            },
+        )
+        self.assertTrue(created)
+        self.app_module.create_external_project_event(
+            "gpcarai",
+            "gpcarai-prod",
+            {
+                "event_type": "healthcheck_ok",
+                "status": "success",
+                "message": "External project can reach DevPilot integration endpoint.",
+                "environment": "production",
+                "app_url": "https://go.carai.tw",
+            },
+        )
+        plan_store_path = Path(self.key_store_dir.name) / "automation_plans.json"
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_AUTOMATION_PLAN_STORE_PATH": str(plan_store_path)}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_task_provider") as provider_call:
+                    with patch.object(self.app_module, "run_ai_task") as run_task:
+                        with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                            with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                with self.app.app_context():
+                                    plan = self.app_module.generate_automation_plan_from_context("gpcarai", "gpcarai-prod")
+                                    stored_plans = automation_plans.list_automation_plans()
+
+        self.assertEqual(plan["source_system"], "gpcarai")
+        self.assertEqual(plan["external_project_id"], "gpcarai-prod")
+        self.assertEqual(plan["risk_level"], "low")
+        self.assertEqual(plan["status"], "draft")
+        self.assertFalse(plan["blocked_by"])
+        self.assertEqual(plan["required_approvals"], [])
+        self.assertTrue(plan["id"])
+        self.assertTrue(plan["created_at"])
+        self.assertEqual(len(stored_plans), 1)
+        self.assertEqual(stored_plans[0]["id"], plan["id"])
+        self.assertIn("GPCarai Dispatch", plan["title"])
+        self.assertTrue(any(item["name"] == "Recent events" and item["status"] == "pass" for item in plan["safety_checks"]))
+        self.assertTrue(any("healthcheck" in item["description"] for item in plan["recommended_actions"]))
+        self.assertTrue(plan["suggested_commands"])
+        self.assertTrue(all(command["execution_allowed"] is False for command in plan["suggested_commands"]))
+
+        combined = json.dumps(plan, ensure_ascii=False)
+        self.assertNotIn(raw_key, combined)
+        self.assertNotIn(active_record["key_hash"], combined)
+        self.assertNotIn("key_hash", combined)
+        self.assertNotIn("Authorization:", combined)
+        self.assertNotIn("Bearer ", combined)
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_automation_planner_draft_generator_blocks_unknown_source_and_missing_project(self):
+        from services import automation_plans
+
+        self.app_module.generate_external_api_key("known-generator-source", "Known generator source")
+        plan_store_path = Path(self.key_store_dir.name) / "automation_plans_blocked.json"
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_AUTOMATION_PLAN_STORE_PATH": str(plan_store_path)}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_task_provider") as provider_call:
+                    with patch.object(self.app_module, "run_ai_task") as run_task:
+                        with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                            with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                with self.app.app_context():
+                                    unknown = self.app_module.generate_automation_plan_from_context("missing-generator-source", "missing-project")
+                                    missing_project = self.app_module.generate_automation_plan_from_context("known-generator-source", "missing-project")
+                                    stored_plans = automation_plans.list_automation_plans()
+
+        self.assertEqual(unknown["risk_level"], "blocked")
+        self.assertIn("source_system was not found in external integration context", unknown["blocked_by"])
+        self.assertIn("external project was not found", unknown["blocked_by"])
+        self.assertEqual(missing_project["risk_level"], "blocked")
+        self.assertIn("external project was not found", missing_project["blocked_by"])
+        self.assertTrue(all(command["execution_allowed"] is False for command in unknown["suggested_commands"]))
+        self.assertTrue(all(command["execution_allowed"] is False for command in missing_project["suggested_commands"]))
+        self.assertEqual(len(stored_plans), 2)
+
+        combined = json.dumps(stored_plans, ensure_ascii=False)
+        self.assertNotIn("key_hash", combined)
+        self.assertNotIn("Authorization:", combined)
+        self.assertNotIn("Bearer ", combined)
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_automation_planner_draft_generator_handles_missing_and_malformed_store(self):
+        missing_store_path = Path(self.key_store_dir.name) / "missing_generator_plans.json"
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_AUTOMATION_PLAN_STORE_PATH": str(missing_store_path)}, clear=False):
+            with self.app.app_context():
+                missing_store_plan = self.app_module.generate_automation_plan_from_context("missing-store-source")
+
+        self.assertEqual(missing_store_plan["risk_level"], "blocked")
+        self.assertTrue(missing_store_path.exists())
+
+        malformed_store_path = Path(self.key_store_dir.name) / "malformed_generator_plans.json"
+        malformed_store_path.write_text("{not-json", encoding="utf-8")
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_AUTOMATION_PLAN_STORE_PATH": str(malformed_store_path)}, clear=False):
+            with self.app.app_context():
+                malformed_store_plan = self.app_module.generate_automation_plan_from_context("malformed-store-source")
+
+        self.assertEqual(malformed_store_plan["risk_level"], "blocked")
+        body = malformed_store_path.read_text(encoding="utf-8")
+        self.assertIn("\"plans\"", body)
+        self.assertNotIn("key_hash", body)
+
     def test_external_ai_policy_manager_create_list_toggle_and_safe_defaults(self):
         before = self.state_snapshot()
         with self.app.app_context():

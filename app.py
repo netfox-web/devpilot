@@ -16522,6 +16522,201 @@ def automation_planner_payload(args=None):
     }
 
 
+def collect_automation_context(source_system, external_project_id=None):
+    selected_source = external_api_key_preview(source_system, 120)
+    selected_project_id = external_api_key_preview(external_project_id, 160)
+    sources = external_integration_source_catalog()
+    source_exists = bool(selected_source and any(item["source_system"] == selected_source for item in sources))
+    key_status = external_integration_key_status(selected_source) if selected_source else {"records": [], "active_count": 0, "revoked_count": 0, "env_configured": False}
+    projects = external_integration_recent_projects(selected_source, limit=20) if selected_source else []
+    raw_project = external_project_for_source(selected_source, selected_project_id) if selected_source and selected_project_id else None
+    project = external_project_record_public(raw_project) if raw_project else None
+    if selected_project_id:
+        projects = [item for item in projects if item.get("external_project_id") == selected_project_id]
+    events = [
+        external_project_event_record_public(item)
+        for item in external_project_events_for_source(selected_source, selected_project_id)
+    ] if selected_source and selected_project_id else external_integration_recent_events(selected_source, limit=20)
+    handoffs = external_integration_recent_handoffs(selected_source, limit=20) if selected_source else []
+    usage_rows = external_ai_usage_rows({"source_system": selected_source}) if selected_source else []
+    usage_summary = summarize_external_ai_usage(usage_rows)
+    diagnostics = external_source_diagnostic_summary(selected_source, source_exists, key_status, projects, events, handoffs, usage_rows) if selected_source else None
+    return {
+        "source_system": selected_source,
+        "external_project_id": selected_project_id,
+        "source_exists": source_exists,
+        "source_summary": external_source_catalog_item(selected_source) if selected_source else None,
+        "key_status": key_status,
+        "project": project,
+        "projects": projects,
+        "events": events[:20],
+        "handoffs": handoffs[:20],
+        "usage_rows": usage_rows[:20],
+        "usage_summary": usage_summary,
+        "diagnostics": diagnostics,
+    }
+
+
+def generate_automation_plan_from_context(source_system, external_project_id=None):
+    context = collect_automation_context(source_system, external_project_id)
+    source = context.get("source_system")
+    project_id = context.get("external_project_id")
+    project = context.get("project")
+    events = context.get("events") or []
+    handoffs = context.get("handoffs") or []
+    usage_rows = context.get("usage_rows") or []
+    diagnostics = context.get("diagnostics") or {}
+    key_status = context.get("key_status") or {}
+    blocked_by = []
+    recommended_actions = []
+    required_approvals = []
+    safety_checks = [
+        {"name": "Planning only", "status": "pass", "details": "Draft creation only; no execution is performed."},
+        {"name": "Provider calls", "status": "pass", "details": "No AI provider call is performed by this deterministic generator."},
+        {"name": "Worker execution", "status": "pass", "details": "No worker or task runner is invoked."},
+        {"name": "Infrastructure writes", "status": "pass", "details": "No deploy, restart, DNS, SSL, Nginx, Cloudflare, or R2 change is performed."},
+    ]
+
+    if not source:
+        blocked_by.append("source_system is required")
+    elif not context.get("source_exists"):
+        blocked_by.append("source_system was not found in external integration context")
+    if source and not key_status.get("active_count"):
+        blocked_by.append("active external API credential is missing")
+    if project_id and not project:
+        blocked_by.append("external project was not found")
+    if not project_id and context.get("source_exists") and not context.get("projects"):
+        blocked_by.append("no external project is registered for this source")
+
+    if blocked_by:
+        recommended_actions.append({
+            "label": "Resolve missing integration context",
+            "description": "Review External Source Detail and Diagnostics, then repair the missing source, credential, or project registration.",
+            "risk_level": "blocked",
+            "requires_approval": False,
+            "approval_type": "none",
+            "status": "suggested",
+        })
+    else:
+        recommended_actions.append({
+            "label": "Review current external project status",
+            "description": "Use External Source Detail, Diagnostics, and External Projects to confirm the latest project and event state.",
+            "risk_level": "low",
+            "requires_approval": False,
+            "approval_type": "none",
+            "status": "suggested",
+        })
+        if any(item.get("event_type") == "healthcheck_ok" and item.get("status") == "success" for item in events):
+            recommended_actions.append({
+                "label": "Keep monitoring healthy integration loop",
+                "description": "A successful healthcheck event is present. Continue read-only monitoring before considering higher-risk automation.",
+                "risk_level": "low",
+                "requires_approval": False,
+                "approval_type": "none",
+                "status": "suggested",
+            })
+        elif project:
+            recommended_actions.append({
+                "label": "Request a healthcheck event from the external project",
+                "description": "Ask the external project to send a normal healthcheck_ok event through the existing events API.",
+                "risk_level": "low",
+                "requires_approval": False,
+                "approval_type": "none",
+                "status": "suggested",
+            })
+
+    failed_events = [item for item in events if item.get("status") in ("failed", "blocked", "warning")]
+    if failed_events and not blocked_by:
+        recommended_actions.append({
+            "label": "Investigate recent warning or failed events",
+            "description": "Recent external project events include warning, blocked, or failed status. Review messages before any operational change.",
+            "risk_level": "medium",
+            "requires_approval": False,
+            "approval_type": "none",
+            "status": "suggested",
+        })
+
+    if project and project.get("dns_action_required"):
+        required_approvals.append("dns")
+        recommended_actions.append({
+            "label": "Review domain request manually",
+            "description": "The project has a domain review flag. Treat any DNS, SSL, Nginx, or Cloudflare step as approval-required and display-only.",
+            "risk_level": "high",
+            "requires_approval": True,
+            "approval_type": "dns",
+            "status": "suggested",
+        })
+
+    safety_checks.extend([
+        {
+            "name": "Source exists",
+            "status": "pass" if context.get("source_exists") else "fail",
+            "details": "External source context was found." if context.get("source_exists") else "External source context is missing.",
+        },
+        {
+            "name": "Active credential",
+            "status": "pass" if key_status.get("active_count") else "fail",
+            "details": "At least one active external credential is configured." if key_status.get("active_count") else "No active external credential is configured.",
+        },
+        {
+            "name": "Credential use",
+            "status": "warn" if diagnostics.get("active_key_never_used") else "pass",
+            "details": "Active credential has no recorded use yet." if diagnostics.get("active_key_never_used") else "No unused active credential warning is present.",
+        },
+        {
+            "name": "Project registry",
+            "status": "pass" if (project or (not project_id and context.get("projects"))) else "fail",
+            "details": "External project registry context is available." if (project or (not project_id and context.get("projects"))) else "External project registry context is missing.",
+        },
+        {
+            "name": "Recent events",
+            "status": "warn" if failed_events else ("pass" if events else "not_available"),
+            "details": f"{len(events)} recent external event records were summarized.",
+        },
+        {
+            "name": "Recent handoffs",
+            "status": "pass" if handoffs else "not_available",
+            "details": f"{len(handoffs)} recent handoff records were summarized.",
+        },
+        {
+            "name": "Usage summary",
+            "status": "pass" if usage_rows else "not_available",
+            "details": f"{len(usage_rows)} recent usage records were summarized.",
+        },
+    ])
+
+    risk_level = "blocked" if blocked_by else ("high" if required_approvals else ("medium" if failed_events else "low"))
+    title_target = project.get("name") if project else (project_id or source or "external source")
+    plan_input = {
+        "source_system": source or "",
+        "external_project_id": project_id or "",
+        "title": f"Automation review for {title_target}",
+        "objective": "Summarize external integration context and recommend planning-only next steps.",
+        "risk_level": risk_level,
+        "recommended_actions": recommended_actions,
+        "required_approvals": required_approvals,
+        "blocked_by": blocked_by,
+        "safety_checks": safety_checks,
+        "suggested_commands": [
+            {
+                "label": "Open source detail",
+                "command": f"Open DevPilot page /admin/external-sources/{urllib.parse.quote(source or 'YOUR_SOURCE_SYSTEM')}",
+                "execution_allowed": False,
+            },
+            {
+                "label": "Open automation planner",
+                "command": "Open DevPilot page /admin/automation-planner",
+                "execution_allowed": False,
+            },
+        ],
+        "affected_systems": [
+            {"type": "external_project", "name": project_id or "not selected", "impact": "Read-only planning context."},
+            {"type": "devpilot", "name": "Automation Planner", "impact": "Draft plan record only."},
+        ],
+    }
+    return automation_plan_services.create_automation_plan(plan_input)
+
+
 @app.route("/admin/external-integration-diagnostics")
 @require_roles("owner", "admin")
 def admin_external_integration_diagnostics_page():
