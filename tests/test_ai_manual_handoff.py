@@ -1527,6 +1527,147 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(approval_count_after, approval_count_before)
         self.assertEqual(self.state_snapshot(), before)
 
+    def test_external_integration_diagnostics_is_read_only_and_secret_safe(self):
+        active_record, raw_key = self.app_module.generate_external_api_key("diagnostic-source", "Diagnostic source")
+        revoked_record, revoked_key = self.app_module.generate_external_api_key("diagnostic-source", "Old diagnostic source")
+        self.app_module.revoke_external_api_key(revoked_record["id"])
+        store_text = self.key_store_path.read_text(encoding="utf-8")
+        stored_hashes = [item["key_hash"] for item in json.loads(store_text)["keys"]]
+        self.app_module.save_external_project_registry_records([
+            {
+                "source_system": "diagnostic-source",
+                "external_project_id": "diagnostic-project",
+                "name": "Diagnostic Project",
+                "project_type": "ai-saas",
+                "environment": "production",
+                "status": "active",
+                "app_url": "https://diagnostic.example.com",
+                "primary_domain": "diagnostic.example.com",
+                "created_at": "2026-05-13 10:00:00",
+                "updated_at": "2026-05-13 10:00:00",
+                "last_seen_at": "2026-05-13 10:00:00",
+            }
+        ])
+        self.app_module.save_external_project_event_records([
+            {
+                "source_system": "diagnostic-source",
+                "external_project_id": "diagnostic-project",
+                "event_type": "healthcheck_ok",
+                "status": "success",
+                "message": "Diagnostic event",
+                "environment": "production",
+                "created_at": "2026-05-13 10:05:00",
+            }
+        ])
+        self.app_module.save_external_ai_usage_log_records([
+            {
+                "id": "diagnostic-usage",
+                "source_system": "diagnostic-source",
+                "request_id": "diag-req",
+                "idempotency_key": "diag-usage",
+                "external_ref": "diag-ref",
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "capability": "summary",
+                "status": "completed",
+                "input_chars": 11,
+                "output_chars": 22,
+                "prompt_hash": "diag-prompt-hash",
+                "prompt_summary": "Diagnostic safe prompt summary",
+                "response_hash": "diag-response-hash",
+                "response_summary": "Diagnostic safe response summary",
+                "created_at": "2026-05-13 10:10:00",
+            }
+        ])
+        with self.app.app_context():
+            now = self.app_module.now_str()
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+            self.app_module.execute(
+                """INSERT INTO handoff_logs
+                   (project_id, source, agent_name, work_mode, conversation_ref, risk_level, summary, next_steps, warnings, api_payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.project_id,
+                    "external-api",
+                    "diagnostic-source",
+                    "ai-task-handoff",
+                    f"ai-task:{self.task['id']}",
+                    "medium",
+                    "Diagnostic handoff reason",
+                    "Diagnostic handoff next step",
+                    "",
+                    json.dumps({
+                        "record_type": "ai_task_handoff",
+                        "source_system": "diagnostic-source",
+                        "external_ref": "diagnostic-handoff",
+                        "from_agent": "diagnostic-source",
+                        "to_agent": "devpilot-reviewer",
+                        "reason": "Diagnostic handoff reason",
+                        "next_step": "Diagnostic handoff next step",
+                        "status": "pending",
+                        "risk_level": "medium",
+                        "api_key": raw_key,
+                    }),
+                    now,
+                ),
+            )
+        before = self.state_snapshot()
+
+        unauthenticated = self.app.test_client().get("/admin/external-integration-diagnostics")
+        self.assertEqual(unauthenticated.status_code, 302)
+        with patch.dict(self.app_module.os.environ, {"DEVPILOT_EXTERNAL_API_KEYS": "diagnostic-env:env-secret-value"}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_task_provider") as provider_call:
+                    with patch.object(self.app_module, "run_ai_task") as run_task:
+                        with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                            with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                overview = self.client().get("/admin/external-integration-diagnostics")
+                                response = self.client().get("/admin/external-integration-diagnostics?source_system=diagnostic-source")
+                                unknown = self.client().get("/admin/external-integration-diagnostics?source_system=missing-source")
+
+        self.assertEqual(overview.status_code, 200, overview.get_data(as_text=True))
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(unknown.status_code, 200, unknown.get_data(as_text=True))
+        page = response.get_data(as_text=True)
+        self.assertIn("External Integration Diagnostics", page)
+        self.assertIn("/admin/external-integration-diagnostics", page)
+        self.assertIn("diagnostic-source", page)
+        self.assertIn(active_record["key_prefix"], page)
+        self.assertIn(revoked_record["key_prefix"], page)
+        self.assertIn("active", page)
+        self.assertIn("revoked", page)
+        self.assertIn("Diagnostic Project", page)
+        self.assertIn("healthcheck_ok", page)
+        self.assertIn("Diagnostic handoff reason", page)
+        self.assertIn("Diagnostic safe prompt summary", page)
+        self.assertIn("external source system is not allowed", page)
+        self.assertIn("external API credential is invalid", page)
+        self.assertIn("provider_not_configured", page)
+        self.assertIn("external_ai_gateway_not_enabled", page)
+        self.assertIn("DEVPILOT_API_BASE_URL", page)
+        self.assertIn("DEVPILOT_SOURCE_SYSTEM", page)
+        self.assertIn("DEVPILOT_API_KEY", page)
+        self.assertIn("EXTERNAL_PROJECT_ID", page)
+        self.assertIn("&lt;paste-devpilot-external-api-key&gt;", page)
+        self.assertNotIn(raw_key, page)
+        self.assertNotIn(revoked_key, page)
+        self.assertNotIn("env-secret-value", overview.get_data(as_text=True))
+        self.assertNotIn("env-secret-value", page)
+        for stored_hash in stored_hashes:
+            self.assertNotIn(stored_hash, page)
+        self.assertNotIn("key_hash", page)
+        self.assertIn("Source system", unknown.get_data(as_text=True))
+        self.assertIn("was not found", unknown.get_data(as_text=True))
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
     def test_ai_provider_config_inspection_is_masked_and_read_only(self):
         before = self.state_snapshot()
         env = {

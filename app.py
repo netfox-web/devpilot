@@ -16120,6 +16120,211 @@ def admin_integration_toolbox_download(resource_id):
     return Response(payload["body"], mimetype=payload["mimetype"], headers=headers)
 
 
+def external_integration_source_catalog():
+    sources = {}
+
+    def ensure(source_system):
+        source_system = external_api_key_preview(source_system, 120)
+        if not source_system:
+            return None
+        return sources.setdefault(source_system, {
+            "source_system": source_system,
+            "has_env_key": False,
+            "managed_active_count": 0,
+            "managed_revoked_count": 0,
+            "project_count": 0,
+            "event_count": 0,
+            "usage_count": 0,
+            "handoff_count": 0,
+        })
+
+    for source_system in configured_external_api_keys().keys():
+        item = ensure(source_system)
+        if item:
+            item["has_env_key"] = True
+    for record in load_external_api_key_records():
+        item = ensure(record.get("source_system"))
+        if item:
+            if record.get("revoked_at"):
+                item["managed_revoked_count"] += 1
+            else:
+                item["managed_active_count"] += 1
+    for record in load_external_project_registry_records():
+        item = ensure(record.get("source_system"))
+        if item:
+            item["project_count"] += 1
+    for record in load_external_project_event_records():
+        item = ensure(record.get("source_system"))
+        if item:
+            item["event_count"] += 1
+    for record in load_external_ai_usage_log_records():
+        item = ensure(record.get("source_system"))
+        if item:
+            item["usage_count"] += 1
+    for handoff in ai_handoff_rows(limit=300):
+        item = ensure(handoff.get("source_system"))
+        if item:
+            item["handoff_count"] += 1
+    return sorted(sources.values(), key=lambda item: item["source_system"].lower())
+
+
+def external_integration_key_status(source_system):
+    source_system = external_api_key_preview(source_system, 120)
+    records = []
+    if source_system in configured_external_api_keys():
+        records.append({
+            "source_system": source_system,
+            "label": "Environment configured key",
+            "key_prefix": "env-configured",
+            "created_at": "not available",
+            "last_used_at": "not available",
+            "status": "active",
+            "auth_source": "env",
+        })
+    for record in load_external_api_key_records():
+        if record.get("source_system") == source_system:
+            public = external_api_key_record_public(record)
+            public["auth_source"] = "managed"
+            public["last_used_at"] = public.get("last_used_at") or "not available"
+            records.append(public)
+    active_count = sum(1 for record in records if record.get("status") == "active")
+    revoked_count = sum(1 for record in records if record.get("status") == "revoked")
+    return {
+        "records": records,
+        "active_count": active_count,
+        "revoked_count": revoked_count,
+        "env_configured": source_system in configured_external_api_keys(),
+    }
+
+
+def external_integration_recent_projects(source_system=None, limit=8):
+    source_system = external_api_key_preview(source_system, 120)
+    records = [external_project_record_public(record) for record in load_external_project_registry_records()]
+    if source_system:
+        records = [record for record in records if record.get("source_system") == source_system]
+    records.sort(key=lambda item: (item.get("updated_at") or "", item.get("last_seen_at") or "", item.get("created_at") or ""), reverse=True)
+    return records[:limit]
+
+
+def external_integration_recent_events(source_system=None, limit=10):
+    source_system = external_api_key_preview(source_system, 120)
+    records = [external_project_event_record_public(record) for record in load_external_project_event_records()]
+    if source_system:
+        records = [record for record in records if record.get("source_system") == source_system]
+    records.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return records[:limit]
+
+
+def external_integration_recent_handoffs(source_system=None, limit=10):
+    source_system = external_api_key_preview(source_system, 120)
+    return ai_handoff_rows(limit=300, source_system=source_system)[:limit] if source_system else ai_handoff_rows(limit=limit)
+
+
+def external_integration_recent_usage(source_system=None, limit=10):
+    source_system = external_api_key_preview(source_system, 120)
+    rows = external_ai_usage_rows({"source_system": source_system} if source_system else {})
+    return rows[:limit]
+
+
+def external_integration_safe_curl_examples(source_system):
+    source = external_api_key_preview(source_system, 120) or "YOUR_SOURCE_SYSTEM"
+    return [
+        {
+            "title": "Test connection",
+            "command": "\n".join([
+                'curl -sS "https://YOUR_DEVPILOT_DOMAIN/api/external/projects" \\',
+                f'  -H "X-DevPilot-Source-System: {source}" \\',
+                '  -H "X-DevPilot-Api-Key: <paste-devpilot-external-api-key>"',
+            ]),
+        },
+        {
+            "title": "Register project",
+            "command": "\n".join([
+                'curl -sS -X POST "https://YOUR_DEVPILOT_DOMAIN/api/external/projects/register" \\',
+                '  -H "Content-Type: application/json" \\',
+                f'  -H "X-DevPilot-Source-System: {source}" \\',
+                '  -H "X-DevPilot-Api-Key: <paste-devpilot-external-api-key>" \\',
+                '  -H "X-DevPilot-Request-Id: req-001" \\',
+                '  -H "X-DevPilot-Idempotency-Key: register:<external_project_id>" \\',
+                '  -d \'{"external_project_id":"YOUR_PROJECT_ID","name":"YOUR_PROJECT_NAME","project_type":"ai-saas","environment":"production","status":"active"}\'',
+            ]),
+        },
+        {
+            "title": "Send project event",
+            "command": "\n".join([
+                'curl -sS -X POST "https://YOUR_DEVPILOT_DOMAIN/api/external/projects/YOUR_PROJECT_ID/events" \\',
+                '  -H "Content-Type: application/json" \\',
+                f'  -H "X-DevPilot-Source-System: {source}" \\',
+                '  -H "X-DevPilot-Api-Key: <paste-devpilot-external-api-key>" \\',
+                '  -H "X-DevPilot-Request-Id: req-002" \\',
+                '  -H "X-DevPilot-Idempotency-Key: event:YOUR_PROJECT_ID:healthcheck" \\',
+                '  -d \'{"event_type":"healthcheck_ok","status":"success","message":"Project is healthy"}\'',
+            ]),
+        },
+    ]
+
+
+def external_integration_error_hints():
+    return [
+        {"error": "source_system does not exist", "meaning": "No env or managed key source matches the header.", "fix": "Create an External API Key with the exact source_system, preferably an ASCII slug."},
+        {"error": "external source system is not allowed", "meaning": "The X-DevPilot-Source-System header is missing or not allowlisted.", "fix": "Match the source_system exactly, including case and punctuation."},
+        {"error": "header missing", "meaning": "The request did not include required DevPilot external headers.", "fix": "Send X-DevPilot-Source-System and X-DevPilot-Api-Key on every request."},
+        {"error": "external API credential is invalid", "meaning": "The source exists but the API key does not match an active env or managed key.", "fix": "Re-enter or rotate the DevPilot external API key. Do not use revoked keys."},
+        {"error": "key revoked", "meaning": "A managed key was revoked and can no longer authenticate.", "fix": "Generate a new key and update the external project's server-side secret."},
+        {"error": "API key active but never used", "meaning": "The key exists but last_used_at is not available or has never been updated.", "fix": "Run GET /api/external/projects from the external project's backend and check the response."},
+        {"error": "provider_not_configured", "meaning": "External AI Gateway provider credentials are missing in DevPilot.", "fix": "Configure provider credentials in DevPilot before enabling provider calls."},
+        {"error": "external_ai_gateway_not_enabled", "meaning": "The AI Gateway is disabled or policy-gated for this source.", "fix": "Apply an enabled External AI Policy before gateway usage."},
+        {"error": "403", "meaning": "Auth/source/key mismatch or revoked credential.", "fix": "Check source_system, key status, and whether the key is active."},
+        {"error": "404", "meaning": "Endpoint or external_project_id was not found.", "fix": "Register the project before sending project-specific events."},
+        {"error": "422/400", "meaning": "Payload validation failed.", "fix": "Check required fields and allowed enum values."},
+        {"error": "500", "meaning": "Unexpected server error.", "fix": "Check DevPilot logs and retry only idempotent requests."},
+    ]
+
+
+def external_integration_env_checklist(source_system):
+    source = external_api_key_preview(source_system, 120) or "YOUR_SOURCE_SYSTEM"
+    return [
+        {"name": "DEVPILOT_API_BASE_URL", "example": "https://YOUR_DEVPILOT_DOMAIN"},
+        {"name": "DEVPILOT_SOURCE_SYSTEM", "example": source},
+        {"name": "DEVPILOT_API_KEY", "example": "<paste-devpilot-external-api-key>"},
+        {"name": "EXTERNAL_PROJECT_ID", "example": "YOUR_PROJECT_ID"},
+        {"name": "PROJECT_NAME", "example": "YOUR_PROJECT_NAME"},
+        {"name": "APP_URL", "example": "https://YOUR_PROJECT_DOMAIN"},
+        {"name": "PRIMARY_DOMAIN", "example": "YOUR_PROJECT_DOMAIN"},
+    ]
+
+
+def external_integration_diagnostics_payload(source_system=None):
+    sources = external_integration_source_catalog()
+    selected_source = external_api_key_preview(source_system, 120)
+    source_exists = bool(selected_source and any(item["source_system"] == selected_source for item in sources))
+    key_status = external_integration_key_status(selected_source) if selected_source else {"records": [], "active_count": 0, "revoked_count": 0, "env_configured": False}
+    return {
+        "sources": sources,
+        "selected_source": selected_source,
+        "source_exists": source_exists,
+        "key_status": key_status,
+        "recent_projects": external_integration_recent_projects(selected_source),
+        "recent_events": external_integration_recent_events(selected_source),
+        "recent_handoffs": external_integration_recent_handoffs(selected_source),
+        "recent_usage": external_integration_recent_usage(selected_source),
+        "curl_examples": external_integration_safe_curl_examples(selected_source),
+        "error_hints": external_integration_error_hints(),
+        "env_checklist": external_integration_env_checklist(selected_source),
+    }
+
+
+@app.route("/admin/external-integration-diagnostics")
+@require_roles("owner", "admin")
+def admin_external_integration_diagnostics_page():
+    diagnostics = external_integration_diagnostics_payload(request.args.get("source_system"))
+    return render_template(
+        "external_integration_diagnostics.html",
+        app_name=APP_NAME,
+        diagnostics=diagnostics,
+    )
+
+
 @app.route("/admin/ai-providers")
 @require_roles("owner", "admin")
 def admin_ai_providers_page():

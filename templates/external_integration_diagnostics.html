@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">External Integration Diagnostics</h1>
+    <div class="text-muted small">Read-only checks for external DevPilot API integrations. No provider calls, workers, or external requests are executed here.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/external-api-keys">External API Keys</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-projects">External Projects</a>
+    <a class="btn btn-outline-secondary" href="/admin/integration-toolbox">Integration Toolbox</a>
+  </div>
+</div>
+
+<form method="get" class="card shadow-sm mb-3">
+  <div class="card-body">
+    <label class="form-label">Source system</label>
+    <div class="d-flex gap-2">
+      <select class="form-select" name="source_system">
+        <option value="">All sources / overview</option>
+        {% for item in diagnostics.sources %}
+          <option value="{{ item.source_system }}" {% if diagnostics.selected_source == item.source_system %}selected{% endif %}>
+            {{ item.source_system }}{% if item.managed_active_count %} - active {{ item.managed_active_count }}{% endif %}{% if item.managed_revoked_count %} - revoked {{ item.managed_revoked_count }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-primary">Inspect</button>
+      <a class="btn btn-outline-secondary" href="/admin/external-integration-diagnostics">Clear</a>
+    </div>
+    {% if diagnostics.selected_source and not diagnostics.source_exists %}
+      <div class="alert alert-warning mt-3 mb-0">Source system <code>{{ diagnostics.selected_source }}</code> was not found in managed keys, env keys, project registry, events, usage, or handoffs.</div>
+    {% endif %}
+  </div>
+</form>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Sources</div><div class="h4 mb-0">{{ diagnostics.sources|length }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Active keys</div><div class="h4 mb-0">{{ diagnostics.key_status.active_count }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Revoked keys</div><div class="h4 mb-0">{{ diagnostics.key_status.revoked_count }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><div class="text-muted small">Env key</div><div class="h4 mb-0">{% if diagnostics.key_status.env_configured %}yes{% else %}no{% endif %}</div></div></div></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">External API Key Status</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <thead><tr><th>Source</th><th>Label</th><th>Identifier</th><th>Status</th><th>Created</th><th>Last used</th></tr></thead>
+          <tbody>
+            {% for item in diagnostics.key_status.records %}
+              <tr>
+                <td><code>{{ item.source_system }}</code></td>
+                <td>{{ item.label or '-' }}</td>
+                <td><code>{{ item.key_prefix or 'not available' }}</code></td>
+                <td><span class="badge {% if item.status == 'active' %}text-bg-success{% else %}text-bg-danger{% endif %}">{{ item.status }}</span></td>
+                <td>{{ item.created_at or 'not available' }}</td>
+                <td>{{ item.last_used_at or 'not available' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-muted text-center py-3">No keys found for the selected source.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safe Env Checklist</div>
+      <div class="card-body">
+        {% for item in diagnostics.env_checklist %}
+          <div class="mb-2">
+            <div class="small text-muted">{{ item.name }}</div>
+            <code>{{ item.example }}</code>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent Project Registrations</div>
+      <div class="list-group list-group-flush">
+        {% for item in diagnostics.recent_projects %}
+          <div class="list-group-item">
+            <div class="fw-semibold">{{ item.name or item.external_project_id }}</div>
+            <div class="small text-muted"><code>{{ item.source_system }}</code> / {{ item.external_project_id }} / {{ item.environment }} / {{ item.status }}</div>
+            <div class="small">domain: {{ item.primary_domain or '-' }} / updated: {{ item.updated_at or '-' }}</div>
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No project registrations found.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent Project Events</div>
+      <div class="list-group list-group-flush">
+        {% for item in diagnostics.recent_events %}
+          <div class="list-group-item">
+            <div class="fw-semibold">{{ item.event_type }} <span class="badge text-bg-secondary">{{ item.status }}</span></div>
+            <div class="small text-muted"><code>{{ item.source_system }}</code> / {{ item.external_project_id }} / {{ item.created_at }}</div>
+            <div class="small">{{ item.message or '-' }}</div>
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No project events found.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent Handoffs</div>
+      <div class="list-group list-group-flush">
+        {% for item in diagnostics.recent_handoffs %}
+          <div class="list-group-item">
+            <div class="fw-semibold">#{{ item.id }} <span class="badge text-bg-secondary">{{ item.status }}</span> risk {{ item.risk_level }}</div>
+            <div class="small text-muted"><code>{{ item.source_system or '-' }}</code> / {{ item.external_ref or '-' }} / {{ item.created_at or '-' }}</div>
+            <div class="small">{{ item.reason or '-' }}</div>
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No handoffs found.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent AI Usage</div>
+      <div class="list-group list-group-flush">
+        {% for item in diagnostics.recent_usage %}
+          <div class="list-group-item">
+            <div class="fw-semibold">{{ item.provider or '-' }} / {{ item.model or '-' }} <span class="badge text-bg-secondary">{{ item.status }}</span></div>
+            <div class="small text-muted"><code>{{ item.source_system }}</code> / {{ item.capability or '-' }} / {{ item.external_ref or '-' }} / {{ item.created_at or '-' }}</div>
+            <div class="small">chars in {{ item.input_chars }} / out {{ item.output_chars }}</div>
+            {% if item.prompt_summary %}
+              <div class="small">prompt: {{ item.prompt_summary }}</div>
+            {% endif %}
+            {% if item.response_summary %}
+              <div class="small">response: {{ item.response_summary }}</div>
+            {% endif %}
+          </div>
+        {% else %}
+          <div class="list-group-item text-muted">No usage records found.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-header fw-bold">Safe Test Curl Examples</div>
+  <div class="card-body">
+    <div class="text-muted small mb-3">Examples use placeholders only. Replace the API key locally in the external project's server environment.</div>
+    {% for item in diagnostics.curl_examples %}
+      <div class="mb-3">
+        <div class="fw-semibold">{{ item.title }}</div>
+        <pre class="bg-light border rounded p-2 mb-0"><code>{{ item.command }}</code></pre>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-header fw-bold">Common Error Diagnosis</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th>Error</th><th>Meaning</th><th>Fix</th></tr></thead>
+      <tbody>
+        {% for item in diagnostics.error_hints %}
+          <tr>
+            <td><code>{{ item.error }}</code></td>
+            <td>{{ item.meaning }}</td>
+            <td>{{ item.fix }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
