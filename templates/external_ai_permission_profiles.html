@@ -1,4 +1,41 @@
 {% extends "base.html" %}
+{% macro render_model_summary(selected_models, model_choices) -%}
+  {% set rendered = namespace(any=false) %}
+  {% for provider, models in model_choices.items() %}
+    {% set group = namespace(items=[]) %}
+    {% for model in models %}
+      {% if model in selected_models %}
+        {% set _ = group.items.append(model) %}
+      {% endif %}
+    {% endfor %}
+    {% if group.items %}
+      {% set rendered.any = true %}
+      <div><span class="text-muted">{{ provider }}:</span> {{ group.items|join(', ') }}</div>
+    {% endif %}
+  {% endfor %}
+  {% if not rendered.any %}-{% endif %}
+{%- endmacro %}
+
+{% macro render_model_selector(model_choices, selected_providers=[], selected_models=[]) -%}
+  <div class="text-muted small mb-2">Models are selected per provider. Selecting a provider does not automatically allow all models.</div>
+  {% for provider, models in model_choices.items() %}
+    <div class="border rounded p-2 mb-2 external-ai-model-group {% if provider not in selected_providers %}opacity-50{% endif %}" data-model-provider="{{ provider }}">
+      <div class="fw-semibold small mb-1">{{ provider }}</div>
+      {% if models %}
+        <div class="d-flex flex-wrap gap-2">
+          {% for model in models %}
+            <label class="form-check border rounded px-2 py-1">
+              <input class="form-check-input me-1" type="checkbox" name="allowed_models" value="{{ model }}" data-provider-model="{{ provider }}" {% if model in selected_models %}checked{% endif %} {% if provider not in selected_providers %}disabled{% endif %}>
+              <span class="form-check-label">{{ model }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted small">No controlled models are available for this provider yet.</div>
+      {% endif %}
+    </div>
+  {% endfor %}
+{%- endmacro %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
@@ -30,24 +67,14 @@
           <div class="d-flex flex-wrap gap-2 mb-2">
             {% for provider in provider_choices %}
               <label class="form-check border rounded px-2 py-1">
-                <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}">
+                <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}">
                 <span class="form-check-label">{{ provider }}</span>
               </label>
             {% endfor %}
           </div>
 
           <label class="form-label">Allowed models</label>
-          <select class="form-select mb-2" name="allowed_models" multiple size="7">
-            {% for provider, models in model_choices.items() %}
-              {% if models %}
-              <optgroup label="{{ provider }}">
-                {% for model in models %}
-                  <option value="{{ model }}">{{ model }}</option>
-                {% endfor %}
-              </optgroup>
-              {% endif %}
-            {% endfor %}
-          </select>
+          {{ render_model_selector(model_choices) }}
 
           <div class="form-label">Allowed capabilities</div>
           {% for group, capabilities in capability_groups.items() %}
@@ -142,6 +169,11 @@
             {% endfor %}
           </div>
         {% endif %}
+        <div class="small mb-3">
+          <div><span class="text-muted">providers:</span> {{ profile.allowed_providers|join(', ') or '-' }}</div>
+          <div><span class="text-muted">models:</span> {{ render_model_summary(profile.allowed_models, model_choices) }}</div>
+          <div><span class="text-muted">capabilities:</span> {{ profile.allowed_capabilities|join(', ') or '-' }}</div>
+        </div>
 
         <form method="post" action="/admin/external-ai-permission-profiles/{{ profile.id }}/update">
           <div class="row g-2">
@@ -159,24 +191,14 @@
           <div class="d-flex flex-wrap gap-2 mb-2">
             {% for provider in provider_choices %}
               <label class="form-check border rounded px-2 py-1">
-                <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" {% if provider in profile.allowed_providers %}checked{% endif %}>
+                <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}" {% if provider in profile.allowed_providers %}checked{% endif %}>
                 <span class="form-check-label">{{ provider }}</span>
               </label>
             {% endfor %}
           </div>
 
           <label class="form-label">Allowed models</label>
-          <select class="form-select mb-2" name="allowed_models" multiple size="7">
-            {% for provider, models in model_choices.items() %}
-              {% if models %}
-              <optgroup label="{{ provider }}">
-                {% for model in models %}
-                  <option value="{{ model }}" {% if model in profile.allowed_models %}selected{% endif %}>{{ model }}</option>
-                {% endfor %}
-              </optgroup>
-              {% endif %}
-            {% endfor %}
-          </select>
+          {{ render_model_selector(model_choices, profile.allowed_providers, profile.allowed_models) }}
 
           <div class="form-label">Allowed capabilities</div>
           {% for group, capabilities in capability_groups.items() %}
@@ -269,4 +291,30 @@
 <div class="alert alert-warning mt-3 mb-0">
   Permission profiles prepare future gateway governance only. They never call providers or expose provider keys.
 </div>
+<script>
+(() => {
+  for (const form of document.querySelectorAll("form")) {
+    const toggles = Array.from(form.querySelectorAll("[data-provider-toggle]"));
+    const groups = Array.from(form.querySelectorAll("[data-model-provider]"));
+    if (!toggles.length || !groups.length) continue;
+    const updateModelGroups = () => {
+      const enabledProviders = new Set(
+        toggles.filter((input) => input.checked).map((input) => input.dataset.providerToggle)
+      );
+      for (const group of groups) {
+        const provider = group.dataset.modelProvider;
+        const active = enabledProviders.has(provider);
+        group.classList.toggle("opacity-50", !active);
+        for (const input of group.querySelectorAll("[data-provider-model]")) {
+          input.disabled = !active;
+        }
+      }
+    };
+    for (const toggle of toggles) {
+      toggle.addEventListener("change", updateModelGroups);
+    }
+    updateModelGroups();
+  }
+})();
+</script>
 {% endblock %}

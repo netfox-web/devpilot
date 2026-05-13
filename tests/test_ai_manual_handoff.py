@@ -998,6 +998,17 @@ class AiManualHandoffTest(unittest.TestCase):
                             "allowed_capabilities": "summary",
                         },
                     )
+                    grouped_model_create = self.client().post(
+                        "/admin/external-ai-policies",
+                        data={
+                            "source_system_select": "",
+                            "source_system": "grouped-model-source",
+                            "label": "Grouped model policy",
+                            "allowed_providers": ["openai", "gemini"],
+                            "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash"],
+                            "allowed_capabilities": "summary",
+                        },
+                    )
                     manual_create = self.client().post(
                         "/admin/external-ai-policies",
                         data={
@@ -1034,12 +1045,17 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertNotIn(duplicate_two["api_key"], page_body)
 
         self.assertEqual(dropdown_create.status_code, 302, dropdown_create.get_data(as_text=True))
+        self.assertEqual(grouped_model_create.status_code, 302, grouped_model_create.get_data(as_text=True))
         self.assertEqual(manual_create.status_code, 302, manual_create.get_data(as_text=True))
         response = self.client().get("/api/admin/external-ai-policies")
         self.assertEqual(response.status_code, 200)
-        sources = {item["source_system"] for item in response.get_json()["policies"]}
+        policies = {item["source_system"]: item for item in response.get_json()["policies"]}
+        sources = set(policies)
         self.assertIn("dropdown-source", sources)
+        self.assertIn("grouped-model-source", sources)
         self.assertIn("manual-source", sources)
+        self.assertEqual(policies["grouped-model-source"]["allowed_providers"], ["openai", "gemini"])
+        self.assertEqual(policies["grouped-model-source"]["allowed_models"], ["gpt-4.1-mini", "gemini-1.5-flash"])
 
         with self.app.app_context():
             approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
@@ -1195,7 +1211,13 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('name="allowed_providers"', page_body)
         self.assertIn('value="openai"', page_body)
         self.assertIn('value="runway"', page_body)
-        self.assertIn('name="allowed_models" multiple', page_body)
+        self.assertIn("Models are selected per provider. Selecting a provider does not automatically allow all models.", page_body)
+        self.assertIn('data-model-provider="openai"', page_body)
+        self.assertIn('data-model-provider="gemini"', page_body)
+        self.assertIn('data-provider-model="openai"', page_body)
+        self.assertIn('data-provider-model="fal"', page_body)
+        self.assertIn('value="gpt-4.1-mini" data-provider-model="openai" checked', page_body)
+        self.assertIn('value="gemini-1.5-flash" data-provider-model="gemini" checked', page_body)
         self.assertIn('value="gpt-image-1"', page_body)
         self.assertIn('value="fal-flux-pro"', page_body)
         self.assertNotIn("key_hash", page_body)
@@ -1481,13 +1503,19 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('value="fal"', page_body)
         self.assertIn('value="runway"', page_body)
         self.assertIn('value="kling"', page_body)
-        self.assertIn('name="allowed_models" multiple', page_body)
+        self.assertIn("Models are selected per provider. Selecting a provider does not automatically allow all models.", page_body)
+        self.assertIn('data-model-provider="openai"', page_body)
+        self.assertIn('data-model-provider="gemini"', page_body)
+        self.assertIn('data-model-provider="claude"', page_body)
+        self.assertIn('data-provider-model="openai"', page_body)
+        self.assertIn('data-provider-model="gemini"', page_body)
         self.assertIn('value="gpt-4.1-mini"', page_body)
         self.assertIn('value="gpt-image-1"', page_body)
         self.assertIn('value="gemini-1.5-flash"', page_body)
         self.assertIn('value="claude-3-5-sonnet"', page_body)
         self.assertIn('value="flux-schnell"', page_body)
         self.assertIn('value="fal-flux-pro"', page_body)
+        self.assertIn("<span class=\"text-muted\">openai:</span> gpt-4.1-mini", page_body)
         self.assertIn('value="summary"', page_body)
         self.assertIn('value="image_generation"', page_body)
         self.assertIn('value="video_generation"', page_body)
