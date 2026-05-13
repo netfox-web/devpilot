@@ -1456,6 +1456,9 @@ class AiManualHandoffTest(unittest.TestCase):
                         with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
                             page = self.client().get("/admin/integration-toolbox")
                             doc_download = self.client().get("/admin/integration-toolbox/download/devpilot-integration-settings-spec")
+                            admin_instructions_download = self.client().get(
+                                "/admin/integration-toolbox/download/external-project-admin-integration-instructions"
+                            )
                             registry_download = self.client().get("/admin/integration-toolbox/download/external-project-registry-api")
                             js_download = self.client().get("/admin/integration-toolbox/download/devpilot-js-client-example")
                             py_download = self.client().get("/admin/integration-toolbox/download/devpilot-python-client-example")
@@ -1468,6 +1471,7 @@ class AiManualHandoffTest(unittest.TestCase):
         for expected in (
             "Integration Toolbox",
             "DevPilot Integration Settings Spec",
+            "External Project Admin Integration Instructions",
             "External Project Registry API",
             "External API Onboarding Admin Guide",
             "External AI Gateway Plan",
@@ -1482,11 +1486,19 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertNotIn(key_hash, page_body)
         self.assertNotIn("key_hash", page_body)
 
-        for response in (doc_download, registry_download, js_download, py_download, env_download):
+        for response in (doc_download, admin_instructions_download, registry_download, js_download, py_download, env_download):
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
             self.assertIn("attachment", response.headers.get("Content-Disposition", ""))
 
         self.assertIn("DevPilot Integration", doc_download.get_data(as_text=True))
+        admin_instructions_body = admin_instructions_download.get_data(as_text=True)
+        self.assertIn("/admin/integrations/devpilot", admin_instructions_body)
+        self.assertIn("DEVPILOT_API_KEY", admin_instructions_body)
+        self.assertIn("<paste-the-key-shown-once>", admin_instructions_body)
+        self.assertIn("Never show the full key again", admin_instructions_body)
+        self.assertIn("GET /api/external/projects", admin_instructions_body)
+        self.assertIn("POST /api/external/projects/register", admin_instructions_body)
+        self.assertIn("POST /api/external/projects/<external_project_id>/events", admin_instructions_body)
         self.assertIn("register project metadata", registry_download.get_data(as_text=True))
 
         js_body = js_download.get_data(as_text=True)
@@ -1509,7 +1521,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("DEVPILOT_API_KEY=", env_body)
         self.assertIn("EXTERNAL_PROJECT_ID=", env_body)
 
-        combined_generated = "\n".join((js_body, py_body, env_body))
+        combined_generated = "\n".join((admin_instructions_body, js_body, py_body, env_body))
         self.assertNotIn(raw_key, combined_generated)
         self.assertNotIn(key_hash, combined_generated)
         self.assertNotIn("key_hash", combined_generated)

@@ -15791,6 +15791,13 @@ INTEGRATION_TOOLBOX_FILE_RESOURCES = {
         "filename": "devpilot_integration_settings_spec.md",
         "mimetype": "text/markdown",
     },
+    "external-project-admin-integration-instructions": {
+        "title": "External Project Admin Integration Instructions",
+        "description": "Build /admin/integrations/devpilot in external projects and connect registry/events safely.",
+        "path": BASE_DIR / "docs" / "integration_toolbox" / "external_project_admin_integration_instructions.md",
+        "filename": "external_project_admin_integration_instructions.md",
+        "mimetype": "text/markdown",
+    },
     "external-project-registry-api": {
         "title": "External Project Registry API",
         "description": "Register project metadata, local/NAS paths, domains, containers.",
