@@ -2491,6 +2491,31 @@ AI_PROVIDER_CONFIGS = [
 ]
 
 
+AI_PROVIDER_SECRET_CONFIGS = [
+    {
+        "id": "openai",
+        "name": "OpenAI",
+        "env_vars": ["OPENAI_API_KEY"],
+        "status_missing": "OpenAI provider key is not configured in runtime env.",
+        "status_configured": "OpenAI provider key is configured in runtime env.",
+    },
+    {
+        "id": "gemini",
+        "name": "Gemini",
+        "env_vars": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
+        "status_missing": "Gemini provider key is not configured in runtime env.",
+        "status_configured": "Gemini provider key is configured in runtime env.",
+    },
+    {
+        "id": "claude",
+        "name": "Claude",
+        "env_vars": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
+        "status_missing": "Claude provider key is not configured in runtime env.",
+        "status_configured": "Claude provider key is configured in runtime env.",
+    },
+]
+
+
 def safe_secret_prefix(value):
     text = str(value or "").strip()
     if not text:
@@ -2498,6 +2523,15 @@ def safe_secret_prefix(value):
     if len(text) < 8:
         return "[set]"
     return f"{text[:6]}..."
+
+
+def safe_secret_preview(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= 10:
+        return "****"
+    return f"{text[:6]}...{text[-4:]}"
 
 
 def ai_provider_config_status():
@@ -2522,6 +2556,33 @@ def ai_provider_config_status():
             "env_var": matched_var,
             "checked_env_vars": list(config["env_vars"]),
             "notes": config["notes"] if configured else "No recognized environment variable is configured.",
+        })
+    return providers
+
+
+def ai_provider_secret_env_status():
+    checked_at = now_str()
+    providers = []
+    for config in AI_PROVIDER_SECRET_CONFIGS:
+        matched_var = ""
+        matched_value = ""
+        for env_var in config["env_vars"]:
+            value = os.getenv(env_var, "").strip()
+            if value:
+                matched_var = env_var
+                matched_value = value
+                break
+        configured = bool(matched_value)
+        providers.append({
+            "id": config["id"],
+            "name": config["name"],
+            "configured": configured,
+            "source": "runtime env" if configured else "",
+            "env_var": matched_var,
+            "checked_env_vars": list(config["env_vars"]),
+            "masked_preview": safe_secret_preview(matched_value),
+            "last_checked_at": checked_at,
+            "status_explanation": config["status_configured"] if configured else config["status_missing"],
         })
     return providers
 
@@ -16459,6 +16520,16 @@ def admin_ai_providers_page():
         "ai_providers.html",
         app_name=APP_NAME,
         providers=ai_provider_config_status(),
+    )
+
+
+@app.route("/admin/ai-provider-secrets")
+@require_roles("owner", "admin")
+def admin_ai_provider_secrets_page():
+    return render_template(
+        "ai_provider_secrets.html",
+        app_name=APP_NAME,
+        providers=ai_provider_secret_env_status(),
     )
 
 

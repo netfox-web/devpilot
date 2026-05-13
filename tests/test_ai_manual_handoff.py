@@ -1865,6 +1865,77 @@ class AiManualHandoffTest(unittest.TestCase):
         run_task.assert_not_called()
         self.assertEqual(self.state_snapshot(), before)
 
+    def test_ai_provider_secrets_page_is_env_only_masked_and_read_only(self):
+        before = self.state_snapshot()
+        raw_openai = "sk-test-openai-secret-value"
+        raw_gemini = "gemini-test-secret-value"
+        raw_claude = "anthropic-test-secret-value"
+        env = {
+            "OPENAI_API_KEY": raw_openai,
+            "GEMINI_API_KEY": "",
+            "GOOGLE_API_KEY": "",
+            "GOOGLE_GENERATIVE_AI_API_KEY": raw_gemini,
+            "ANTHROPIC_API_KEY": raw_claude,
+            "CLAUDE_API_KEY": "",
+        }
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        with patch.dict(self.app_module.os.environ, env, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_task_provider") as provider_call:
+                    with patch.object(self.app_module, "run_ai_task") as run_task:
+                        with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                            with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                response = self.client().get("/admin/ai-provider-secrets")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        page = response.get_data(as_text=True)
+        self.assertIn("AI Provider Secrets", page)
+        self.assertIn("OPENAI_API_KEY", page)
+        self.assertIn("GOOGLE_GENERATIVE_AI_API_KEY", page)
+        self.assertIn("ANTHROPIC_API_KEY", page)
+        self.assertIn("sk-tes...alue", page)
+        self.assertIn("gemini...alue", page)
+        self.assertIn("anthro...alue", page)
+        self.assertIn("DevPilot External API Keys authenticate external projects", page)
+        self.assertIn("This page only inspects runtime env and does not store secrets", page)
+        self.assertIn("/admin/ai-provider-secrets", page)
+        self.assertNotIn(raw_openai, page)
+        self.assertNotIn(raw_gemini, page)
+        self.assertNotIn(raw_claude, page)
+        self.assertNotIn("Authorization:", page)
+        self.assertNotIn("key_hash", page)
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_ai_provider_secrets_page_shows_missing_state_and_requires_auth(self):
+        env = {
+            "OPENAI_API_KEY": "",
+            "GEMINI_API_KEY": "",
+            "GOOGLE_API_KEY": "",
+            "GOOGLE_GENERATIVE_AI_API_KEY": "",
+            "ANTHROPIC_API_KEY": "",
+            "CLAUDE_API_KEY": "",
+        }
+        with patch.dict(self.app_module.os.environ, env, clear=False):
+            page = self.client().get("/admin/ai-provider-secrets")
+            anonymous = self.app.test_client().get("/admin/ai-provider-secrets")
+
+        self.assertEqual(page.status_code, 200, page.get_data(as_text=True))
+        body = page.get_data(as_text=True)
+        self.assertIn("not configured", body)
+        self.assertIn("OpenAI provider key is not configured in runtime env.", body)
+        self.assertIn("Gemini provider key is not configured in runtime env.", body)
+        self.assertIn("Claude provider key is not configured in runtime env.", body)
+        self.assertEqual(anonymous.status_code, 302)
+
     def test_external_ai_policy_manager_create_list_toggle_and_safe_defaults(self):
         before = self.state_snapshot()
         with self.app.app_context():
