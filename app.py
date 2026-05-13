@@ -48,6 +48,8 @@ DB_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "project_manager.db"))
 EXTERNAL_API_KEY_STORE_PATH = DATA_DIR / "external_api_keys.json"
 EXTERNAL_AI_POLICY_STORE_PATH = DATA_DIR / "external_ai_policies.json"
 EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH = DATA_DIR / "external_ai_permission_profiles.json"
+EXTERNAL_PROJECT_REGISTRY_STORE_PATH = DATA_DIR / "external_project_registry.json"
+EXTERNAL_PROJECT_EVENTS_STORE_PATH = DATA_DIR / "external_project_events.json"
 API_TOKEN = os.getenv("API_TOKEN", "change-me-token")
 _DEV_PILOT_API_URL_RAW = os.getenv("DEV_PILOT_API_URL", "").strip().rstrip("/")
 # 一鍵複製回寫指令 / README 範例皆以 .env 的 DEV_PILOT_API_URL 為準；未設定時預設本機開發埠
@@ -1553,6 +1555,595 @@ def external_api_key_source_options():
             "status": "active",
         })
     return options
+
+
+EXTERNAL_PROJECT_ENVIRONMENTS = ["development", "staging", "production"]
+EXTERNAL_PROJECT_TYPES = ["ai-saas", "website", "api", "worker", "automation", "internal-tool", "other"]
+EXTERNAL_PROJECT_STATUSES = ["active", "paused", "archived", "planning"]
+EXTERNAL_PROJECT_DOMAIN_STATUSES = ["requested", "review_needed", "approved", "pointed", "blocked"]
+EXTERNAL_PROJECT_EVENT_TYPES = [
+    "project_registered",
+    "build_started",
+    "build_success",
+    "build_failed",
+    "deploy_started",
+    "deploy_success",
+    "deploy_failed",
+    "domain_requested",
+    "domain_ready",
+    "healthcheck_ok",
+    "healthcheck_failed",
+    "ai_job_started",
+    "ai_job_completed",
+    "ai_job_failed",
+    "usage_reported",
+    "custom",
+]
+EXTERNAL_PROJECT_EVENT_STATUSES = ["info", "pending", "running", "success", "warning", "failed", "blocked"]
+EXTERNAL_PROJECT_TEXT_LIMITS = {
+    "external_project_id": 160,
+    "name": 240,
+    "description": 1200,
+    "event_type": 80,
+    "event_status": 80,
+    "message": 1600,
+    "owner": 240,
+    "repo_url": 500,
+    "branch": 160,
+    "commit_sha": 120,
+    "local_path": 500,
+    "nas_worktree_path": 500,
+    "nas_compose_path": 500,
+    "nas_data_path": 500,
+    "container_name": 200,
+    "compose_project": 200,
+    "service_name": 200,
+    "host_port": 32,
+    "container_port": 32,
+    "app_url": 500,
+    "primary_domain": 253,
+    "domain_notes": 1200,
+    "deployment_target": 240,
+    "runtime": 240,
+    "healthcheck_url": 500,
+    "notes": 1600,
+}
+
+
+def external_project_registry_store_path():
+    raw_path = os.getenv("DEVPILOT_EXTERNAL_PROJECT_REGISTRY_PATH", "").strip()
+    return Path(raw_path) if raw_path else EXTERNAL_PROJECT_REGISTRY_STORE_PATH
+
+
+def external_project_events_store_path():
+    raw_path = os.getenv("DEVPILOT_EXTERNAL_PROJECT_EVENTS_PATH", "").strip()
+    return Path(raw_path) if raw_path else EXTERNAL_PROJECT_EVENTS_STORE_PATH
+
+
+def external_project_preview(value, limit=240):
+    return str(value or "").strip()[:limit]
+
+
+def external_project_has_shell_tokens(value):
+    text = str(value or "")
+    dangerous = ["\x00", "\r", "\n", "`", "$(", "&&", "||", ";", "|", ">", "<"]
+    return any(token in text for token in dangerous)
+
+
+def external_project_clean_text(value, field_name, required=False):
+    limit = EXTERNAL_PROJECT_TEXT_LIMITS.get(field_name, 500)
+    if value is None:
+        text = ""
+    elif isinstance(value, str):
+        text = external_project_preview(value, limit)
+    else:
+        raise ValueError(f"{field_name} must be a string")
+    if required and not text:
+        raise ValueError(f"{field_name} is required")
+    if text and external_project_has_shell_tokens(text):
+        raise ValueError(f"{field_name} contains unsafe characters")
+    return text
+
+
+def normalize_external_project_choice(value, allowed, field_name, default=""):
+    text = external_project_preview(value, 80).lower()
+    if not text:
+        return default
+    if text not in allowed:
+        raise ValueError(f"invalid {field_name}: {text}")
+    return text
+
+
+def normalize_external_project_domain(value, field_name="domain"):
+    domain = external_project_clean_text(value, field_name, required=False).lower().rstrip(".")
+    if not domain:
+        return ""
+    if len(domain) > 253 or "/" in domain or ":" in domain or "_" in domain:
+        raise ValueError(f"invalid {field_name}: {domain}")
+    labels = domain.split(".")
+    if len(labels) < 2:
+        raise ValueError(f"invalid {field_name}: {domain}")
+    for label in labels:
+        if not label or len(label) > 63:
+            raise ValueError(f"invalid {field_name}: {domain}")
+        if label.startswith("-") or label.endswith("-"):
+            raise ValueError(f"invalid {field_name}: {domain}")
+        if not re.fullmatch(r"[a-z0-9-]+", label):
+            raise ValueError(f"invalid {field_name}: {domain}")
+    return domain
+
+
+def normalize_external_project_domains(value):
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("requested_domains must be a list")
+    domains = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("requested_domains must contain strings")
+        domain = normalize_external_project_domain(item, "requested_domains")
+        if domain and domain not in seen:
+            domains.append(domain)
+            seen.add(domain)
+    return domains
+
+
+def external_project_record_public(record):
+    return {
+        "id": record.get("id") or "",
+        "source_system": record.get("source_system") or "",
+        "external_project_id": record.get("external_project_id") or "",
+        "name": record.get("name") or "",
+        "description": record.get("description") or "",
+        "project_type": record.get("project_type") or "",
+        "environment": record.get("environment") or "",
+        "status": record.get("status") or "",
+        "owner": record.get("owner") or "",
+        "repo_url": record.get("repo_url") or "",
+        "branch": record.get("branch") or "",
+        "commit_sha": record.get("commit_sha") or "",
+        "local_path": record.get("local_path") or "",
+        "nas_worktree_path": record.get("nas_worktree_path") or "",
+        "nas_compose_path": record.get("nas_compose_path") or "",
+        "nas_data_path": record.get("nas_data_path") or "",
+        "container_name": record.get("container_name") or "",
+        "compose_project": record.get("compose_project") or "",
+        "service_name": record.get("service_name") or "",
+        "host_port": record.get("host_port") or "",
+        "container_port": record.get("container_port") or "",
+        "app_url": record.get("app_url") or "",
+        "requested_domains": list(record.get("requested_domains") or []),
+        "primary_domain": record.get("primary_domain") or "",
+        "domain_status": record.get("domain_status") or "review_needed",
+        "dns_action_required": bool(record.get("dns_action_required")),
+        "domain_notes": record.get("domain_notes") or "",
+        "deployment_target": record.get("deployment_target") or "",
+        "runtime": record.get("runtime") or "",
+        "healthcheck_url": record.get("healthcheck_url") or "",
+        "notes": record.get("notes") or "",
+        "request_id": record.get("request_id") or "",
+        "idempotency_key": record.get("idempotency_key") or "",
+        "created_at": record.get("created_at") or "",
+        "updated_at": record.get("updated_at") or "",
+        "last_seen_at": record.get("last_seen_at") or "",
+    }
+
+
+def normalize_external_project_record(record):
+    if not isinstance(record, dict):
+        return None
+    try:
+        source_system = external_api_key_preview(record.get("source_system"), 120)
+        external_project_id = external_project_clean_text(record.get("external_project_id"), "external_project_id", required=True)
+        name = external_project_clean_text(record.get("name"), "name", required=True)
+        if not source_system:
+            return None
+        requested_domains = normalize_external_project_domains(record.get("requested_domains") or [])
+        primary_domain = normalize_external_project_domain(record.get("primary_domain"), "primary_domain") if record.get("primary_domain") else ""
+        domain_status = normalize_external_project_choice(
+            record.get("domain_status"),
+            EXTERNAL_PROJECT_DOMAIN_STATUSES,
+            "domain_status",
+            default="review_needed",
+        )
+        dns_action_required = boolish(record.get("dns_action_required")) if "dns_action_required" in record else bool(requested_domains)
+        project_type = normalize_external_project_choice(
+            record.get("project_type"),
+            EXTERNAL_PROJECT_TYPES,
+            "project_type",
+            default="other",
+        )
+        environment = normalize_external_project_choice(
+            record.get("environment"),
+            EXTERNAL_PROJECT_ENVIRONMENTS,
+            "environment",
+            default="development",
+        )
+        status = normalize_external_project_choice(
+            record.get("status"),
+            EXTERNAL_PROJECT_STATUSES,
+            "status",
+            default="planning",
+        )
+        normalized = {
+            "id": record.get("id") or f"{slugify_filename(source_system)}--{slugify_filename(external_project_id)}",
+            "source_system": source_system,
+            "external_project_id": external_project_id,
+            "name": name,
+            "description": external_project_clean_text(record.get("description"), "description"),
+            "project_type": project_type,
+            "environment": environment,
+            "status": status,
+            "owner": external_project_clean_text(record.get("owner"), "owner"),
+            "repo_url": external_project_clean_text(record.get("repo_url"), "repo_url"),
+            "branch": external_project_clean_text(record.get("branch"), "branch"),
+            "commit_sha": external_project_clean_text(record.get("commit_sha"), "commit_sha"),
+            "local_path": external_project_clean_text(record.get("local_path"), "local_path"),
+            "nas_worktree_path": external_project_clean_text(record.get("nas_worktree_path"), "nas_worktree_path"),
+            "nas_compose_path": external_project_clean_text(record.get("nas_compose_path"), "nas_compose_path"),
+            "nas_data_path": external_project_clean_text(record.get("nas_data_path"), "nas_data_path"),
+            "container_name": external_project_clean_text(record.get("container_name"), "container_name"),
+            "compose_project": external_project_clean_text(record.get("compose_project"), "compose_project"),
+            "service_name": external_project_clean_text(record.get("service_name"), "service_name"),
+            "host_port": external_project_clean_text(record.get("host_port"), "host_port"),
+            "container_port": external_project_clean_text(record.get("container_port"), "container_port"),
+            "app_url": external_project_clean_text(record.get("app_url"), "app_url"),
+            "requested_domains": requested_domains,
+            "primary_domain": primary_domain or (requested_domains[0] if requested_domains else ""),
+            "domain_status": domain_status,
+            "dns_action_required": dns_action_required,
+            "domain_notes": external_project_clean_text(record.get("domain_notes"), "domain_notes"),
+            "deployment_target": external_project_clean_text(record.get("deployment_target"), "deployment_target"),
+            "runtime": external_project_clean_text(record.get("runtime"), "runtime"),
+            "healthcheck_url": external_project_clean_text(record.get("healthcheck_url"), "healthcheck_url"),
+            "notes": external_project_clean_text(record.get("notes"), "notes"),
+            "request_id": external_api_key_preview(record.get("request_id"), 160),
+            "idempotency_key": external_api_key_preview(record.get("idempotency_key"), 160),
+            "created_at": external_api_key_preview(record.get("created_at"), 64),
+            "updated_at": external_api_key_preview(record.get("updated_at"), 64),
+            "last_seen_at": external_api_key_preview(record.get("last_seen_at"), 64),
+        }
+        return normalized
+    except ValueError:
+        return None
+
+
+def load_external_project_registry_records():
+    path = external_project_registry_store_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    raw_records = data.get("projects") if isinstance(data, dict) else data
+    if not isinstance(raw_records, list):
+        return []
+    records = []
+    for item in raw_records:
+        record = normalize_external_project_record(item)
+        if record:
+            records.append(record)
+    return records
+
+
+def save_external_project_registry_records(records):
+    path = external_project_registry_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [record for record in (normalize_external_project_record(item) for item in records) if record]
+    payload = {"projects": normalized, "updated_at": now_str()}
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def external_project_record_from_payload(source_system, payload, existing=None, identity=None):
+    if not isinstance(payload, dict):
+        raise ValueError("JSON object body is required")
+    now = now_str()
+    identity = identity or {}
+    existing = existing if isinstance(existing, dict) else {}
+    source_system = external_api_key_preview(source_system, 120)
+    external_project_id = external_project_clean_text(payload.get("external_project_id") or existing.get("external_project_id"), "external_project_id", required=True)
+    requested_domains = normalize_external_project_domains(payload.get("requested_domains", existing.get("requested_domains") or []))
+    primary_domain = normalize_external_project_domain(payload.get("primary_domain"), "primary_domain") if payload.get("primary_domain") else (existing.get("primary_domain") or "")
+    domain_status = normalize_external_project_choice(
+        payload.get("domain_status", existing.get("domain_status") or ""),
+        EXTERNAL_PROJECT_DOMAIN_STATUSES,
+        "domain_status",
+        default=existing.get("domain_status") or "review_needed",
+    )
+    dns_action_required = boolish(payload.get("dns_action_required")) if "dns_action_required" in payload else bool(requested_domains)
+    record = {
+        "id": existing.get("id") or f"{slugify_filename(source_system)}--{slugify_filename(external_project_id)}",
+        "source_system": source_system,
+        "external_project_id": external_project_id,
+        "name": external_project_clean_text(payload.get("name", existing.get("name")), "name", required=True),
+        "description": external_project_clean_text(payload.get("description", existing.get("description")), "description"),
+        "project_type": normalize_external_project_choice(payload.get("project_type", existing.get("project_type")), EXTERNAL_PROJECT_TYPES, "project_type", default="other"),
+        "environment": normalize_external_project_choice(payload.get("environment", existing.get("environment")), EXTERNAL_PROJECT_ENVIRONMENTS, "environment", default="development"),
+        "status": normalize_external_project_choice(payload.get("status", existing.get("status")), EXTERNAL_PROJECT_STATUSES, "status", default="planning"),
+        "owner": external_project_clean_text(payload.get("owner", existing.get("owner")), "owner"),
+        "repo_url": external_project_clean_text(payload.get("repo_url", existing.get("repo_url")), "repo_url"),
+        "branch": external_project_clean_text(payload.get("branch", existing.get("branch")), "branch"),
+        "commit_sha": external_project_clean_text(payload.get("commit_sha", existing.get("commit_sha")), "commit_sha"),
+        "local_path": external_project_clean_text(payload.get("local_path", existing.get("local_path")), "local_path"),
+        "nas_worktree_path": external_project_clean_text(payload.get("nas_worktree_path", existing.get("nas_worktree_path")), "nas_worktree_path"),
+        "nas_compose_path": external_project_clean_text(payload.get("nas_compose_path", existing.get("nas_compose_path")), "nas_compose_path"),
+        "nas_data_path": external_project_clean_text(payload.get("nas_data_path", existing.get("nas_data_path")), "nas_data_path"),
+        "container_name": external_project_clean_text(payload.get("container_name", existing.get("container_name")), "container_name"),
+        "compose_project": external_project_clean_text(payload.get("compose_project", existing.get("compose_project")), "compose_project"),
+        "service_name": external_project_clean_text(payload.get("service_name", existing.get("service_name")), "service_name"),
+        "host_port": external_project_clean_text(payload.get("host_port", existing.get("host_port")), "host_port"),
+        "container_port": external_project_clean_text(payload.get("container_port", existing.get("container_port")), "container_port"),
+        "app_url": external_project_clean_text(payload.get("app_url", existing.get("app_url")), "app_url"),
+        "requested_domains": requested_domains,
+        "primary_domain": primary_domain or (requested_domains[0] if requested_domains else ""),
+        "domain_status": domain_status,
+        "dns_action_required": dns_action_required,
+        "domain_notes": external_project_clean_text(payload.get("domain_notes", existing.get("domain_notes")), "domain_notes"),
+        "deployment_target": external_project_clean_text(payload.get("deployment_target", existing.get("deployment_target")), "deployment_target"),
+        "runtime": external_project_clean_text(payload.get("runtime", existing.get("runtime")), "runtime"),
+        "healthcheck_url": external_project_clean_text(payload.get("healthcheck_url", existing.get("healthcheck_url")), "healthcheck_url"),
+        "notes": external_project_clean_text(payload.get("notes", existing.get("notes")), "notes"),
+        "request_id": external_api_key_preview(identity.get("request_id") or existing.get("request_id"), 160),
+        "idempotency_key": external_api_key_preview(identity.get("idempotency_key") or existing.get("idempotency_key"), 160),
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+        "last_seen_at": now,
+    }
+    return record
+
+
+def upsert_external_project_registry_record(source_system, payload, identity=None):
+    records = load_external_project_registry_records()
+    external_project_id = external_project_clean_text((payload or {}).get("external_project_id"), "external_project_id", required=True)
+    idempotency_key = external_api_key_preview((identity or {}).get("idempotency_key"), 160)
+    existing_index = None
+    for index, record in enumerate(records):
+        if record.get("source_system") == source_system and record.get("external_project_id") == external_project_id:
+            existing_index = index
+            break
+    if existing_index is None and idempotency_key:
+        for index, record in enumerate(records):
+            if record.get("source_system") == source_system and record.get("idempotency_key") == idempotency_key:
+                if record.get("external_project_id") != external_project_id:
+                    raise ValueError("idempotency key already used for another external project")
+                existing_index = index
+                break
+    existing = records[existing_index] if existing_index is not None else None
+    record = external_project_record_from_payload(source_system, payload, existing=existing, identity=identity)
+    if existing_index is None:
+        records.append(record)
+        created = True
+    else:
+        records[existing_index] = record
+        created = False
+    save_external_project_registry_records(records)
+    return record, created
+
+
+def external_project_registry_visible_records(identity, args=None):
+    args = args or {}
+    include_all = external_api_allow_all_sources() and str(args.get("include_all_sources") or "").strip().lower() in ("1", "true", "yes", "on")
+    records = load_external_project_registry_records()
+    if include_all:
+        return records
+    source_system = (identity or {}).get("source_system") or ""
+    return [record for record in records if record.get("source_system") == source_system]
+
+
+def filter_external_project_records(records, filters):
+    filters = filters or {}
+    q = external_project_preview(filters.get("q"), 120).lower()
+    source_system = external_project_preview(filters.get("source_system"), 120).lower()
+    environment = external_project_preview(filters.get("environment"), 80).lower()
+    status = external_project_preview(filters.get("status"), 80).lower()
+    domain_status = external_project_preview(filters.get("domain_status"), 80).lower()
+    result = []
+    for record in records:
+        haystack = " ".join([
+            record.get("source_system") or "",
+            record.get("external_project_id") or "",
+            record.get("name") or "",
+            record.get("description") or "",
+            record.get("project_type") or "",
+            record.get("environment") or "",
+            record.get("status") or "",
+            record.get("repo_url") or "",
+            record.get("app_url") or "",
+            record.get("primary_domain") or "",
+            " ".join(record.get("requested_domains") or []),
+            record.get("deployment_target") or "",
+            record.get("runtime") or "",
+            record.get("notes") or "",
+        ]).lower()
+        if q and q not in haystack:
+            continue
+        if source_system and record.get("source_system", "").lower() != source_system:
+            continue
+        if environment and record.get("environment", "").lower() != environment:
+            continue
+        if status and record.get("status", "").lower() != status:
+            continue
+        if domain_status and record.get("domain_status", "").lower() != domain_status:
+            continue
+        result.append(record)
+    return result
+
+
+def external_project_event_record_public(record):
+    return {
+        "id": record.get("id") or "",
+        "source_system": record.get("source_system") or "",
+        "external_project_id": record.get("external_project_id") or "",
+        "event_type": record.get("event_type") or "",
+        "status": record.get("status") or "",
+        "message": record.get("message") or "",
+        "environment": record.get("environment") or "",
+        "commit_sha": record.get("commit_sha") or "",
+        "app_url": record.get("app_url") or "",
+        "metadata": record.get("metadata") if isinstance(record.get("metadata"), dict) else {},
+        "created_at": record.get("created_at") or "",
+    }
+
+
+def normalize_external_project_event_record(record):
+    if not isinstance(record, dict):
+        return None
+    try:
+        source_system = external_api_key_preview(record.get("source_system"), 120)
+        external_project_id = external_project_clean_text(record.get("external_project_id"), "external_project_id", required=True)
+        event_type = normalize_external_project_choice(
+            record.get("event_type"),
+            EXTERNAL_PROJECT_EVENT_TYPES,
+            "event_type",
+            default="custom",
+        )
+        event_status = normalize_external_project_choice(
+            record.get("status"),
+            EXTERNAL_PROJECT_EVENT_STATUSES,
+            "status",
+            default="info",
+        )
+        environment = normalize_external_project_choice(
+            record.get("environment"),
+            EXTERNAL_PROJECT_ENVIRONMENTS,
+            "environment",
+            default="",
+        )
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        if record.get("metadata") not in (None, "") and not isinstance(record.get("metadata"), dict):
+            return None
+        if not source_system:
+            return None
+        return {
+            "id": record.get("id") or f"evt-{int(time.time() * 1000)}-{secrets.token_hex(4)}",
+            "source_system": source_system,
+            "external_project_id": external_project_id,
+            "event_type": event_type,
+            "status": event_status,
+            "message": external_project_clean_text(record.get("message"), "message"),
+            "environment": environment,
+            "commit_sha": external_project_clean_text(record.get("commit_sha"), "commit_sha"),
+            "app_url": external_project_clean_text(record.get("app_url"), "app_url"),
+            "metadata": metadata,
+            "created_at": external_api_key_preview(record.get("created_at"), 64) or now_str(),
+        }
+    except ValueError:
+        return None
+
+
+def load_external_project_event_records():
+    path = external_project_events_store_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    raw_records = data.get("events") if isinstance(data, dict) else data
+    if not isinstance(raw_records, list):
+        return []
+    records = []
+    for item in raw_records:
+        record = normalize_external_project_event_record(item)
+        if record:
+            records.append(record)
+    return records
+
+
+def save_external_project_event_records(records):
+    path = external_project_events_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [record for record in (normalize_external_project_event_record(item) for item in records) if record]
+    payload = {"events": normalized, "updated_at": now_str()}
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def external_project_for_source(source_system, external_project_id):
+    for record in load_external_project_registry_records():
+        if record.get("source_system") == source_system and record.get("external_project_id") == external_project_id:
+            return record
+    return None
+
+
+def touch_external_project_registry_last_seen(source_system, external_project_id):
+    records = load_external_project_registry_records()
+    now = now_str()
+    updated = False
+    for record in records:
+        if record.get("source_system") == source_system and record.get("external_project_id") == external_project_id:
+            record["last_seen_at"] = now
+            record["updated_at"] = now
+            updated = True
+            break
+    if updated:
+        save_external_project_registry_records(records)
+
+
+def create_external_project_event(source_system, external_project_id, payload):
+    if not isinstance(payload, dict):
+        raise ValueError("JSON object body is required")
+    if not external_project_for_source(source_system, external_project_id):
+        raise LookupError("external project not found")
+    event_type = normalize_external_project_choice(
+        payload.get("event_type"),
+        EXTERNAL_PROJECT_EVENT_TYPES,
+        "event_type",
+        default="custom",
+    )
+    event_status = normalize_external_project_choice(
+        payload.get("status"),
+        EXTERNAL_PROJECT_EVENT_STATUSES,
+        "status",
+        default="info",
+    )
+    metadata = payload.get("metadata") if "metadata" in payload else {}
+    if metadata is None:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        raise ValueError("metadata must be an object")
+    record = {
+        "id": f"evt-{int(time.time() * 1000)}-{secrets.token_hex(4)}",
+        "source_system": source_system,
+        "external_project_id": external_project_id,
+        "event_type": event_type,
+        "status": event_status,
+        "message": external_project_clean_text(payload.get("message"), "message"),
+        "environment": normalize_external_project_choice(
+            payload.get("environment"),
+            EXTERNAL_PROJECT_ENVIRONMENTS,
+            "environment",
+            default="",
+        ),
+        "commit_sha": external_project_clean_text(payload.get("commit_sha"), "commit_sha"),
+        "app_url": external_project_clean_text(payload.get("app_url"), "app_url"),
+        "metadata": metadata,
+        "created_at": now_str(),
+    }
+    records = load_external_project_event_records()
+    records.append(record)
+    save_external_project_event_records(records)
+    touch_external_project_registry_last_seen(source_system, external_project_id)
+    return record
+
+
+def external_project_events_for_source(source_system, external_project_id):
+    records = [
+        record for record in load_external_project_event_records()
+        if record.get("source_system") == source_system and record.get("external_project_id") == external_project_id
+    ]
+    records.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
+    return records
 
 
 def slugify_filename(value, default="source"):
@@ -14899,6 +15490,51 @@ def admin_external_ai_policy_enable(policy_id):
     return redirect(url_for("admin_external_ai_policies_page"))
 
 
+def render_external_projects_page(detail=None):
+    records = load_external_project_registry_records()
+    filtered = filter_external_project_records(records, request.args)
+    filtered.sort(key=lambda item: (item.get("updated_at") or "", item.get("last_seen_at") or "", item.get("id") or ""), reverse=True)
+    source_options = sorted({record.get("source_system") for record in records if record.get("source_system")})
+    return render_template(
+        "external_projects.html",
+        app_name=APP_NAME,
+        projects=[external_project_record_public(record) for record in filtered],
+        detail=external_project_record_public(detail) if detail else None,
+        detail_events=[external_project_event_record_public(record) for record in external_project_events_for_source(detail["source_system"], detail["external_project_id"])] if detail else [],
+        source_options=source_options,
+        environments=EXTERNAL_PROJECT_ENVIRONMENTS,
+        statuses=EXTERNAL_PROJECT_STATUSES,
+        domain_statuses=EXTERNAL_PROJECT_DOMAIN_STATUSES,
+        filters={
+            "q": request.args.get("q", ""),
+            "source_system": request.args.get("source_system", ""),
+            "environment": request.args.get("environment", ""),
+            "status": request.args.get("status", ""),
+            "domain_status": request.args.get("domain_status", ""),
+        },
+        registry_store_path=str(external_project_registry_store_path()),
+    )
+
+
+@app.route("/admin/external-projects", methods=["GET"])
+@require_roles("owner", "admin")
+def admin_external_projects_page():
+    return render_external_projects_page()
+
+
+@app.route("/admin/external-projects/<source_system>/<external_project_id>", methods=["GET"])
+@require_roles("owner", "admin")
+def admin_external_project_detail_page(source_system, external_project_id):
+    detail = None
+    for record in load_external_project_registry_records():
+        if record.get("source_system") == source_system and record.get("external_project_id") == external_project_id:
+            detail = record
+            break
+    if not detail:
+        return render_external_projects_page(), 404
+    return render_external_projects_page(detail=detail)
+
+
 @app.route("/api/api-keys", methods=["POST"])
 @require_api_roles("owner")
 def api_api_key_create():
@@ -19717,6 +20353,113 @@ def api_external_ai_handoff_detail(handoff_id):
         "source_system": identity["source_system"],
         "include_all_sources": include_all_external_handoff_sources_requested(),
         "read_only": True,
+        "execution_allowed": False,
+    })
+
+
+@app.route("/api/external/projects/register", methods=["POST"])
+@require_external_api_key
+def api_external_project_register():
+    identity = g.external_api_identity
+    payload = request.get_json(silent=True) or {}
+    try:
+        record, created = upsert_external_project_registry_record(identity["source_system"], payload, identity=identity)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({
+        "ok": True,
+        "project": external_project_record_public(record),
+        "created": created,
+        "updated": not created,
+        "source_system": identity["source_system"],
+        "read_only_infrastructure": True,
+        "infra_actions_executed": False,
+        "provider_calls_executed": False,
+        "worker_execution": False,
+        "approval_created": False,
+    }), 201 if created else 200
+
+
+@app.route("/api/external/projects", methods=["GET"])
+@require_external_api_key
+def api_external_projects():
+    identity = g.external_api_identity
+    records = filter_external_project_records(external_project_registry_visible_records(identity, request.args), request.args)
+    records.sort(key=lambda item: (item.get("updated_at") or "", item.get("last_seen_at") or "", item.get("id") or ""), reverse=True)
+    return jsonify({
+        "ok": True,
+        "projects": [external_project_record_public(record) for record in records],
+        "items": [external_project_record_public(record) for record in records],
+        "count": len(records),
+        "source_system": identity["source_system"],
+        "include_all_sources": external_api_allow_all_sources() and str(request.args.get("include_all_sources") or "").strip().lower() in ("1", "true", "yes", "on"),
+        "read_only": True,
+        "infra_actions_executed": False,
+        "execution_allowed": False,
+    })
+
+
+@app.route("/api/external/projects/<external_project_id>", methods=["GET"])
+@require_external_api_key
+def api_external_project_detail(external_project_id):
+    identity = g.external_api_identity
+    records = external_project_registry_visible_records(identity, request.args)
+    requested_source = request.args.get("source_system")
+    if external_api_allow_all_sources() and str(request.args.get("include_all_sources") or "").strip().lower() in ("1", "true", "yes", "on") and requested_source:
+        records = [record for record in records if record.get("source_system") == requested_source]
+    for record in records:
+        if record.get("external_project_id") == external_project_id:
+            return jsonify({
+                "ok": True,
+                "project": external_project_record_public(record),
+                "source_system": identity["source_system"],
+                "read_only": True,
+                "infra_actions_executed": False,
+                "execution_allowed": False,
+            })
+    return jsonify({"ok": False, "error": "external project not found"}), 404
+
+
+@app.route("/api/external/projects/<external_project_id>/events", methods=["POST"])
+@require_external_api_key
+def api_external_project_event_create(external_project_id):
+    identity = g.external_api_identity
+    payload = request.get_json(silent=True) or {}
+    try:
+        event = create_external_project_event(identity["source_system"], external_project_id, payload)
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({
+        "ok": True,
+        "event": external_project_event_record_public(event),
+        "source_system": identity["source_system"],
+        "external_project_id": external_project_id,
+        "infra_actions_executed": False,
+        "provider_calls_executed": False,
+        "worker_execution": False,
+        "approval_created": False,
+        "task_project_mutation": False,
+    }), 201
+
+
+@app.route("/api/external/projects/<external_project_id>/events", methods=["GET"])
+@require_external_api_key
+def api_external_project_events(external_project_id):
+    identity = g.external_api_identity
+    if not external_project_for_source(identity["source_system"], external_project_id):
+        return jsonify({"ok": False, "error": "external project not found"}), 404
+    events = external_project_events_for_source(identity["source_system"], external_project_id)
+    return jsonify({
+        "ok": True,
+        "events": [external_project_event_record_public(record) for record in events],
+        "items": [external_project_event_record_public(record) for record in events],
+        "count": len(events),
+        "source_system": identity["source_system"],
+        "external_project_id": external_project_id,
+        "read_only": True,
+        "infra_actions_executed": False,
         "execution_allowed": False,
     })
 

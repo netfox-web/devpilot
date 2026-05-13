@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">External Projects</h1>
+    <div class="text-muted small">Registry store: <code>{{ registry_store_path }}</code>. This page records metadata only and does not perform DNS, Docker, deploy, restart, SSL, Nginx, redirect, or Cloudflare writes.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/external-api-keys">External API Keys</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-ai-policies">External AI Policies</a>
+  </div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="/admin/external-projects">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Search</label>
+        <input class="form-control" name="q" value="{{ filters.q }}" placeholder="name, domain, repo, path">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Source</label>
+        <select class="form-select" name="source_system">
+          <option value="">All sources</option>
+          {% for source in source_options %}
+            <option value="{{ source }}" {% if filters.source_system == source %}selected{% endif %}>{{ source }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Environment</label>
+        <select class="form-select" name="environment">
+          <option value="">All</option>
+          {% for item in environments %}
+            <option value="{{ item }}" {% if filters.environment == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Status</label>
+        <select class="form-select" name="status">
+          <option value="">All</option>
+          {% for item in statuses %}
+            <option value="{{ item }}" {% if filters.status == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Domain status</label>
+        <select class="form-select" name="domain_status">
+          <option value="">All</option>
+          {% for item in domain_statuses %}
+            <option value="{{ item }}" {% if filters.domain_status == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-1 d-grid">
+        <button class="btn btn-primary">Filter</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+{% if detail %}
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">External Project Detail</div>
+  <div class="card-body">
+    <div class="row g-3">
+      {% for key, value in detail.items() %}
+        <div class="col-md-4">
+          <div class="text-muted small">{{ key }}</div>
+          {% if value is sequence and value is not string %}
+            <div class="text-break">{{ value|join(', ') or '-' }}</div>
+          {% else %}
+            <div class="text-break">{{ value if value not in [none, ''] else '-' }}</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    <hr>
+    <div class="fw-semibold mb-2">Recent Events</div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>Created</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Environment</th>
+            <th>Commit</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for event in detail_events %}
+          <tr>
+            <td class="small">{{ event.created_at }}</td>
+            <td class="small">{{ event.event_type }}</td>
+            <td class="small"><span class="badge text-bg-secondary">{{ event.status }}</span></td>
+            <td class="small">{{ event.environment or '-' }}</td>
+            <td class="small">{{ event.commit_sha or '-' }}</td>
+            <td class="small text-break">{{ event.message or '-' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-muted small">No events reported yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Registered External Projects</span>
+    <span class="badge text-bg-secondary">{{ projects|length }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Source / Project</th>
+          <th>Runtime</th>
+          <th>Paths</th>
+          <th>Deployment</th>
+          <th>Domains</th>
+          <th>Seen</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for project in projects %}
+        <tr>
+          <td>
+            <div class="fw-semibold">{{ project.name }}</div>
+            <div class="small text-muted">{{ project.source_system }} / {{ project.external_project_id }}</div>
+            <div class="small">{{ project.project_type }} / {{ project.environment }} / {{ project.status }}</div>
+            {% if project.owner %}<div class="small text-muted">{{ project.owner }}</div>{% endif %}
+          </td>
+          <td class="small">
+            <div>runtime: {{ project.runtime or '-' }}</div>
+            <div>repo: <span class="text-break">{{ project.repo_url or '-' }}</span></div>
+            <div>branch: {{ project.branch or '-' }}</div>
+            <div>commit: {{ project.commit_sha or '-' }}</div>
+          </td>
+          <td class="small">
+            <div>local: <span class="text-break">{{ project.local_path or '-' }}</span></div>
+            <div>worktree: <span class="text-break">{{ project.nas_worktree_path or '-' }}</span></div>
+            <div>compose: <span class="text-break">{{ project.nas_compose_path or '-' }}</span></div>
+            <div>data: <span class="text-break">{{ project.nas_data_path or '-' }}</span></div>
+          </td>
+          <td class="small">
+            <div>target: {{ project.deployment_target or '-' }}</div>
+            <div>compose project: {{ project.compose_project or '-' }}</div>
+            <div>service: {{ project.service_name or '-' }}</div>
+            <div>container: {{ project.container_name or '-' }}</div>
+            <div>ports: {{ project.host_port or '-' }} -> {{ project.container_port or '-' }}</div>
+            <div>app: <span class="text-break">{{ project.app_url or '-' }}</span></div>
+          </td>
+          <td class="small">
+            <div>primary: {{ project.primary_domain or '-' }}</div>
+            <div>requested: {{ project.requested_domains|join(', ') or '-' }}</div>
+            <div>status: <span class="badge text-bg-warning">{{ project.domain_status }}</span></div>
+            <div>dns action: {{ 'yes' if project.dns_action_required else 'no' }}</div>
+            {% if project.domain_notes %}<div class="text-muted">{{ project.domain_notes }}</div>{% endif %}
+          </td>
+          <td class="small">
+            <div>last seen: {{ project.last_seen_at or '-' }}</div>
+            <div>updated: {{ project.updated_at or '-' }}</div>
+            {% if project.notes %}<div class="text-muted text-break">{{ project.notes }}</div>{% endif %}
+          </td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin_external_project_detail_page', source_system=project.source_system, external_project_id=project.external_project_id) }}">Detail</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-4">No external projects registered yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="alert alert-warning mt-3 mb-0">
+  Domain fields are review-only. DevPilot records requests here, but this slice never performs DNS, Cloudflare, SSL, Nginx, redirect, Docker, deploy, or restart actions.
+</div>
+{% endblock %}

@@ -25,21 +25,29 @@ class AiManualHandoffTest(unittest.TestCase):
         self.key_store_path = Path(self.key_store_dir.name) / "external_api_keys.json"
         self.policy_store_path = Path(self.key_store_dir.name) / "external_ai_policies.json"
         self.profile_store_path = Path(self.key_store_dir.name) / "external_ai_permission_profiles.json"
+        self.external_project_registry_path = Path(self.key_store_dir.name) / "external_project_registry.json"
+        self.external_project_events_path = Path(self.key_store_dir.name) / "external_project_events.json"
         self.key_store_patch = patch.object(self.app_module, "EXTERNAL_API_KEY_STORE_PATH", self.key_store_path)
         self.policy_store_patch = patch.object(self.app_module, "EXTERNAL_AI_POLICY_STORE_PATH", self.policy_store_path)
         self.profile_store_patch = patch.object(self.app_module, "EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH", self.profile_store_path)
+        self.external_project_registry_patch = patch.object(self.app_module, "EXTERNAL_PROJECT_REGISTRY_STORE_PATH", self.external_project_registry_path)
+        self.external_project_events_patch = patch.object(self.app_module, "EXTERNAL_PROJECT_EVENTS_STORE_PATH", self.external_project_events_path)
         self.key_store_env_patch = patch.dict(
             self.app_module.os.environ,
             {
                 "DEVPILOT_EXTERNAL_API_KEY_STORE_PATH": str(self.key_store_path),
                 "DEVPILOT_EXTERNAL_AI_POLICY_STORE_PATH": str(self.policy_store_path),
                 "DEVPILOT_EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH": str(self.profile_store_path),
+                "DEVPILOT_EXTERNAL_PROJECT_REGISTRY_PATH": str(self.external_project_registry_path),
+                "DEVPILOT_EXTERNAL_PROJECT_EVENTS_PATH": str(self.external_project_events_path),
             },
             clear=False,
         )
         self.key_store_patch.start()
         self.policy_store_patch.start()
         self.profile_store_patch.start()
+        self.external_project_registry_patch.start()
+        self.external_project_events_patch.start()
         self.key_store_env_patch.start()
         with self.app.app_context():
             now = self.app_module.now_str()
@@ -82,6 +90,8 @@ class AiManualHandoffTest(unittest.TestCase):
             self.app_module.execute("DELETE FROM project_phases WHERE project_id=?", (self.project_id,))
             self.app_module.execute("DELETE FROM projects WHERE id=?", (self.project_id,))
         self.key_store_env_patch.stop()
+        self.external_project_events_patch.stop()
+        self.external_project_registry_patch.stop()
         self.profile_store_patch.stop()
         self.policy_store_patch.stop()
         self.key_store_patch.stop()
@@ -1661,6 +1671,302 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertFalse(payload["execution_allowed"])
         self.assertFalse(payload["side_effects"])
         self.assertFalse(payload["provider_calls_executed"])
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_project_registry_register_read_isolated_and_safe(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        body = {
+            "external_project_id": "ai-image-site-prod",
+            "name": "AI Image Site",
+            "description": "AI image generation website",
+            "project_type": "ai-saas",
+            "environment": "production",
+            "status": "active",
+            "repo_url": "https://github.com/example/ai-image-site",
+            "branch": "main",
+            "commit_sha": "abc123",
+            "local_path": r"E:\Ai-project\ai-image-site",
+            "nas_worktree_path": "/volume1/worktrees/ai-image-site",
+            "nas_compose_path": "/volume1/docker/ai-image-site/docker-compose.yml",
+            "nas_data_path": "/volume1/docker/ai-image-site/data",
+            "container_name": "ai-image-site",
+            "compose_project": "ai-image-site",
+            "service_name": "web",
+            "host_port": "5080",
+            "container_port": "3000",
+            "app_url": "https://image.example.com",
+            "requested_domains": ["image.example.com", "www.image.example.com"],
+            "deployment_target": "nas-docker",
+            "runtime": "node/python/docker",
+            "healthcheck_url": "https://image.example.com/health",
+            "owner": "client/team name",
+            "notes": "Needs domain pointing later",
+        }
+
+        missing = self.client().post("/api/external/projects/register", json=body)
+        self.assertEqual(missing.status_code, 403)
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            wrong = self.client().post(
+                "/api/external/projects/register",
+                json=body,
+                headers=self.external_headers(source="external-a", key="wrong-key"),
+            )
+        self.assertEqual(wrong.status_code, 403)
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            with patch.object(self.app_module, "call_task_provider") as provider_call:
+                with patch.object(self.app_module, "run_ai_task") as run_task:
+                    with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                            with patch.object(self.app_module, "save_handoff") as legacy_save:
+                                created = self.client().post(
+                                    "/api/external/projects/register",
+                                    json=body,
+                                    headers=self.external_headers(source="external-a", key="key-a", request_id="project-req-1", idempotency_key="project-idem-1"),
+                                )
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        project = created.get_json()["project"]
+        self.assertTrue(created.get_json()["created"])
+        self.assertEqual(project["source_system"], "external-a")
+        self.assertEqual(project["external_project_id"], "ai-image-site-prod")
+        self.assertEqual(project["requested_domains"], ["image.example.com", "www.image.example.com"])
+        self.assertEqual(project["primary_domain"], "image.example.com")
+        self.assertEqual(project["domain_status"], "review_needed")
+        self.assertTrue(project["dns_action_required"])
+        self.assertEqual(project["local_path"], r"E:\Ai-project\ai-image-site")
+        self.assertEqual(project["nas_worktree_path"], "/volume1/worktrees/ai-image-site")
+        self.assertFalse(created.get_json()["infra_actions_executed"])
+        self.assertFalse(created.get_json()["provider_calls_executed"])
+        self.assertFalse(created.get_json()["worker_execution"])
+        self.assertFalse(created.get_json()["approval_created"])
+
+        update_body = dict(body, name="AI Image Site Updated", status="paused", domain_status="requested", commit_sha="def456")
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            with patch.object(self.app_module, "now_str", return_value="2099-01-01 00:00:00"):
+                updated = self.client().post(
+                    "/api/external/projects/register",
+                    json=update_body,
+                    headers=self.external_headers(source="external-a", key="key-a", request_id="project-req-2", idempotency_key="project-idem-1"),
+                )
+        self.assertEqual(updated.status_code, 200, updated.get_data(as_text=True))
+        updated_project = updated.get_json()["project"]
+        self.assertFalse(updated.get_json()["created"])
+        self.assertEqual(updated_project["name"], "AI Image Site Updated")
+        self.assertEqual(updated_project["status"], "paused")
+        self.assertEqual(updated_project["last_seen_at"], "2099-01-01 00:00:00")
+        self.assertEqual(len(self.app_module.load_external_project_registry_records()), 1)
+
+        other_body = dict(body, external_project_id="other-project", name="Other Source Project", requested_domains=["other.example.com"])
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            other = self.client().post(
+                "/api/external/projects/register",
+                json=other_body,
+                headers=self.external_headers(source="external-b", key="key-b", request_id="project-req-b", idempotency_key="project-idem-b"),
+            )
+        self.assertEqual(other.status_code, 201, other.get_data(as_text=True))
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            own_list = self.client().get("/api/external/projects", headers=self.external_headers(source="external-a", key="key-a"))
+            own_detail = self.client().get("/api/external/projects/ai-image-site-prod", headers=self.external_headers(source="external-a", key="key-a"))
+            blocked_detail = self.client().get("/api/external/projects/other-project", headers=self.external_headers(source="external-a", key="key-a"))
+            forced_other = self.client().get("/api/external/projects?source_system=external-b", headers=self.external_headers(source="external-a", key="key-a"))
+        self.assertEqual(own_list.status_code, 200)
+        self.assertEqual({item["external_project_id"] for item in own_list.get_json()["projects"]}, {"ai-image-site-prod"})
+        self.assertEqual(own_detail.status_code, 200)
+        self.assertEqual(blocked_detail.status_code, 404)
+        self.assertEqual(forced_other.status_code, 200)
+        self.assertEqual({item["external_project_id"] for item in forced_other.get_json()["projects"]}, set())
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(allow_all_sources=True), clear=False):
+            allow_all = self.client().get(
+                "/api/external/projects?include_all_sources=true",
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+        self.assertEqual(allow_all.status_code, 200)
+        self.assertIn("other-project", {item["external_project_id"] for item in allow_all.get_json()["projects"]})
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            invalid_domain = self.client().post(
+                "/api/external/projects/register",
+                json=dict(body, external_project_id="bad-domain", name="Bad Domain", requested_domains=["bad.example.com;rm -rf /"]),
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+        self.assertEqual(invalid_domain.status_code, 400)
+        self.assertIn("requested_domains", invalid_domain.get_json()["error"])
+
+        admin_page = self.client().get("/admin/external-projects?q=Updated&environment=production&status=paused&domain_status=requested")
+        self.assertEqual(admin_page.status_code, 200)
+        page_body = admin_page.get_data(as_text=True)
+        self.assertIn("AI Image Site Updated", page_body)
+        self.assertIn("external-a / ai-image-site-prod", page_body)
+        self.assertIn("/volume1/worktrees/ai-image-site", page_body)
+        self.assertIn("image.example.com", page_body)
+        self.assertIn("Domain fields are review-only", page_body)
+        self.assertNotIn("key-a", page_body)
+        self.assertNotIn("key_hash", page_body)
+
+        detail_page = self.client().get("/admin/external-projects/external-a/ai-image-site-prod")
+        self.assertEqual(detail_page.status_code, 200)
+        self.assertIn("External Project Detail", detail_page.get_data(as_text=True))
+        self.assertIn("nas_compose_path", detail_page.get_data(as_text=True))
+
+        store = json.loads(self.external_project_registry_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(store["projects"]), 2)
+        self.assertNotIn("key-a", self.external_project_registry_path.read_text(encoding="utf-8"))
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_project_events_are_source_isolated_and_side_effect_free(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        project_body = {
+            "external_project_id": "event-project",
+            "name": "Event Project",
+            "project_type": "ai-saas",
+            "environment": "production",
+            "status": "active",
+            "requested_domains": ["event.example.com"],
+        }
+        other_project_body = {
+            "external_project_id": "other-event-project",
+            "name": "Other Event Project",
+            "project_type": "website",
+            "environment": "staging",
+            "status": "active",
+        }
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            register = self.client().post(
+                "/api/external/projects/register",
+                json=project_body,
+                headers=self.external_headers(source="external-a", key="key-a", idempotency_key="event-project-register"),
+            )
+            other_register = self.client().post(
+                "/api/external/projects/register",
+                json=other_project_body,
+                headers=self.external_headers(source="external-b", key="key-b", idempotency_key="other-event-project-register"),
+            )
+        self.assertEqual(register.status_code, 201, register.get_data(as_text=True))
+        self.assertEqual(other_register.status_code, 201, other_register.get_data(as_text=True))
+
+        event_body = {
+            "event_type": "deploy_success",
+            "status": "success",
+            "message": "Production deployment finished.",
+            "environment": "production",
+            "commit_sha": "abc123",
+            "app_url": "https://event.example.com",
+            "metadata": {"duration_seconds": 42, "deployment_id": "deploy-1"},
+        }
+        missing_key = self.client().post("/api/external/projects/event-project/events", json=event_body)
+        self.assertEqual(missing_key.status_code, 403)
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            wrong_key = self.client().post(
+                "/api/external/projects/event-project/events",
+                json=event_body,
+                headers=self.external_headers(source="external-a", key="wrong-key"),
+            )
+        self.assertEqual(wrong_key.status_code, 403)
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            with patch.object(self.app_module, "now_str", return_value="2099-02-03 04:05:06"):
+                with patch.object(self.app_module, "call_task_provider") as provider_call:
+                    with patch.object(self.app_module, "run_ai_task") as run_task:
+                        with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                            with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                with patch.object(self.app_module, "save_handoff") as legacy_save:
+                                    created = self.client().post(
+                                        "/api/external/projects/event-project/events",
+                                        json=event_body,
+                                        headers=self.external_headers(source="external-a", key="key-a", request_id="event-req-1", idempotency_key="event-idem-1"),
+                                    )
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        event = created.get_json()["event"]
+        self.assertEqual(event["source_system"], "external-a")
+        self.assertEqual(event["external_project_id"], "event-project")
+        self.assertEqual(event["event_type"], "deploy_success")
+        self.assertEqual(event["status"], "success")
+        self.assertEqual(event["metadata"]["deployment_id"], "deploy-1")
+        self.assertEqual(event["created_at"], "2099-02-03 04:05:06")
+        self.assertFalse(created.get_json()["infra_actions_executed"])
+        self.assertFalse(created.get_json()["provider_calls_executed"])
+        self.assertFalse(created.get_json()["worker_execution"])
+        self.assertFalse(created.get_json()["approval_created"])
+        self.assertFalse(created.get_json()["task_project_mutation"])
+
+        records = self.app_module.load_external_project_registry_records()
+        own_project = next(item for item in records if item["source_system"] == "external-a" and item["external_project_id"] == "event-project")
+        self.assertEqual(own_project["last_seen_at"], "2099-02-03 04:05:06")
+
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            own_events = self.client().get(
+                "/api/external/projects/event-project/events",
+                headers=self.external_headers(source="external-a", key="key-a"),
+            )
+            other_read_blocked = self.client().get(
+                "/api/external/projects/event-project/events",
+                headers=self.external_headers(source="external-b", key="key-b"),
+            )
+            other_write_blocked = self.client().post(
+                "/api/external/projects/event-project/events",
+                json=event_body,
+                headers=self.external_headers(source="external-b", key="key-b"),
+            )
+        self.assertEqual(own_events.status_code, 200)
+        self.assertEqual(own_events.get_json()["count"], 1)
+        self.assertEqual(own_events.get_json()["events"][0]["event_type"], "deploy_success")
+        self.assertEqual(other_read_blocked.status_code, 404)
+        self.assertEqual(other_write_blocked.status_code, 404)
+
+        invalid_cases = [
+            ({"event_type": "bad-event", "status": "info"}, "invalid event_type"),
+            ({"event_type": "custom", "status": "bad-status"}, "invalid status"),
+            ({"event_type": "custom", "metadata": ["not", "object"]}, "metadata must be an object"),
+            ({"event_type": "custom", "message": "hello; rm -rf /"}, "message contains unsafe characters"),
+        ]
+        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
+            for payload, expected_error in invalid_cases:
+                response = self.client().post(
+                    "/api/external/projects/event-project/events",
+                    json=payload,
+                    headers=self.external_headers(source="external-a", key="key-a"),
+                )
+                self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+                self.assertIn(expected_error, response.get_json()["error"])
+
+        detail_page = self.client().get("/admin/external-projects/external-a/event-project")
+        self.assertEqual(detail_page.status_code, 200)
+        page_body = detail_page.get_data(as_text=True)
+        self.assertIn("Recent Events", page_body)
+        self.assertIn("deploy_success", page_body)
+        self.assertIn("Production deployment finished.", page_body)
+        self.assertNotIn("key-a", page_body)
+        self.assertNotIn("key_hash", page_body)
+
+        store_text = self.external_project_events_path.read_text(encoding="utf-8")
+        store = json.loads(store_text)
+        self.assertEqual(len(store["events"]), 1)
+        self.assertNotIn("key-a", store_text)
         provider_call.assert_not_called()
         run_task.assert_not_called()
         console_dispatch.assert_not_called()
