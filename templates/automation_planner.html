@@ -79,6 +79,7 @@
               <th>Plan</th>
               <th>Scope</th>
               <th>Risk</th>
+              <th>Approval</th>
               <th>Status</th>
               <th>Commands</th>
             </tr>
@@ -96,6 +97,21 @@
                 <div><code>{{ plan.external_project_id or '-' }}</code></div>
               </td>
               <td><span class="badge text-bg-secondary">{{ plan.risk_level }}</span></td>
+              <td class="small">
+                <div>
+                  {% if plan.approval_required %}
+                    <span class="badge text-bg-warning">required</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">not required</span>
+                  {% endif %}
+                </div>
+                <div class="text-muted">status: {{ plan.approval_status or 'not_requested' }}</div>
+                <div class="text-muted">request: {{ plan.approval_request_id or 'not created' }}</div>
+                {% if plan.approval_types %}
+                  <div class="text-break">types: {{ plan.approval_types|join(', ') }}</div>
+                {% endif %}
+                <div class="text-muted">Approval integration is planned but disabled in this MVP.</div>
+              </td>
               <td>{{ plan.status }}</td>
               <td class="small">
                 {% for command in plan.suggested_commands %}
@@ -106,7 +122,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="6" class="text-muted text-center py-3">No draft automation plans found.</td></tr>
+            <tr><td colspan="7" class="text-muted text-center py-3">No draft automation plans found.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -123,6 +139,7 @@
           <li>Suggested commands are shown as display-only text and must keep <code>execution_allowed=false</code>.</li>
           <li>There is no execute control in AP-2.</li>
           <li>Plan generation, approval integration, and execution bridges belong to later gated phases.</li>
+          <li>Approval metadata is displayed as disabled: no approval request is created and no approve/request control is available.</li>
           <li>No provider call, live ping, worker execution, shell command, DNS, Cloudflare, R2, deploy, restart, or rebuild action is performed here.</li>
         </ul>
       </div>

@@ -2006,10 +2006,14 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("healthcheck_ok", page)
         self.assertIn("Existing Draft Plans", page)
         self.assertIn(created_plan["title"], page)
+        self.assertIn("Approval integration is planned but disabled in this MVP.", page)
+        self.assertIn("request: not created", page)
         self.assertIn("execution_allowed=false", page)
         self.assertIn("/admin/automation-planner", page)
         self.assertNotIn(">Execute<", page)
         self.assertNotIn("name=\"execute\"", page)
+        self.assertNotIn("Request Approval", page)
+        self.assertNotIn("name=\"approve\"", page)
         self.assertNotIn("Authorization:", page)
         self.assertNotIn("key_hash", page)
         gemini_call.assert_not_called()
@@ -2049,6 +2053,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertNotIn("POST", routes["/admin/automation-planner"])
         self.assertNotIn("/api/admin/automation-plans", routes)
         self.assertNotIn("/api/admin/automation-plans/draft", routes)
+        self.assertNotIn("/api/admin/automation-plans/approval", routes)
+        self.assertNotIn("/admin/automation-planner/approval", routes)
 
     def test_automation_planner_draft_generator_creates_low_risk_plan_from_context(self):
         from services import automation_plans

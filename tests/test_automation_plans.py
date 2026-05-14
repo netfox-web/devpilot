@@ -91,6 +91,8 @@ class AutomationPlanStoreTest(unittest.TestCase):
         self.assertEqual(len(payload["plans"]), 1)
         self.assertEqual(payload["plans"][0]["id"], created["id"])
         self.assertEqual(payload["plans"][0]["status"], "draft")
+        self.assertEqual(payload["plans"][0]["approval_status"], "not_requested")
+        self.assertIsNone(payload["plans"][0]["approval_request_id"])
 
     def test_list_automation_plans_returns_saved_plan(self):
         created = automation_plans.create_automation_plan(self.base_plan())
@@ -107,6 +109,8 @@ class AutomationPlanStoreTest(unittest.TestCase):
         self.assertTrue(created["id"].startswith("plan_"))
         self.assertTrue(created["created_at"].endswith("Z"))
         self.assertEqual(created["status"], "draft")
+        self.assertEqual(created["approval_status"], "not_requested")
+        self.assertIsNone(created["approval_request_id"])
 
     def test_allowed_risk_levels_are_accepted(self):
         for risk_level in ("low", "medium", "high", "blocked"):
@@ -160,6 +164,60 @@ class AutomationPlanStoreTest(unittest.TestCase):
                     automation_plans.create_automation_plan(self.base_plan(**override))
 
         self.assertFalse(self.store_path.exists())
+
+    def test_approval_metadata_defaults_for_low_risk_plan(self):
+        created = automation_plans.create_automation_plan(
+            self.base_plan(
+                suggested_commands=[
+                    {
+                        "label": "Open planner",
+                        "command": "Open DevPilot page /admin/automation-planner",
+                        "execution_allowed": False,
+                    }
+                ],
+            )
+        )
+
+        self.assertFalse(created["approval_required"])
+        self.assertEqual(created["approval_types"], [])
+        self.assertEqual(created["approval_status"], "not_requested")
+        self.assertIsNone(created["approval_request_id"])
+        self.assertIn("disabled", created["approval_disabled_reason"])
+
+    def test_high_risk_plan_persists_disabled_approval_metadata(self):
+        created = automation_plans.create_automation_plan(
+            self.base_plan(
+                risk_level="high",
+                required_approvals=["dns"],
+                recommended_actions=[
+                    {
+                        "label": "Review domain request",
+                        "description": "Change DNS after separate review.",
+                        "risk_level": "high",
+                        "requires_approval": False,
+                        "approval_type": "none",
+                    }
+                ],
+                suggested_commands=[
+                    {
+                        "label": "Open source detail",
+                        "command": "Open DevPilot page /admin/external-sources/gpcarai",
+                        "execution_allowed": False,
+                    }
+                ],
+                approval_status="approved",
+                approval_request_id=123,
+            )
+        )
+
+        saved = json.loads(self.store_path.read_text(encoding="utf-8"))["plans"][0]
+        self.assertTrue(created["approval_required"])
+        self.assertIn("dns", created["approval_types"])
+        self.assertEqual(created["approval_status"], "not_requested")
+        self.assertIsNone(created["approval_request_id"])
+        self.assertTrue(saved["approval_required"])
+        self.assertEqual(saved["approval_status"], "not_requested")
+        self.assertIsNone(saved["approval_request_id"])
 
     def test_store_layer_does_not_add_admin_api_or_draft_endpoint(self):
         import app as app_module
@@ -310,8 +368,42 @@ class AutomationPlanStoreTest(unittest.TestCase):
         self.assertEqual(result["overall_risk_level"], "low")
         self.assertEqual(result["required_approvals"], [])
         self.assertEqual(result["blocked_by"], [])
+        self.assertFalse(result["approval_required"])
+        self.assertEqual(result["approval_types"], [])
+        self.assertEqual(result["approval_status"], "not_requested")
+        self.assertIsNone(result["approval_request_id"])
         self.assertFalse(result["suggested_commands"][0]["execution_allowed"])
         self.assertTrue(any(item["name"] == "Display-only commands" and item["status"] == "pass" for item in result["safety_checks"]))
+
+    def test_safety_evaluator_sets_disabled_approval_metadata_for_high_risk_plan(self):
+        result = automation_plans.evaluate_automation_plan_safety(
+            self.base_plan(
+                recommended_actions=[
+                    {
+                        "label": "Review deployment",
+                        "description": "Deploy production release after approval.",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "approval_type": "none",
+                    }
+                ],
+                suggested_commands=[
+                    {
+                        "label": "Open source detail",
+                        "command": "Open DevPilot page /admin/external-sources/gpcarai",
+                        "execution_allowed": False,
+                    }
+                ],
+            )
+        )
+
+        self.assertEqual(result["overall_risk_level"], "high")
+        self.assertTrue(result["approval_required"])
+        self.assertEqual(result["approval_types"], result["required_approvals"])
+        self.assertIn("deploy", result["approval_types"])
+        self.assertEqual(result["approval_status"], "not_requested")
+        self.assertIsNone(result["approval_request_id"])
+        self.assertFalse(result["safe_to_execute"])
 
     def test_safety_evaluator_helpers_are_deterministic_and_side_effect_free(self):
         import app as app_module

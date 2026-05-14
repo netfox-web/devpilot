@@ -13,6 +13,7 @@ STORE_VERSION = 1
 ALLOWED_PLAN_STATUSES = {"draft", "reviewed", "approved", "rejected", "executed_later"}
 ALLOWED_RISK_LEVELS = {"low", "medium", "high", "blocked"}
 ALLOWED_SAFETY_STATUSES = {"pass", "warn", "fail", "not_available"}
+APPROVAL_DISABLED_REASON = "Approval integration is planned but disabled in this MVP."
 RISK_ORDER = {"low": 1, "medium": 2, "high": 3, "blocked": 4}
 APPROVAL_ORDER = [
     "deploy",
@@ -159,6 +160,22 @@ def _ordered_approvals(items) -> list[str]:
     return ordered
 
 
+def _approval_metadata(plan_input: dict) -> dict:
+    explicit_types = _string_list(plan_input.get("approval_types") or [], limit=80)
+    required_approvals = _string_list(plan_input.get("required_approvals") or [], limit=80)
+    classified = classify_required_approvals(plan_input)
+    approval_types = _ordered_approvals(explicit_types + required_approvals + classified)
+    risk_level = _normalize_choice(plan_input.get("risk_level"), ALLOWED_RISK_LEVELS, "low")
+    approval_required = bool(plan_input.get("approval_required")) or bool(approval_types) or risk_level == "high"
+    return {
+        "approval_required": approval_required,
+        "approval_types": approval_types,
+        "approval_status": "not_requested",
+        "approval_request_id": None,
+        "approval_disabled_reason": _text(plan_input.get("approval_disabled_reason"), 240) or APPROVAL_DISABLED_REASON,
+    }
+
+
 def _safety_text_from_value(value) -> str:
     if isinstance(value, dict):
         return " ".join(_safety_text_from_value(item) for item in value.values())
@@ -291,6 +308,11 @@ def evaluate_automation_plan_safety(plan: dict) -> dict:
             "warnings": [],
             "recommended_actions": [],
             "suggested_commands": [],
+            "approval_required": False,
+            "approval_types": [],
+            "approval_status": "not_requested",
+            "approval_request_id": None,
+            "approval_disabled_reason": APPROVAL_DISABLED_REASON,
         }
     if _has_sensitive_content(plan):
         return {
@@ -303,6 +325,11 @@ def evaluate_automation_plan_safety(plan: dict) -> dict:
             "warnings": ["blocked sensitive content detected"],
             "recommended_actions": [],
             "suggested_commands": [],
+            "approval_required": False,
+            "approval_types": [],
+            "approval_status": "not_requested",
+            "approval_request_id": None,
+            "approval_disabled_reason": APPROVAL_DISABLED_REASON,
         }
 
     actions, action_approvals, action_warnings, action_risk = _evaluate_recommended_actions(plan)
@@ -348,6 +375,8 @@ def evaluate_automation_plan_safety(plan: dict) -> dict:
         })
 
     warnings = action_warnings + command_result.get("warnings", [])
+    approval_required = bool(required_approvals) or overall_risk == "high" or bool(plan.get("approval_required"))
+    approval_types = _ordered_approvals((plan.get("approval_types") or []) + required_approvals)
     return {
         "overall_risk_level": overall_risk,
         "required_approvals": required_approvals,
@@ -358,6 +387,11 @@ def evaluate_automation_plan_safety(plan: dict) -> dict:
         "warnings": warnings,
         "recommended_actions": actions,
         "suggested_commands": command_result.get("commands", []),
+        "approval_required": approval_required,
+        "approval_types": approval_types,
+        "approval_status": "not_requested",
+        "approval_request_id": None,
+        "approval_disabled_reason": _text(plan.get("approval_disabled_reason"), 240) or APPROVAL_DISABLED_REASON,
     }
 
 
@@ -387,6 +421,7 @@ def normalize_automation_plan(plan_input: dict) -> dict:
         "created_at": _text(plan_input.get("created_at"), 80) or _now_iso(),
         "status": "draft",
     }
+    plan.update(_approval_metadata({**plan_input, **plan}))
     validate_automation_plan(plan)
     return plan
 
