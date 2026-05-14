@@ -168,6 +168,8 @@ class AutomationPlanStoreTest(unittest.TestCase):
 
         self.assertNotIn("/api/admin/automation-plans", routes)
         self.assertNotIn("/api/admin/automation-plans/draft", routes)
+        self.assertNotIn("/api/admin/automation-plans/safety", routes)
+        self.assertNotIn("/admin/automation-planner/safety", routes)
 
     def test_store_actions_do_not_call_providers_workers_or_mutate_core_tables(self):
         import app as app_module
@@ -190,6 +192,174 @@ class AutomationPlanStoreTest(unittest.TestCase):
             automation_plans.create_automation_plan(self.base_plan())
             automation_plans.list_automation_plans()
 
+        self.assertEqual(before, table_counts())
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        dispatch_task.assert_not_called()
+        cloudflare_call.assert_not_called()
+
+    def test_safety_evaluator_classifies_high_risk_actions(self):
+        cases = [
+            ("deploy", "Deploy production release", "deploy"),
+            ("restart", "Restart and rebuild service", "infra"),
+            ("migration", "Run migration alter table", "migration"),
+            ("dns", "Change DNS SSL Nginx reverse proxy", "dns"),
+            ("cloudflare", "Prepare Cloudflare R2 change", "infra"),
+            ("provider", "Run Gemini live ping provider call", "provider"),
+            ("worker", "Run worker task execution", "worker"),
+            ("mutation", "Update task status and project mutation", "mutation"),
+            ("approval", "Create approval request row", "approval"),
+        ]
+
+        for label, description, approval_type in cases:
+            with self.subTest(label=label):
+                result = automation_plans.evaluate_automation_plan_safety(
+                    self.base_plan(
+                        recommended_actions=[
+                            {
+                                "label": label,
+                                "description": description,
+                                "risk_level": "low",
+                                "requires_approval": False,
+                                "approval_type": "none",
+                            }
+                        ],
+                        suggested_commands=[
+                            {
+                                "label": "Open source detail",
+                                "command": "Open DevPilot page /admin/external-sources/gpcarai",
+                                "execution_allowed": False,
+                            }
+                        ],
+                    )
+                )
+
+                self.assertEqual(result["overall_risk_level"], "high")
+                self.assertIn(approval_type, result["required_approvals"])
+                self.assertTrue(result["recommended_actions"][0]["requires_approval"])
+                self.assertNotEqual(result["recommended_actions"][0]["approval_type"], "none")
+                self.assertFalse(result["execution_allowed"])
+                self.assertFalse(result["safe_to_execute"])
+
+    def test_safety_evaluator_blocks_sensitive_markers_without_echoing_values(self):
+        cases = [
+            self.base_plan(objective="Use Authorization: Bearer abcdefghijk"),
+            self.base_plan(recommended_actions=[{"label": "Provider", "description": "Read OPENAI_API_KEY from runtime."}]),
+            self.base_plan(api_key="dp_ext_example_value"),
+        ]
+
+        for plan in cases:
+            with self.subTest(plan=plan):
+                result = automation_plans.evaluate_automation_plan_safety(plan)
+                combined = json.dumps(result, ensure_ascii=False)
+
+                self.assertEqual(result["overall_risk_level"], "blocked")
+                self.assertIn("automation plan contains blocked sensitive content", result["blocked_by"])
+                self.assertFalse(result["execution_allowed"])
+                self.assertFalse(result["safe_to_execute"])
+                self.assertNotIn("Authorization:", combined)
+                self.assertNotIn("Bearer abcdefghijk", combined)
+                self.assertNotIn("OPENAI_API_KEY", combined)
+                self.assertNotIn("dp_ext_example_value", combined)
+                self.assertNotIn("api_key", combined)
+
+    def test_safety_evaluator_forces_commands_display_only(self):
+        result = automation_plans.evaluate_automation_plan_safety(
+            self.base_plan(
+                suggested_commands=[
+                    {
+                        "label": "Operational command",
+                        "command": "docker compose up -d devpilot",
+                        "execution_allowed": True,
+                    }
+                ]
+            )
+        )
+
+        self.assertEqual(result["overall_risk_level"], "blocked")
+        self.assertIn("infra", result["required_approvals"])
+        self.assertIn("execution", result["required_approvals"])
+        self.assertIn("suggested command execution is not allowed in the MVP", result["blocked_by"])
+        self.assertFalse(result["suggested_commands"][0]["execution_allowed"])
+        self.assertFalse(result["execution_allowed"])
+        self.assertFalse(result["safe_to_execute"])
+
+    def test_safety_evaluator_keeps_safe_diagnostics_low_risk(self):
+        result = automation_plans.evaluate_automation_plan_safety(
+            self.base_plan(
+                recommended_actions=[
+                    {
+                        "label": "Review diagnostics",
+                        "description": "Open status page and read diagnostic notes.",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "approval_type": "none",
+                    }
+                ],
+                suggested_commands=[
+                    {
+                        "label": "Open source detail",
+                        "command": "Open DevPilot page /admin/external-sources/gpcarai",
+                        "execution_allowed": False,
+                    }
+                ],
+            )
+        )
+
+        self.assertEqual(result["overall_risk_level"], "low")
+        self.assertEqual(result["required_approvals"], [])
+        self.assertEqual(result["blocked_by"], [])
+        self.assertFalse(result["suggested_commands"][0]["execution_allowed"])
+        self.assertTrue(any(item["name"] == "Display-only commands" and item["status"] == "pass" for item in result["safety_checks"]))
+
+    def test_safety_evaluator_helpers_are_deterministic_and_side_effect_free(self):
+        import app as app_module
+
+        def table_counts():
+            with app_module.app.app_context():
+                return {
+                    "projects": app_module.query_one("SELECT COUNT(*) AS count FROM projects")["count"],
+                    "tasks": app_module.query_one("SELECT COUNT(*) AS count FROM tasks")["count"],
+                    "project_phases": app_module.query_one("SELECT COUNT(*) AS count FROM project_phases")["count"],
+                    "approval_requests": app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"],
+                }
+
+        plan = self.base_plan(
+            recommended_actions=[
+                {
+                    "label": "Review status",
+                    "description": "Open status page and read diagnostic notes.",
+                    "risk_level": "low",
+                    "requires_approval": False,
+                    "approval_type": "none",
+                }
+            ],
+            suggested_commands=[
+                {
+                    "label": "Open planner",
+                    "command": "Open DevPilot page /admin/automation-planner",
+                    "execution_allowed": False,
+                }
+            ],
+        )
+
+        before = table_counts()
+        with patch.object(app_module, "call_gemini_generate") as gemini_call, \
+                patch.object(app_module, "call_task_provider") as provider_call, \
+                patch.object(app_module, "run_ai_task") as run_task, \
+                patch.object(app_module, "dispatch_ai_console_task") as dispatch_task, \
+                patch.object(app_module, "cloudflare_request") as cloudflare_call:
+            first = automation_plans.evaluate_automation_plan_safety(plan)
+            second = automation_plans.evaluate_automation_plan_safety(plan)
+            approvals = automation_plans.classify_required_approvals(plan)
+            blockers = automation_plans.detect_blockers(plan)
+            commands = automation_plans.validate_display_only_commands(plan)
+
+        self.assertEqual(first, second)
+        self.assertEqual(approvals, [])
+        self.assertEqual(blockers, [])
+        self.assertFalse(commands["commands"][0]["execution_allowed"])
         self.assertEqual(before, table_counts())
         gemini_call.assert_not_called()
         provider_call.assert_not_called()
