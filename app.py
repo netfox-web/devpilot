@@ -6487,6 +6487,7 @@ def api_key_environment_allowed(row, path, role=None):
 
 
 CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4"
+GITHUB_API_BASE = "https://api.github.com"
 CLOUDFLARE_DNS_TYPES = ["A", "AAAA", "CNAME", "TXT", "MX", "SRV", "CAA", "NS"]
 DOMAIN_CENTER_NAS_IP = NAS_SSH_HOST
 PREVIEW_DOMAIN_ENVIRONMENTS = ["preview", "staging"]
@@ -6562,7 +6563,7 @@ def get_active_cloudflare_api_key(api_key_id=None):
         return {"ok": False, "error": "cloudflare_token_decrypt_failed", "api_key": token_meta}
     if not str(token or "").strip():
         return {"ok": False, "error": "cloudflare_token_empty", "api_key": token_meta}
-    return {"ok": True, "token": str(token).strip(), "api_key": token_meta}
+    return {"ok": True, "token": str(token).strip(), "api_key_id": row.get("id"), "api_key": token_meta}
 
 
 def cloudflare_sanitized_error(error):
@@ -6599,6 +6600,109 @@ def cloudflare_request(method, path, token, payload=None, query=None, timeout=30
         return {"ok": False, "status_code": exc.code, "error": cloudflare_sanitized_error(message)}
     except Exception as exc:
         return {"ok": False, "status_code": None, "error": cloudflare_sanitized_error(type(exc).__name__)}
+
+
+def get_active_github_api_token():
+    row = row_to_dict(query_one(
+        """SELECT id, name, provider, category, environment, status, encrypted_value, masked_value, key_mask, updated_at, created_at
+           FROM api_keys
+           WHERE lower(COALESCE(provider, ''))='github'
+             AND lower(COALESCE(status, ''))='active'
+           ORDER BY CASE WHEN lower(COALESCE(environment, ''))='production' THEN 0 ELSE 1 END,
+                    datetime(COALESCE(updated_at, created_at)) DESC,
+                    id DESC
+           LIMIT 1"""
+    ))
+    if not row:
+        return {"ok": False, "error": "github_token_not_configured"}
+    masked = row.get("masked_value") or row.get("key_mask") or "************"
+    token_meta = {
+        "name": row.get("name"),
+        "environment": row.get("environment"),
+        "masked": masked,
+        "status": row.get("status"),
+    }
+    try:
+        token = decrypt_secret_value(row.get("encrypted_value"))
+    except Exception:
+        return {"ok": False, "error": "github_token_decrypt_failed", "api_key": token_meta}
+    if not str(token or "").strip():
+        return {"ok": False, "error": "github_token_empty", "api_key": token_meta}
+    return {
+        "ok": True,
+        "token": str(token).strip(),
+        "api_key": token_meta,
+        "api_key_id": row.get("id"),
+    }
+
+
+def redact_github_response_text(text):
+    redacted = str(text or "")
+    patterns = [
+        (r"(Authorization\s*[:=]\s*)(?:Bearer\s+)?[A-Za-z0-9._~+/=-]+", r"\1[redacted]"),
+        (r"\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]"),
+        (r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b", "[redacted-github-token]"),
+        (r"\bgithub_pat_[A-Za-z0-9_]{20,}\b", "[redacted-github-token]"),
+    ]
+    for pattern, replacement in patterns:
+        redacted = re.sub(pattern, replacement, redacted, flags=re.IGNORECASE)
+    return redacted[:800]
+
+
+def github_request(method, path, token, payload=None, query=None, timeout=20):
+    if not str(path or "").startswith("/"):
+        return {"ok": False, "status_code": 400, "json": None, "error": "github_path_must_start_with_slash"}
+    url = GITHUB_API_BASE + str(path)
+    if query:
+        safe_query = {key: value for key, value in query.items() if value not in (None, "")}
+        if safe_query:
+            url = f"{url}?{urllib.parse.urlencode(safe_query, doseq=True)}"
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        method=str(method or "GET").upper(),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            parsed = json.loads(body) if body else {}
+            return {"ok": 200 <= int(resp.status) < 300, "status_code": resp.status, "json": parsed, "error": None}
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        message = f"GitHub HTTP {exc.code}"
+        try:
+            parsed = json.loads(body) if body else {}
+            if parsed.get("message"):
+                message = f"{message}: {parsed.get('message')}"
+        except Exception:
+            if body:
+                message = f"{message}: {body[:300]}"
+        return {"ok": False, "status_code": exc.code, "json": None, "error": redact_github_response_text(message)}
+    except Exception as exc:
+        return {"ok": False, "status_code": None, "json": None, "error": redact_github_response_text(f"{type(exc).__name__}: {exc}")}
+
+
+def record_github_status_check_usage(api_key_id, status, status_code=None):
+    if not api_key_id:
+        return
+    try:
+        api_key_audit(api_key_id, "status_check", {
+            "provider": "github",
+            "action": "status_check",
+            "status": status,
+            "status_code": status_code,
+        })
+    except Exception:
+        return
 
 
 def cloudflare_zone_public(item):
@@ -17249,6 +17353,56 @@ def api_cloudflare_test_connection():
             "status": cf_result.get("status"),
         },
         "message": "Cloudflare credential verified",
+    })
+
+
+@app.route("/api/admin/github/status", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_github_status():
+    key_info = get_active_github_api_token()
+    if not key_info.get("ok"):
+        return jsonify({
+            "ok": False,
+            "error": key_info.get("error"),
+            "api_key": key_info.get("api_key"),
+        }), 400
+
+    user_result = github_request("GET", "/user", key_info["token"])
+    if not user_result.get("ok"):
+        record_github_status_check_usage(key_info.get("api_key_id"), "failed", user_result.get("status_code"))
+        return jsonify({
+            "ok": False,
+            "error": redact_github_response_text(user_result.get("error") or "github_user_request_failed"),
+            "status_code": user_result.get("status_code"),
+            "api_key": key_info["api_key"],
+        }), 502
+
+    rate_result = github_request("GET", "/rate_limit", key_info["token"])
+    if not rate_result.get("ok"):
+        record_github_status_check_usage(key_info.get("api_key_id"), "failed", rate_result.get("status_code"))
+        return jsonify({
+            "ok": False,
+            "error": redact_github_response_text(rate_result.get("error") or "github_rate_limit_request_failed"),
+            "status_code": rate_result.get("status_code"),
+            "api_key": key_info["api_key"],
+        }), 502
+
+    user_data = user_result.get("json") or {}
+    rate_data = rate_result.get("json") or {}
+    core_rate = ((rate_data.get("resources") or {}).get("core") or rate_data.get("rate") or {})
+    record_github_status_check_usage(key_info.get("api_key_id"), "success", rate_result.get("status_code"))
+    return jsonify({
+        "ok": True,
+        "api_key": key_info["api_key"],
+        "github": {
+            "login": user_data.get("login"),
+            "id": user_data.get("id"),
+        },
+        "rate_limit": {
+            "limit": core_rate.get("limit"),
+            "remaining": core_rate.get("remaining"),
+            "reset": core_rate.get("reset"),
+        },
     })
 
 
