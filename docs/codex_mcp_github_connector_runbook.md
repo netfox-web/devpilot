@@ -47,6 +47,40 @@ The clean synchronized state was confirmed as:
 ## main...origin/main
 ```
 
+## GitHub PR #1 Merge Confirmation
+
+PR #1 was verified through GitHub metadata as merged into `main`:
+
+```text
+number: 1
+title: docs: add Codex MCP GitHub connector runbook
+state: closed
+merged: true
+base: main
+merge_commit_sha: a1e08838452a208fef5f9794242cb406a73f8de4
+```
+
+Local repository synchronization was also verified:
+
+```text
+local HEAD:  a1e08838452a208fef5f9794242cb406a73f8de4
+origin/main: a1e08838452a208fef5f9794242cb406a73f8de4
+remote main: a1e08838452a208fef5f9794242cb406a73f8de4
+```
+
+Safe read-only commands for future checks:
+
+```powershell
+git status -sb
+git log --oneline -10
+git rev-parse HEAD
+git rev-parse origin/main
+git ls-remote origin refs/heads/main
+```
+
+If any of those refs differ, stop and report before pulling, rebasing, committing,
+or pushing.
+
 ## MCP Verification
 
 Codex MCP was verified inside the Codex TUI with:
