@@ -111,6 +111,20 @@ If `scripts/` or `logs/` do not exist locally, create them on the local machine.
 
 This template is intended for local use. Review and adapt before enabling it.
 
+Avoid piping native command output directly into `Add-Content`, such as:
+
+```powershell
+git status -sb 2>&1 | Add-Content $Log
+```
+
+On some Windows PowerShell stream combinations this can fail with:
+
+```text
+Add-Content : 資料流是不可讀取的。
+```
+
+Use explicit logging helper functions instead:
+
 ```powershell
 $Repo = "E:\Ai-project\devpilot_project_manager_v1\devpilot_project_manager"
 $Log = "$Repo\logs\codex_check_tasks.log"
@@ -118,14 +132,39 @@ $Log = "$Repo\logs\codex_check_tasks.log"
 New-Item -ItemType Directory -Force -Path "$Repo\logs" | Out-Null
 Set-Location $Repo
 
-Add-Content $Log "`n===== $(Get-Date -Format s) Codex task check start ====="
+function Write-Log {
+    param([string]$Message)
+    $Message | Out-File -FilePath $Log -Append -Encoding utf8
+}
+
+function Invoke-Logged {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Command,
+        [string]$Label = "command"
+    )
+
+    Write-Log "`n--- $Label ---"
+    try {
+        $output = & $Command 2>&1 | Out-String
+        if ([string]::IsNullOrWhiteSpace($output)) {
+            Write-Log "(no output)"
+        } else {
+            Write-Log $output.TrimEnd()
+        }
+    } catch {
+        Write-Log "ERROR: $($_.Exception.Message)"
+    }
+}
+
+Write-Log "`n===== $(Get-Date -Format s) Codex task check start ====="
 
 # Read-only baseline checks.
-git status -sb 2>&1 | Add-Content $Log
-git log --oneline -5 2>&1 | Add-Content $Log
-git rev-parse HEAD 2>&1 | Add-Content $Log
-git rev-parse origin/main 2>&1 | Add-Content $Log
-git ls-remote origin refs/heads/main 2>&1 | Add-Content $Log
+Invoke-Logged { git status -sb } "git status -sb"
+Invoke-Logged { git log --oneline -5 } "git log --oneline -5"
+Invoke-Logged { git rev-parse HEAD } "git rev-parse HEAD"
+Invoke-Logged { git rev-parse origin/main } "git rev-parse origin/main"
+Invoke-Logged { git ls-remote origin refs/heads/main } "git ls-remote origin refs/heads/main"
 
 $Prompt = @"
 You are the scheduled DevPilot Codex runner.
@@ -147,9 +186,9 @@ Rules:
 "@
 
 # Confirm your installed Codex CLI supports exec mode before using this line.
-$Prompt | codex exec --cd $Repo - 2>&1 | Add-Content $Log
+Invoke-Logged { $Prompt | codex exec --cd $Repo - } "codex exec scheduled task check"
 
-Add-Content $Log "===== $(Get-Date -Format s) Codex task check end ====="
+Write-Log "===== $(Get-Date -Format s) Codex task check end ====="
 ```
 
 ## Codex CLI Compatibility Check
@@ -263,6 +302,24 @@ ChatGPT should then:
 5. Avoid asking the user to paste Codex logs unless GitHub lacks required information.
 
 ## Failure Modes
+
+### `Add-Content` stream is not readable
+
+Symptom:
+
+```text
+Add-Content : 資料流是不可讀取的。
+```
+
+Cause:
+
+Native command output and redirected error streams can produce objects that do not pipe cleanly into `Add-Content` in Windows PowerShell.
+
+Action:
+
+```text
+Use Write-Log / Invoke-Logged helpers that convert output through Out-String before writing to the log file.
+```
 
 ### Worktree is dirty before scheduled run
 
