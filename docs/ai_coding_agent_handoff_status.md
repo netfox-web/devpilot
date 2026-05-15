@@ -40,7 +40,7 @@ The handoff status is ready and identifies no pending task. The local branch was
 
 No deploy was performed. No secrets were read, printed, copied, or changed. No runtime code, production setting, infrastructure, provider, worker, task, project, phase, or approval state was changed.
 
-The only file changed in this run is this handoff status file.
+The only file changed in this run is this handoff status file. The docs-only handoff maintenance update was committed and pushed to GitHub.
 
 ## Files Reviewed
 
@@ -82,7 +82,7 @@ The only file changed in this run is this handoff status file.
 
 No pending task is identified by the current handoff status.
 
-Push this docs-only handoff maintenance commit to GitHub so ChatGPT/GitHub readers can continue from the updated status file.
+ChatGPT/GitHub readers can continue from the latest `main` branch and this updated status file.
 
 ## Codex Update Template
 
