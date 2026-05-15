@@ -27,78 +27,27 @@ Codex completes local work
 - Agent: Codex
 - Status: completed
 - Branch: main
-- Commit: this docs-only handoff commit
-- Date: 2026-05-15 22:52:46 +08:00
+- Commit: this docs-only handoff maintenance commit
+- Date: 2026-05-15 22:59:42 +08:00
 - Related PR: none
 - Updated by: Codex
 
 ## Summary
 
-Codex completed a read-only provider implementation inventory based on `docs/gemini_claude_provider_readiness_check.md`.
+Codex completed a GitHub/repository handoff check using the fixed handoff status file, recent local Git history, and the Codex/GitHub connector runbook.
 
-No Gemini or Claude live call was made. No secrets were read, printed, copied, or changed. No deploy, runtime code change, production setting change, infrastructure mutation, or provider enablement was performed.
+The handoff status showed the previous provider inventory was completed and did not identify an immediate pending implementation task. The local branch was aligned with `origin/main` before this docs-only maintenance run, with latest commit `afae427 docs: add provider implementation inventory`.
+
+No deploy was performed. No secrets were read, printed, copied, or changed. No runtime code, production setting, infrastructure, provider, worker, task, project, phase, or approval state was changed.
 
 The only file changed in this run is this handoff status file.
-
-## Provider Implementation Inventory
-
-### Gemini
-
-Readiness state: `verified_with_mock` for the External AI Generate MVP; `configured_not_verified` or `not_configured` for any live runtime environment until a separately approved live check is run.
-
-Implementation surfaces found:
-
-- `app.py`: runtime/env inspection recognizes `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and for the provider secrets page also `GOOGLE_GENERATIVE_AI_API_KEY`.
-- `app.py`: `/admin/ai-providers` and `/api/admin/ai-providers` expose masked, read-only config status only.
-- `app.py`: `/admin/ai-provider-secrets` exposes masked, env-only provider secret status only.
-- `app.py`: External AI policy allowlists include provider `gemini` and models `gemini-1.5-flash`, `gemini-1.5-pro`.
-- `app.py`: `EXTERNAL_AI_GENERATE_MVP_PROVIDER` is `gemini`; `EXTERNAL_AI_GENERATE_MVP_MODEL` is `gemini-1.5-flash`.
-- `app.py`: `POST /api/external/ai/generate` is implemented as a narrow Gemini-only MVP behind external API authentication and enabled source policy checks.
-- `app.py`: `call_gemini_generate` contains the actual Gemini HTTP implementation, but this inventory did not call it.
-- `app.py`: usage/result logging exists through `data/external_ai_usage_log.json` and `data/external_ai_generation_results.json`; successful idempotent replay avoids a second provider call.
-- `tests/test_ai_manual_handoff.py`: mocked Gemini success, rejected policy paths, missing provider config, idempotent replay, usage logging, invalid store recovery, and retry-after-failure behavior are covered.
-- `docs/external_ai_generate_api.md` and `docs/external_ai_generate_api_release_note.md`: document the Gemini-only MVP and prior mocked verification.
-
-Inventory notes:
-
-- Gemini has the strongest readiness posture in the External AI Gateway path.
-- Live readiness is still not established by this inventory because no live provider call was approved or made.
-- The implementation intentionally reports `execution_allowed=false` and `side_effects=false` for the External AI Generate response.
-
-### Claude
-
-Readiness state: `policy_ready` for governance/model allowlists and admin visibility; `configured_not_verified` or `not_configured` for live execution until a separately approved live check is run.
-
-Implementation surfaces found:
-
-- `app.py`: runtime/env inspection recognizes `ANTHROPIC_API_KEY` and `CLAUDE_API_KEY`.
-- `app.py`: `/admin/ai-providers` and `/api/admin/ai-providers` expose masked, read-only config status only.
-- `app.py`: `/admin/ai-provider-secrets` exposes masked, env-only provider secret status only.
-- `app.py`: External AI policy allowlists include provider `claude` and models `claude-3-5-haiku`, `claude-3-5-sonnet`.
-- `app.py`: default permission profiles include Claude in multi-provider text governance profiles, but the External AI Generate MVP does not route to Claude.
-- `app.py`: AI Console Claude preview helpers exist, including `call_claude_console_with_key` and `run_ai_console_claude_preview`; these are separate from the External AI Gateway MVP and can perform live Anthropic calls when invoked with a configured key.
-- `app.py`: product content helpers `call_claude_generate_product_script` and `call_claude_generate_product_post` can call a configured Claude endpoint when both URL and key are present; otherwise they fall back to template output.
-- `tests/test_ai_manual_handoff.py`: provider config/secret pages verify Claude masked display, missing state, no raw secret output, and no provider call during admin inspection.
-
-Inventory notes:
-
-- Claude is present in governance, admin visibility, AI Console preview, and content-helper surfaces.
-- Claude is not implemented as a provider route for `POST /api/external/ai/generate`.
-- Any Claude live readiness check should be treated as a separate approval-gated phase because live-call helper paths exist outside the External AI Gateway MVP.
 
 ## Files Reviewed
 
 - docs/gemini_claude_provider_readiness_check.md
-- docs/external_ai_gateway_admin_guide.md
-- docs/external_ai_generate_api.md
-- docs/external_ai_generate_api_release_note.md
-- docs/ai_provider_secrets_admin_page_production_verification.md
-- app.py
-- tests/test_ai_manual_handoff.py
-- templates/ai_console.html
-- templates/external_ai_policies.html
-- templates/external_ai_permission_profiles.html
-- templates/external_ai_usage.html
+- docs/codex_mcp_github_connector_runbook.md
+- docs/generated_artifacts_policy.md
+- git log metadata
 
 ## Files Changed
 
@@ -106,18 +55,19 @@ Inventory notes:
 
 ## Diff Summary
 
-- Replaced the previous handoff run section with the Gemini/Claude provider implementation inventory.
-- Recorded readiness states for Gemini and Claude.
-- Documented live-call surfaces without invoking them.
-- Preserved the safety boundary from `docs/gemini_claude_provider_readiness_check.md`.
+- Replaced the previous provider inventory run section with the current GitHub/repository handoff check.
+- Recorded that no pending implementation task was identified in the handoff status.
+- Recorded that this run was documentation-only and stayed inside the requested safety boundary.
 
 ## Verification
 
-- `git status -sb`: checked before editing; branch was aligned with `origin/main` with only untracked local utility artifacts.
-- `rg` inventory searches: completed across `app.py`, `tests`, `docs`, `templates`, `services`, and `scripts`.
+- `git status -sb`: checked before editing; branch was aligned with `origin/main` with untracked local utility artifacts only.
+- `git log --oneline --decorate -n 12`: checked; latest commit was `afae427 docs: add provider implementation inventory`.
+- `git fetch --dry-run`: attempted; blocked by local network access to `github.com`.
+- `git diff --stat`: checked before editing; no tracked file diff was present.
 - `git diff --check`: passed; only LF-to-CRLF working-copy normalization warning was reported.
-- Tests: not run; user requested read-only/provider-inventory work and only allowed this handoff status file to be modified.
-- Provider live calls: not run.
+- Secret keyword scan of this file: only safety-boundary references to secrets/tokens were present.
+- Tests: not run; this was documentation-only handoff maintenance.
 
 ## Safety Confirmation
 
@@ -127,21 +77,14 @@ Inventory notes:
 - no deployment
 - no production setting changed
 - no infrastructure mutation
-- no Gemini live call
-- no Claude live call
-- no provider enablement
 - no worker/task/project/phase/approval mutation
 - only `docs/ai_coding_agent_handoff_status.md` changed for this run
 
 ## Recommended Next Step
 
-No immediate implementation change is recommended from this inventory alone.
+No pending implementation task is identified by the current handoff status.
 
-If the next phase is implementation, choose one explicit scope:
-
-- Add Claude to the External AI Gateway behind the same policy, idempotency, logging, and no-side-effect constraints as Gemini.
-- Add a read-only admin readiness dashboard that displays the states from `docs/gemini_claude_provider_readiness_check.md` without calling providers.
-- Run a separately approved live provider verification phase for Gemini or Claude.
+If GitHub network access is available, push this docs-only handoff maintenance commit so ChatGPT/GitHub readers can continue from the updated status file.
 
 ## Codex Update Template
 
