@@ -27,7 +27,7 @@ Codex completes local work
 - Agent: Codex
 - Status: completed
 - Branch: main
-- Commit: `5c89a22 docs: update AI coding agent handoff status`, followed by this final docs-only status correction commit
+- Commit: this docs-only handoff status maintenance commit; baseline before final correction was `386cc08 docs: finalize AI coding agent handoff status`
 - Date: 2026-05-16 08:30:32 +08:00
 - Related PR: none
 - Updated by: Codex
@@ -73,7 +73,6 @@ Repository handoff content is ready and identifies no pending implementation tas
 - `git status -sb`: checked before editing; branch was aligned with `origin/main` with untracked local artifacts only: `.local_backups/`, `logs/`, and `scripts/codex_check_tasks.ps1`; Git also reported a non-blocking `.pytest_cache/` permission warning.
 - `git log --oneline --decorate -n 20 -- docs/ai_coding_agent_handoff_status.md docs/codex_mcp_github_connector_runbook.md docs/codex_scheduled_task_runner.md docs/generated_artifacts_policy.md`: checked; latest commit was `3f31f81 docs: update AI coding agent handoff status`, with `HEAD`, `origin/main`, and `origin/HEAD` aligned.
 - `git remote -v`: checked; origin is `https://github.com/netfox-web/devpilot.git`.
-- `Get-Acl .git | Format-List`: checked; `.git` has an explicit deny entry that includes write/delete permissions for the current sandbox identity.
 - `Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz"`: checked for this run timestamp.
 - `Get-ChildItem -Path docs -Force`: checked to review available Codex, handoff, and runbook documentation.
 - `Get-ChildItem -Path docs -Recurse -File | Where-Object { $_.Name -match '(?i)(codex|handoff|runbook)' }`: checked to identify relevant Codex, handoff, and runbook documents because `rg` was unavailable in this environment.
