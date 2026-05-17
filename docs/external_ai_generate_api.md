@@ -6,12 +6,15 @@
 
 This MVP is intentionally small:
 
-- Provider: Gemini only.
-- Model: `gemini-1.5-flash` only.
+- Providers: Gemini by default, plus a Claude mocked/tested gateway path.
+- Gemini model: `gemini-1.5-flash`.
+- Claude model: `claude-3-5-haiku`.
 - Mode: non-streaming text only.
 - Capabilities: `generate`, `summary`, `rewrite`, `classification`, `extraction`, `planning`, `chat`.
 
 DevPilot keeps provider credentials internal. External systems receive only a DevPilot external API key.
+
+Claude support is not live-provider-enabled in this phase. The Claude gateway function is intentionally non-live unless patched in tests, so readiness can be verified without calling Anthropic.
 
 ## Endpoint
 
@@ -33,6 +36,7 @@ X-DevPilot-Idempotency-Key: {stable-idempotency-key}
 
 ```json
 {
+  "provider": "gemini",
   "capability": "generate",
   "model": "gemini-1.5-flash",
   "prompt": "Write a short product description...",
@@ -63,7 +67,8 @@ X-DevPilot-Idempotency-Key: {stable-idempotency-key}
   },
   "estimated_cost_usd": null,
   "execution_allowed": false,
-  "side_effects": false
+  "side_effects": false,
+  "provider_calls_executed": true
 }
 ```
 
@@ -71,8 +76,8 @@ X-DevPilot-Idempotency-Key: {stable-idempotency-key}
 
 The authenticated `source_system` must have an enabled External AI Policy allowing:
 
-- provider: `gemini`
-- model: `gemini-1.5-flash`
+- requested provider: `gemini` or `claude`
+- requested model: `gemini-1.5-flash` or `claude-3-5-haiku`
 - requested text capability
 - no streaming
 - no tool calling
@@ -89,12 +94,21 @@ If no policy is enabled, DevPilot returns:
 
 ## Provider Configuration
 
+If `provider` is omitted, DevPilot defaults to Gemini for compatibility with the original MVP.
+
 DevPilot reads the Gemini provider key from:
 
 - `GEMINI_API_KEY`
 - `GOOGLE_API_KEY`
 
-If neither is configured, DevPilot returns:
+DevPilot recognizes Claude provider keys from:
+
+- `ANTHROPIC_API_KEY`
+- `CLAUDE_API_KEY`
+
+Claude keys are only checked for configured/missing state in this phase. The External AI Generate Claude implementation does not call Claude live unless a later phase explicitly enables that behavior.
+
+If the requested provider key is not configured, DevPilot returns:
 
 ```json
 {
@@ -112,8 +126,8 @@ Use `X-DevPilot-Idempotency-Key` for retry safety.
 Behavior:
 
 - A completed result for the same `source_system + idempotency_key` is replayed with `idempotent_replay=true`.
-- Replayed responses do not call Gemini again.
-- Failed results are recorded, but are not replayed. Retrying the same idempotency key after fixing the failure can call Gemini again.
+- Replayed responses do not call the provider again.
+- Failed results are recorded, but are not replayed. Retrying the same idempotency key after fixing the failure can call the requested provider route again.
 
 Completed idempotency results are stored in:
 

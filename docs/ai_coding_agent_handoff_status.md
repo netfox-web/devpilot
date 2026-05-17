@@ -25,81 +25,81 @@ Codex completes local work
 ## Latest Run
 
 - Agent: Codex
-- Status: completed; no pending implementation task
-- Branch: main
-- Commit: this docs-only handoff completion commit; baseline before this refresh was `6c50374 docs: update AI coding agent handoff status`
-- Date: 2026-05-17 20:30:38 +08:00
-- Related PR: none
+- Status: completed; PR pending creation
+- Branch: issue-4-claude-external-ai-mock
+- Commit: pending commit for this Issue #4 implementation
+- Date: 2026-05-17 20:53:52 +08:00
+- Related PR: pending
+- Related Issue: #4
 - Updated by: Codex
 
 ## Summary
 
-Codex completed another GitHub/repository handoff readiness check using the fixed handoff status file, recent local Git commit metadata, available Codex/handoff/runbook documentation, AGENTS.md instructions supplied in the session, and the configured GitHub remote.
+Codex implemented GitHub Issue #4: `Add Claude mock path to External AI Generate gateway`.
 
-The handoff status identifies no pending implementation task. Local `main` and local `origin/main` pointed at `05a4f57 docs: update AI coding agent handoff status` during this docs-only completion refresh.
+The External AI Generate gateway now accepts an explicit `provider` field while preserving Gemini as the default provider when `provider` is omitted. Gemini remains available with `gemini-1.5-flash`. Claude is now supported as a mocked/tested gateway path with `claude-3-5-haiku`.
 
-No deploy was performed. No secrets were read, printed, copied, or changed. No runtime code, production setting, infrastructure, provider, worker, task, project, phase, or approval state was changed.
+Claude gateway support is intentionally non-live in this phase. The new `call_claude_external_ai_generate(...)` function returns `claude_external_ai_gateway_not_live_enabled` unless tests patch it. This keeps the route testable without adding a live Anthropic call.
 
-The only tracked file changed in this run is this handoff status file. This is a documentation-only maintenance update committed and pushed to GitHub.
-
-Repository handoff content identifies no pending implementation task and is current for GitHub handoff readers.
+No Gemini or Claude live call was made. No secrets were read, printed, copied, or changed. No deploy, runtime environment change, production setting change, infrastructure mutation, or worker/task/project/phase/approval mutation was performed.
 
 ## Files Reviewed
 
+- GitHub Issue #4
+- app.py
+- tests/test_ai_manual_handoff.py
+- docs/external_ai_generate_api.md
+- docs/gemini_claude_provider_readiness_check.md
 - docs/ai_coding_agent_handoff_status.md
-- docs/codex_mcp_github_connector_runbook.md
-- docs/codex_scheduled_task_runner.md
-- docs/managed_github_api_status_check_verification.md
-- GitHub/repository commit metadata and remote configuration
 
 ## Files Changed
 
+- app.py
+- tests/test_ai_manual_handoff.py
+- docs/external_ai_generate_api.md
+- docs/gemini_claude_provider_readiness_check.md
 - docs/ai_coding_agent_handoff_status.md
 
 ## Diff Summary
 
-- Re-ran the docs-only handoff completion refresh at `2026-05-17 20:30:38 +08:00`; the repository still identifies no pending implementation task.
-- Reconfirmed local `main` and local `origin/main` were aligned at `6c50374` before this final push-status refresh.
-- Reviewed the fixed handoff status file, session AGENTS.md instructions, recent commit history, available Codex/handoff/runbook docs, and GitHub remote configuration.
-- Recorded that this run stayed inside the requested safety boundary: no deploy, no secrets, and no runtime code changes.
-- Prepared this handoff status update as the only tracked file change for the requested docs-only commit/push.
-- Completed the requested docs-only commit and push path.
+- Added `EXTERNAL_AI_GENERATE_PROVIDER_MODELS` for Gemini and Claude gateway provider/model routing.
+- Preserved Gemini compatibility by defaulting missing `provider` to `gemini`.
+- Added Claude credential lookup for `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY` inside the gateway path.
+- Added a non-live Claude gateway function that is patchable in tests and does not call Anthropic.
+- Routed External AI Generate provider calls through a small provider dispatcher.
+- Made validation, error payloads, usage logs, generation result records, and successful responses preserve the requested provider/model.
+- Added Claude gateway tests for policy rejection, model rejection, missing credential, mocked success, idempotent replay, safe usage logging, and no side effects.
+- Updated External AI Generate docs from Gemini-only to Gemini-default plus Claude mocked/tested path.
+- Updated Gemini/Claude readiness docs to record the Claude mocked gateway path and live-call boundary.
 
 ## Verification
 
-- `git status -sb`: checked before finalizing this refresh; branch refs were aligned with local `origin/main`; the tracked working-tree change was this handoff status file; untracked local artifacts were `.local_backups/`, `logs/`, and `scripts/codex_check_tasks.ps1`; Git also reported a non-blocking `.pytest_cache/` permission warning.
-- `git log --oneline -12`: checked; latest local commits are docs-only handoff status updates, with `05a4f57 docs: update AI coding agent handoff status` at HEAD before this completion edit.
-- `git remote -v`: checked; origin is `https://github.com/netfox-web/devpilot.git`.
-- `git rev-parse --short HEAD`: checked before this final push-status refresh: `6c50374`.
-- `git rev-parse --short origin/main`: checked before this final push-status refresh: `6c50374`.
-- `git diff --stat -- docs/ai_coding_agent_handoff_status.md`: checked after editing; the only tracked diff was this handoff status file.
-- `Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz"`: checked for this run timestamp: `2026-05-17 20:30:38 +08:00`.
-- `Get-ChildItem docs`: checked to review available documentation.
-- `Select-String -Path docs\*.md -Pattern "pending|TODO|blocked|handoff|Codex|runbook|no pending|Next|Open|deploy|secret|runtime" -CaseSensitive:$false`: checked to scan available docs for handoff/runbook/task status context because `rg` was unavailable in this environment; the current fixed handoff flow identifies no explicit pending AI coding implementation task.
-- `git show --stat --oneline --name-only HEAD`: checked; latest commit before this final push-status refresh was `6c50374 docs: update AI coding agent handoff status` and changed only `docs/ai_coding_agent_handoff_status.md`.
-- `git diff --check -- docs/ai_coding_agent_handoff_status.md`: passed; Git reported only the expected LF-to-CRLF working-copy normalization warning.
-- Product-domain catalog checks were not run because this was not product-domain catalog work and no runtime code or catalog data was changed.
-- `git add -- docs/ai_coding_agent_handoff_status.md`: completed for this file only.
-- `git commit -m "docs: update AI coding agent handoff status"`: completed as docs-only handoff maintenance commit.
-- `git push origin main`: completed for this docs-only handoff commit.
-- Tests: not run; this run changed documentation only.
+- `git fetch origin main`: completed.
+- `Invoke-RestMethod https://api.github.com/repos/netfox-web/devpilot/issues/4`: completed to read Issue #4 because `gh` is not installed.
+- `.\.venv\Scripts\python.exe -m py_compile app.py`: passed.
+- `.\.venv\Scripts\python.exe -m pytest -q tests/test_ai_manual_handoff.py`: passed, `47 passed in 15.48s`.
+- `git diff --check`: passed; Git reported only LF-to-CRLF working-copy normalization warnings.
+- `git diff --stat`: checked.
+- Tests did not live call Gemini or Claude; provider functions were patched for mocked paths.
 
 ## Safety Confirmation
 
 - no secrets changed
 - no `.env` changed
-- no runtime code changed
+- no runtime code outside the requested gateway implementation changed
 - no deployment
 - no production setting changed
 - no infrastructure mutation
+- no Gemini live call
+- no Claude live call
+- no AI Console Claude preview helper was triggered
+- no product content Claude helper path was triggered
 - no worker/task/project/phase/approval mutation
-- only `docs/ai_coding_agent_handoff_status.md` changed in the tracked working tree for this run
+- untracked local utility artifacts were left uncommitted: `.local_backups/`, `logs/`, `scripts/codex_check_tasks.ps1`
 
 ## Recommended Next Step
 
-No pending implementation task is identified by the current handoff status.
-
-GitHub/ChatGPT readers can continue from the latest `main` branch and this updated status file.
+Open the PR for Issue #4 and review the mocked Claude gateway path before any future live-provider phase.
 
 ## Codex Update Template
 
@@ -159,4 +159,4 @@ It does not expose secrets, tokens, local shell access, deployment permissions, 
 
 ## Safety Confirmation for This File
 
-This file is documentation-only. It introduces a fixed handoff convention and does not introduce app behavior, deployment, restart, rebuild, migration, infrastructure change, DNS/SSL/Nginx/Cloudflare/R2 change, provider call, worker/task execution, project/task/phase/approval mutation, or secret output.
+This file is documentation-only. It introduces a fixed handoff convention and does not introduce deployment, restart, rebuild, migration, infrastructure change, DNS/SSL/Nginx/Cloudflare/R2 change, provider live call, worker/task execution, project/task/phase/approval mutation, or secret output.
