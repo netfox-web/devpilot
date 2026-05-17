@@ -2620,6 +2620,177 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(approval_count_after, approval_count_before)
         self.assertEqual(self.state_snapshot(), before)
 
+    def test_external_ai_generate_claude_rejects_policy_and_missing_config_without_live_call(self):
+        before = self.state_snapshot()
+        body = {
+            "provider": "claude",
+            "capability": "summary",
+            "model": "claude-3-5-haiku",
+            "prompt": "Summarize this safely.",
+            "external_ref": "claude-policy-ticket",
+        }
+        headers = self.external_headers(source="external-a", key="key-a", request_id="claude-policy", idempotency_key="claude-policy")
+
+        policy_cases = [
+            (
+                "provider_not_allowed",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["gemini"],
+                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_capabilities": ["summary"],
+                },
+                403,
+                "external_ai_provider_not_allowed",
+            ),
+            (
+                "model_not_allowed",
+                {
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": ["claude"],
+                    "allowed_models": ["claude-3-5-sonnet"],
+                    "allowed_capabilities": ["summary"],
+                },
+                403,
+                "external_ai_model_not_allowed",
+            ),
+        ]
+
+        with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                for name, policy_payload, expected_status, expected_error in policy_cases:
+                    self.policy_store_path.write_text('{"policies": []}', encoding="utf-8")
+                    self.app_module.create_external_ai_policy(policy_payload)
+                    with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "ANTHROPIC_API_KEY": "test-claude-key", "CLAUDE_API_KEY": ""}, clear=False):
+                        response = self.client().post(
+                            "/api/external/ai/generate",
+                            json=body,
+                            headers=self.external_headers(request_id=f"claude-{name}", idempotency_key=f"claude-{name}"),
+                        )
+                    self.assertEqual(response.status_code, expected_status, response.get_data(as_text=True))
+                    payload = response.get_json()
+                    self.assertEqual(payload["provider"], "claude")
+                    self.assertEqual(payload["model"], "claude-3-5-haiku")
+                    self.assertEqual(payload["error"], expected_error)
+                    self.assertFalse(payload["provider_calls_executed"])
+                    self.assertNotIn("test-claude-key", response.get_data(as_text=True))
+        claude_call.assert_not_called()
+        gemini_call.assert_not_called()
+
+        self.policy_store_path.write_text('{"policies": []}', encoding="utf-8")
+        self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["claude"],
+            "allowed_models": ["claude-3-5-haiku"],
+            "allowed_capabilities": ["summary"],
+        })
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "ANTHROPIC_API_KEY": "", "CLAUDE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+        self.assertEqual(response.status_code, 503, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["error"], "provider_not_configured")
+        self.assertEqual(response.get_json()["provider"], "claude")
+        self.assertNotIn("ANTHROPIC_API_KEY", response.get_data(as_text=True))
+        self.assertNotIn("CLAUDE_API_KEY", response.get_data(as_text=True))
+        claude_call.assert_not_called()
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_generate_calls_mocked_claude_logs_usage_and_replays_idempotency(self):
+        before = self.state_snapshot()
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        long_prompt = "Summarize this external Claude gateway update. " * 12
+        long_response = "This is a concise mocked Claude summary. " * 8
+        body = {
+            "provider": "claude",
+            "capability": "generate",
+            "model": "claude-3-5-haiku",
+            "prompt": long_prompt,
+            "external_ref": "claude-gateway-ticket",
+            "metadata": {"project": "AD-Studio_AI"},
+        }
+        headers = self.external_headers(source="external-a", key="key-a", request_id="claude-req-ok", idempotency_key="claude-idem-ok")
+        self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["claude"],
+            "allowed_models": ["claude-3-5-haiku"],
+            "allowed_capabilities": ["generate", "summary", "rewrite", "classification", "extraction", "planning", "chat"],
+            "max_tokens_per_request": 1000,
+        })
+        provider_result = {
+            "ok": True,
+            "text": long_response,
+            "usage": {"input_tokens": 14, "output_tokens": 11, "total_tokens": 25},
+        }
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "ANTHROPIC_API_KEY": "test-claude-provider-key", "CLAUDE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_claude_external_ai_generate", return_value=provider_result) as claude_call:
+                with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                    with patch.object(self.app_module, "call_task_provider") as provider_call:
+                        with patch.object(self.app_module, "run_ai_task") as run_task:
+                            with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                                with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                    with patch.object(self.app_module, "save_handoff") as legacy_save:
+                                        response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+                                        replay = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["idempotent_replay"])
+        self.assertEqual(payload["provider"], "claude")
+        self.assertEqual(payload["model"], "claude-3-5-haiku")
+        self.assertEqual(payload["capability"], "generate")
+        self.assertEqual(payload["text"], long_response)
+        self.assertEqual(payload["usage"]["total_tokens"], 25)
+        self.assertTrue(payload["provider_calls_executed"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(payload["side_effects"])
+        self.assertNotIn("test-claude-provider-key", response.get_data(as_text=True))
+
+        self.assertEqual(replay.status_code, 200, replay.get_data(as_text=True))
+        replay_payload = replay.get_json()
+        self.assertTrue(replay_payload["idempotent_replay"])
+        self.assertFalse(replay_payload["provider_calls_executed"])
+        self.assertEqual(replay_payload["provider"], "claude")
+        self.assertEqual(replay_payload["model"], "claude-3-5-haiku")
+        self.assertEqual(replay_payload["text"], long_response)
+        claude_call.assert_called_once_with(long_prompt, "claude-3-5-haiku", "test-claude-provider-key")
+        gemini_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        console_dispatch.assert_not_called()
+        cloudflare_request.assert_not_called()
+        legacy_save.assert_not_called()
+
+        usage_records = self.app_module.load_external_ai_usage_log_records()
+        result_records = self.app_module.load_external_ai_generation_results()
+        self.assertEqual(len(usage_records), 1)
+        self.assertEqual(len(result_records), 1)
+        usage = usage_records[0]
+        self.assertEqual(usage["status"], "completed")
+        self.assertEqual(usage["source_system"], "external-a")
+        self.assertEqual(usage["provider"], "claude")
+        self.assertEqual(usage["model"], "claude-3-5-haiku")
+        self.assertEqual(usage["capability"], "generate")
+        self.assertTrue(usage["prompt_hash"])
+        self.assertTrue(usage["response_hash"])
+        self.assertNotIn(long_prompt, self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn(long_response, self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn("test-claude-provider-key", self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn(long_prompt, self.generation_results_path.read_text(encoding="utf-8"))
+        self.assertNotIn("test-claude-provider-key", self.generation_results_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_records[0]["status"], "completed")
+        self.assertEqual(result_records[0]["provider"], "claude")
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
     def test_external_ai_generate_invalid_stores_do_not_crash(self):
         self.generation_results_path.write_text("{not json", encoding="utf-8")
         self.usage_log_path.write_text("{not json", encoding="utf-8")

@@ -1,7 +1,7 @@
 # Gemini and Claude Provider Readiness Check
 
 Date: 2026-05-15
-Status: documentation-only readiness check
+Status: implementation readiness check
 
 ## Purpose
 
@@ -90,6 +90,8 @@ Provider behavior:
 - Mocked Claude failure path records a safe structured error.
 - Idempotent replay does not duplicate a completed provider call.
 - Usage logging records provider, model, status, source system, and request metadata without secrets.
+- External AI Generate supports `provider: "claude"` with `model: "claude-3-5-haiku"` as a mocked/tested gateway path only.
+- The Claude External AI Generate function must remain non-live until a later explicit live-provider phase.
 
 Enablement gate:
 

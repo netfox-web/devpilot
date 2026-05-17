@@ -2611,6 +2611,10 @@ EXTERNAL_AI_CAPABILITY_GROUPS = {
 EXTERNAL_AI_CAPABILITY_OPTIONS = [capability for capabilities in EXTERNAL_AI_CAPABILITY_GROUPS.values() for capability in capabilities]
 EXTERNAL_AI_GENERATE_MVP_PROVIDER = "gemini"
 EXTERNAL_AI_GENERATE_MVP_MODEL = "gemini-1.5-flash"
+EXTERNAL_AI_GENERATE_PROVIDER_MODELS = {
+    "gemini": ["gemini-1.5-flash"],
+    "claude": ["claude-3-5-haiku"],
+}
 EXTERNAL_AI_GENERATE_MVP_CAPABILITIES = set(EXTERNAL_AI_CAPABILITY_GROUPS["Text"])
 EXTERNAL_AI_GENERATE_PROMPT_SUMMARY_LIMIT = 120
 EXTERNAL_AI_GENERATE_RESPONSE_SUMMARY_LIMIT = 120
@@ -3545,6 +3549,15 @@ def external_ai_gemini_api_key():
     return os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
 
 
+def external_ai_claude_api_key():
+    return os.getenv("ANTHROPIC_API_KEY", "").strip() or os.getenv("CLAUDE_API_KEY", "").strip()
+
+
+def external_ai_generate_default_model(provider):
+    models = EXTERNAL_AI_GENERATE_PROVIDER_MODELS.get(str(provider or "").strip().lower()) or []
+    return models[0] if models else EXTERNAL_AI_GENERATE_MVP_MODEL
+
+
 def call_gemini_generate(prompt, model, api_key, timeout=60):
     model_name = str(model or EXTERNAL_AI_GENERATE_MVP_MODEL).strip()
     if model_name.startswith("models/"):
@@ -3585,7 +3598,27 @@ def call_gemini_generate(prompt, model, api_key, timeout=60):
     }
 
 
+def call_claude_external_ai_generate(prompt, model, api_key, timeout=60):
+    return {"ok": False, "error": "claude_external_ai_gateway_not_live_enabled"}
+
+
+def external_ai_generate_provider_api_key(provider):
+    provider = str(provider or "").strip().lower()
+    if provider == "claude":
+        return external_ai_claude_api_key()
+    return external_ai_gemini_api_key()
+
+
+def call_external_ai_generate_provider(provider, prompt, model, api_key):
+    provider = str(provider or "").strip().lower()
+    if provider == "claude":
+        return call_claude_external_ai_generate(prompt, model, api_key)
+    return call_gemini_generate(prompt, model, api_key)
+
+
 def external_ai_generate_error_payload(identity, error, message, status_code=400, **extra):
+    provider = extra.pop("provider", EXTERNAL_AI_GENERATE_MVP_PROVIDER)
+    model = extra.pop("model", external_ai_generate_default_model(provider))
     payload = {
         "ok": False,
         "error": error,
@@ -3593,8 +3626,8 @@ def external_ai_generate_error_payload(identity, error, message, status_code=400
         "source_system": (identity or {}).get("source_system", ""),
         "request_id": (identity or {}).get("request_id", ""),
         "idempotency_key": (identity or {}).get("idempotency_key", ""),
-        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
-        "model": EXTERNAL_AI_GENERATE_MVP_MODEL,
+        "provider": provider,
+        "model": model,
         "execution_allowed": False,
         "side_effects": False,
         "provider_calls_executed": False,
@@ -3606,12 +3639,13 @@ def external_ai_generate_error_payload(identity, error, message, status_code=400
 def external_ai_generate_validate_request(identity, payload):
     if not isinstance(payload, dict):
         return None, None, external_ai_generate_error_payload(identity, "invalid_request", "JSON object body is required.", 400)
+    provider = external_ai_policy_preview(payload.get("provider") or EXTERNAL_AI_GENERATE_MVP_PROVIDER, 80).lower()
     capability = external_ai_policy_preview(payload.get("capability") or "generate", 80).lower()
-    model = external_ai_policy_preview(payload.get("model") or EXTERNAL_AI_GENERATE_MVP_MODEL, 120).lower()
+    model = external_ai_policy_preview(payload.get("model") or external_ai_generate_default_model(provider), 120).lower()
     prompt = str(payload.get("prompt") or "")
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     normalized = {
-        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
+        "provider": provider,
         "model": model,
         "capability": capability,
         "prompt": prompt,
@@ -3625,6 +3659,8 @@ def external_ai_generate_validate_request(identity, payload):
             "external_ai_policy_not_enabled",
             "External AI Gateway policy is not enabled for this source system.",
             403,
+            provider=provider,
+            model=model,
         )
     if bool(policy.get("allow_tool_calling")) or bool(policy.get("allow_streaming")):
         return policy, normalized, external_ai_generate_error_payload(
@@ -3632,16 +3668,32 @@ def external_ai_generate_validate_request(identity, payload):
             "external_ai_policy_not_supported_for_mvp",
             "This MVP does not support tool calling or streaming policies.",
             403,
+            provider=provider,
+            model=model,
             policy_id=policy.get("id") or "",
         )
     if not prompt.strip():
-        return policy, normalized, external_ai_generate_error_payload(identity, "prompt_required", "prompt is required.", 400, policy_id=policy.get("id") or "")
-    if model != EXTERNAL_AI_GENERATE_MVP_MODEL:
+        return policy, normalized, external_ai_generate_error_payload(identity, "prompt_required", "prompt is required.", 400, provider=provider, model=model, policy_id=policy.get("id") or "")
+    supported_models = EXTERNAL_AI_GENERATE_PROVIDER_MODELS.get(provider)
+    if not supported_models:
+        return policy, normalized, external_ai_generate_error_payload(
+            identity,
+            "external_ai_provider_not_supported_for_mvp",
+            "External AI Generate MVP supports gemini and claude only.",
+            403,
+            provider=provider,
+            model=model,
+            requested_provider=provider,
+            policy_id=policy.get("id") or "",
+        )
+    if model not in supported_models:
         return policy, normalized, external_ai_generate_error_payload(
             identity,
             "external_ai_model_not_supported_for_mvp",
-            "External AI Generate MVP supports gemini-1.5-flash only.",
+            f"External AI Generate MVP supports {', '.join(supported_models)} for {provider} only.",
             403,
+            provider=provider,
+            model=model,
             requested_model=model,
             policy_id=policy.get("id") or "",
         )
@@ -3651,23 +3703,29 @@ def external_ai_generate_validate_request(identity, payload):
             "external_ai_capability_not_supported_for_mvp",
             "External AI Generate MVP supports text capabilities only.",
             403,
+            provider=provider,
+            model=model,
             capability=capability,
             policy_id=policy.get("id") or "",
         )
-    if EXTERNAL_AI_GENERATE_MVP_PROVIDER not in set(policy.get("allowed_providers") or []):
+    if provider not in set(policy.get("allowed_providers") or []):
         return policy, normalized, external_ai_generate_error_payload(
             identity,
             "external_ai_provider_not_allowed",
-            "Gemini is not allowed by this source policy.",
+            f"{provider} is not allowed by this source policy.",
             403,
+            provider=provider,
+            model=model,
             policy_id=policy.get("id") or "",
         )
-    if EXTERNAL_AI_GENERATE_MVP_MODEL not in set(policy.get("allowed_models") or []):
+    if model not in set(policy.get("allowed_models") or []):
         return policy, normalized, external_ai_generate_error_payload(
             identity,
             "external_ai_model_not_allowed",
-            "gemini-1.5-flash is not allowed by this source policy.",
+            f"{model} is not allowed by this source policy.",
             403,
+            provider=provider,
+            model=model,
             policy_id=policy.get("id") or "",
         )
     if capability not in set(policy.get("allowed_capabilities") or []):
@@ -3676,6 +3734,8 @@ def external_ai_generate_validate_request(identity, payload):
             "external_ai_capability_not_allowed",
             "The requested capability is not allowed by this source policy.",
             403,
+            provider=provider,
+            model=model,
             capability=capability,
             policy_id=policy.get("id") or "",
         )
@@ -3687,6 +3747,8 @@ def external_ai_generate_validate_request(identity, payload):
             "external_ai_prompt_too_large",
             "Prompt exceeds this source policy max_tokens_per_request.",
             413,
+            provider=provider,
+            model=model,
             input_token_estimate=input_tokens,
             max_tokens_per_request=max_tokens,
             policy_id=policy.get("id") or "",
@@ -3705,8 +3767,8 @@ def external_ai_generate_usage_record(identity, normalized, response_payload, st
         "request_id": identity.get("request_id") or "",
         "idempotency_key": identity.get("idempotency_key") or "",
         "external_ref": (normalized or {}).get("external_ref") or "",
-        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
-        "model": (normalized or {}).get("model") or EXTERNAL_AI_GENERATE_MVP_MODEL,
+        "provider": (normalized or {}).get("provider") or EXTERNAL_AI_GENERATE_MVP_PROVIDER,
+        "model": (normalized or {}).get("model") or external_ai_generate_default_model((normalized or {}).get("provider")),
         "capability": (normalized or {}).get("capability") or "",
         "status": status,
         "error_code": error_code or "",
@@ -3733,8 +3795,8 @@ def external_ai_generation_result_record(identity, normalized, response_payload,
         "request_id": identity.get("request_id") or "",
         "idempotency_key": identity.get("idempotency_key") or "",
         "external_ref": (normalized or {}).get("external_ref") or "",
-        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
-        "model": (normalized or {}).get("model") or EXTERNAL_AI_GENERATE_MVP_MODEL,
+        "provider": (normalized or {}).get("provider") or EXTERNAL_AI_GENERATE_MVP_PROVIDER,
+        "model": (normalized or {}).get("model") or external_ai_generate_default_model((normalized or {}).get("provider")),
         "capability": (normalized or {}).get("capability") or "",
         "status": status,
         "http_status": http_status,
@@ -22161,13 +22223,17 @@ def api_external_ai_generate():
         ))
         return jsonify(error_payload), status_code
 
-    api_key = external_ai_gemini_api_key()
+    provider = normalized.get("provider") or EXTERNAL_AI_GENERATE_MVP_PROVIDER
+    model = normalized.get("model") or external_ai_generate_default_model(provider)
+    api_key = external_ai_generate_provider_api_key(provider)
     if not api_key:
         error_payload, status_code = external_ai_generate_error_payload(
             identity,
             "provider_not_configured",
-            "Gemini provider key is not configured.",
+            f"{provider} provider key is not configured.",
             503,
+            provider=provider,
+            model=model,
             policy_id=policy.get("id") if policy else "",
         )
         latency_ms = int((time.time() - started_at) * 1000)
@@ -22183,15 +22249,17 @@ def api_external_ai_generate():
             save_external_ai_generation_result(external_ai_generation_result_record(identity, normalized, error_payload, "failed", status_code))
         return jsonify(error_payload), status_code
 
-    provider_result = call_gemini_generate(normalized["prompt"], normalized["model"], api_key)
+    provider_result = call_external_ai_generate_provider(provider, normalized["prompt"], model, api_key)
     latency_ms = int((time.time() - started_at) * 1000)
     if not provider_result.get("ok"):
         error_code = provider_result.get("error") or "external_ai_provider_call_failed"
         error_payload, status_code = external_ai_generate_error_payload(
             identity,
             "external_ai_provider_call_failed",
-            "Gemini provider call failed.",
+            f"{provider} provider call failed.",
             502,
+            provider=provider,
+            model=model,
             provider_error=error_code,
             policy_id=policy.get("id") if policy else "",
         )
@@ -22214,8 +22282,8 @@ def api_external_ai_generate():
         "request_id": identity.get("request_id") or "",
         "idempotency_key": idempotency_key,
         "idempotent_replay": False,
-        "provider": EXTERNAL_AI_GENERATE_MVP_PROVIDER,
-        "model": EXTERNAL_AI_GENERATE_MVP_MODEL,
+        "provider": provider,
+        "model": model,
         "capability": normalized["capability"],
         "text": str(provider_result.get("text") or ""),
         "usage": {
