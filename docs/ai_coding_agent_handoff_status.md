@@ -25,11 +25,11 @@ Codex completes local work
 ## Latest Run
 
 - Agent: Codex
-- Status: completed; PR pending creation
+- Status: completed; PR opened
 - Branch: issue-4-claude-external-ai-mock
-- Commit: pending commit for this Issue #4 implementation
+- Commit: 9e0c153 feat: add Claude mock external AI generate path
 - Date: 2026-05-17 20:53:52 +08:00
-- Related PR: pending
+- Related PR: #5
 - Related Issue: #4
 - Updated by: Codex
 
@@ -99,7 +99,7 @@ No Gemini or Claude live call was made. No secrets were read, printed, copied, o
 
 ## Recommended Next Step
 
-Open the PR for Issue #4 and review the mocked Claude gateway path before any future live-provider phase.
+Review PR #5 for Issue #4 before any future live-provider phase.
 
 ## Codex Update Template
 
