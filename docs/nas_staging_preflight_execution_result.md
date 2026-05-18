@@ -1,17 +1,17 @@
 # NAS Staging Preflight Execution Result
 
 Date: 2026-05-18
-Status: preflight result, no deployment
+Status: preflight result, staging flow superseded / closed, no production deployment
 
 ## Current Gate Status
 
 ```text
-NAS-side read-only preflight passed for corrected target
+blocked for deployment until explicit production approval is given
 ```
 
 Human initially confirmed `/volume1/docker-staging/devpilot` and port `5012` as the corrected DevPilot staging target. Corrected NAS-side read-only preflight passed for that target, but this result is now superseded.
 
-Human decision A now states that `5010` is production only and staging requires a separate correct target. Deployment remains blocked.
+Final clarification states that `5010` is the active production site. This flow should no longer be treated as staging deployment readiness. Any future action against `5010` is production deployment and requires separate explicit production approval.
 
 ## Summary
 
@@ -24,11 +24,11 @@ Human decision A now states that `5010` is production only and staging requires 
 - Docker / Compose inspection: completed, read-only.
 - Staging-like runtime indicated by Docker labels: `/volume1/docker-staging/devpilot`.
 - Staging-like port indicated by Docker: `5012->5000`, now superseded / old target.
-- Corrected staging target: unresolved after human decision A.
+- Corrected staging target: no longer required for this flow.
 - Corrected NAS-side read-only preflight: superseded.
 - Human-confirmed production URL: `https://devpilot.aicenter.com.tw/`.
-- Human decision A: `5010` is production only; staging requires a separate correct target.
-- Staging public URL / domain: unconfirmed.
+- Final clarification: `5010` is the active production site.
+- Staging public URL / domain: not required for this superseded flow.
 - `.env` content: not printed.
 - Compose config result summary: OK for `/volume1/docker/devpilot`, `/volume1/docker/devpilot_project_manager`, and `/volume1/docker-staging/devpilot`; failed for `/volume1/worktrees/devpilot-build-321df5d`.
 - `py_compile` result: pass. `app.py` compiled successfully from the local repo.
@@ -50,7 +50,8 @@ Human decision A now states that `5010` is production only and staging requires 
 - Human confirmed `https://devpilot.aicenter.com.tw/` is production, not staging.
 - Human initially confirmed `/volume1/docker-staging/devpilot` and port `5012` as the corrected staging target.
 - Corrected NAS-side read-only preflight passed, but this result is now superseded.
-- Human decision A confirmed `5010` is production only and staging requires a separate correct target.
+- Human decision A confirmed `5010` is production only.
+- Final clarification closed the staging target search for this flow; any future action against `5010` is production deployment, not staging deployment.
 
 ## Not Completed
 
@@ -66,7 +67,7 @@ Human decision A now states that `5010` is production only and staging requires 
 Classification:
 
 ```text
-staging target unresolved
+staging readiness flow superseded / closed
 ```
 
 Gate:
@@ -208,7 +209,7 @@ staging target unresolved
 Gate:
 
 ```text
-blocked
+blocked for deployment until explicit production approval is given
 ```
 
 The earlier corrected preflight was for `/volume1/docker-staging/devpilot` on port `5012`. Human correction later stated that `5012` is old and that the correct port should be `5010`.
@@ -227,13 +228,14 @@ Therefore:
 - Staging and production target boundaries must be revalidated.
 - No further deployment approval should proceed from the previous `5012` evidence.
 
-Human decision A resolves one part of the contradiction:
+Human decision A and final clarification resolve the target boundary for this flow:
 
 - `5010` is production only.
 - Do not use `5010` as staging.
 - Do not touch the production target.
-- Production URL remains `https://devpilot.aicenter.com.tw/`.
-- Production-like runtime remains protected:
+- Production URL:
+  - `https://devpilot.aicenter.com.tw/`
+- Production target remains protected:
   - `/volume1/docker/devpilot`
   - container `devpilot-project-manager`
   - port `5010->5000`
@@ -241,8 +243,10 @@ Human decision A resolves one part of the contradiction:
   - `/volume1/docker-staging/devpilot`
   - container `devpilot-project-manager-staging`
   - port `5012->5000`
-- Correct staging target remains unknown.
-- Readiness gate remains blocked.
+- Staging target discovery is no longer required for this flow.
+- The previous staging readiness flow is superseded / closed.
+- Any future action against `5010` is production deployment and requires separate explicit production approval.
+- Readiness gate remains blocked for deployment.
 
 Deployment execution note:
 
@@ -253,19 +257,17 @@ Deployment execution note:
 
 ## Required Unblock
 
-- Human must decide one of:
-  - identify a new staging target that excludes production `5010` and treats `5012` as old/superseded.
-  - confirm staging / production labels are outdated and remap them before any deployment process continues.
-  - stop staging deployment readiness until a safe staging target exists.
+- Human must provide separate explicit production deployment approval before any action against `5010`.
 
 ## Deployment Decision
 
-- Classification is `staging target unresolved`.
-- Gate is `blocked`.
+- Classification is `staging readiness flow superseded / closed`.
+- Gate is `blocked for deployment until explicit production approval is given`.
 - A staging deployment build/up was executed against `/volume1/docker-staging/devpilot` on port `5012` before the later port correction arrived.
 - That execution must not be treated as approval to continue.
 - No further deployment, restart, build, pull, Docker run, or compose action is approved.
-- Readiness must not be marked passed until a new staging target is identified and read-only preflight passes.
+- Production deployment is not approved and was not executed.
+- Readiness must not be marked passed for production until explicit production approval is given.
 
 ## Checks
 
@@ -297,14 +299,12 @@ Deployment execution note:
 - Old documented expected path does not exist.
 - Old documented planned port is not the staging port.
 - `5010` is production only and must not be used as staging.
+- `https://devpilot.aicenter.com.tw/` is production.
+- `/volume1/docker/devpilot` and container `devpilot-project-manager` are protected production runtime evidence.
 - Previous `5012` staging evidence is superseded / old target.
-- Correct staging target remains unknown.
-- Production and staging evidence must remain separated.
-- Production URL must not be treated as staging evidence.
-- Staging public URL/domain is still unconfirmed.
-- Documentation expected path and port do not match the actual Docker staging runtime.
-- Runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
-- No further deployment action may proceed until a new staging target is identified and read-only preflight passes.
+- Staging readiness is no longer the active flow.
+- Any future action against `5010` is production deployment.
+- Explicit production approval is required before any production deploy, restart, build, pull, Docker run, compose action, NAS edit, or runtime change.
 
 ## Safety Confirmation
 
@@ -328,12 +328,12 @@ Deployment execution note:
 
 ## Recommended Next Step
 
-Staging target is unresolved. Human review must decide one of:
+Final clarification:
 
-- identify a new staging target that excludes production `5010` and treats `5012` as old/superseded.
-- confirm staging / production labels are outdated and remap them before any deployment process continues.
-- stop staging deployment readiness until a safe staging target exists.
+- `5010` is the active production site.
+- Staging target discovery is no longer required for this flow.
+- Previous staging readiness flow is superseded / closed.
+- `5012` remains old / superseded and should not be used as the deployment target.
+- Any future action against `5010` is production deployment and requires separate explicit production approval.
 
-Staging public URL / domain must be explicitly confirmed before readiness can pass. The production URL `https://devpilot.aicenter.com.tw/` is not staging evidence.
-
-Do not proceed to any further deployment action until a new staging target is identified, read-only preflight passes, and a new explicit approval is given.
+Do not proceed to any further deployment action until explicit production approval is given.
