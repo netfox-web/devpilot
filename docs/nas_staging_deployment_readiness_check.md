@@ -530,6 +530,51 @@ Result summary:
 - NAS shell access was not available from the workstation session, so NAS Docker, Compose, repo path, `.env`, persistent directories, compose config, and port `5011` checks remain blocked.
 - No deployment, restart, Docker start/build command, reverse proxy change, SSL change, DNS/Cloudflare change, `.env` output, or secret output was performed.
 
+## Deployment Readiness Gate Status
+
+Current gate status:
+
+```text
+blocked: missing NAS shell access / NAS operator result
+```
+
+Completed:
+
+- Repo-side docs were committed and pushed in `61a0e74 docs: record NAS staging preflight result`.
+- `origin/main` sync was confirmed after the docs commit.
+- Read-only repo gate review was completed.
+- Commit `61a0e74` was confirmed docs-only and limited to:
+  - `docs/nas_staging_deployment_readiness_check.md`
+  - `docs/nas_staging_preflight_execution_result.md`
+
+Not completed:
+
+- NAS-side read-only shell preflight has not been executed.
+- No NAS hostname, path, runtime, or container result is available.
+- `docker compose config` has not been verified on NAS.
+- NAS disk, container, project-path, `.env`, `data/`, `uploads/`, and `logs/` state has not been verified.
+
+Required unblock:
+
+- A NAS operator must run the documented read-only checks on `/volume1/docker/devpilot-staging`, or
+- an explicit NAS shell / SSH target must be provided with read-only authorization.
+
+Deployment decision:
+
+- Deployment is not approved.
+- Deployment was not executed.
+- Readiness must not be marked passed before a NAS-side result is available.
+
+Safety confirmation:
+
+- No deploy was executed.
+- No restart was executed.
+- No build or pull was executed.
+- No `docker run` was executed.
+- No NAS setting was changed.
+- No `.env` content was read or printed.
+- No secrets were touched.
+
 ## Readiness Conclusion
 
 DevPilot appears structurally ready for a NAS staging/test deployment plan, but this report is not an approval to deploy.

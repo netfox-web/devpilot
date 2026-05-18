@@ -3,6 +3,14 @@
 Date: 2026-05-18
 Status: preflight result, no deployment
 
+## Current Gate Status
+
+```text
+blocked: missing NAS shell access / NAS operator result
+```
+
+The deployment readiness gate must remain blocked until NAS-side read-only shell preflight results are available.
+
 ## Summary
 
 - Local repo status: pass. The local repository is on `main` and aligned with `origin/main`.
@@ -15,6 +23,31 @@ Status: preflight result, no deployment
 - Port 5011 status: blocked for NAS. No process was killed and no port was changed.
 - Compose config result summary: blocked. `docker compose config` was not run because NAS shell access was unavailable.
 - `py_compile` result: pass. `app.py` compiled successfully from the local repo.
+
+## Completed
+
+- Repo-side docs were committed and pushed in `61a0e74 docs: record NAS staging preflight result`.
+- `origin/main` sync was confirmed.
+- Read-only repo gate review was completed.
+- Commit `61a0e74` was confirmed docs-only.
+
+## Not Completed
+
+- NAS-side read-only shell preflight was not executed.
+- No NAS hostname, path, runtime, or container result is available.
+- `docker compose config` was not verified on NAS.
+- NAS disk, container, project-path, `.env`, `data/`, `uploads/`, and `logs/` state was not verified.
+
+## Required Unblock
+
+- A NAS operator must run the documented read-only checks on `/volume1/docker/devpilot-staging`, or
+- an explicit NAS shell / SSH target must be provided with read-only authorization.
+
+## Deployment Decision
+
+- Deployment is not approved.
+- Deployment was not executed.
+- Readiness must not be marked passed before a NAS-side result is available.
 
 ## Checks
 
