@@ -517,6 +517,19 @@ This readiness check did not and must not:
 - Provider live verification is requested as part of staging smoke tests.
 - Rollback path is not available.
 
+## Latest Preflight Result
+
+Latest result document:
+
+- `docs/nas_staging_preflight_execution_result.md`
+
+Result summary:
+
+- Local repo checks passed.
+- Local `app.py` py_compile passed.
+- NAS shell access was not available from the workstation session, so NAS Docker, Compose, repo path, `.env`, persistent directories, compose config, and port `5011` checks remain blocked.
+- No deployment, restart, Docker start/build command, reverse proxy change, SSL change, DNS/Cloudflare change, `.env` output, or secret output was performed.
+
 ## Readiness Conclusion
 
 DevPilot appears structurally ready for a NAS staging/test deployment plan, but this report is not an approval to deploy.
