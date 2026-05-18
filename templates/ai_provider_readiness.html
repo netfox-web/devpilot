@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Provider Readiness</h1>
+    <div class="text-muted small">Read-only Gemini and Claude readiness status. No live provider calls are made.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/ai-provider-secrets">Provider Secrets</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-ai-policies">External AI Policies</a>
+  </div>
+</div>
+
+<div class="alert alert-warning page-note">
+  <div class="fw-semibold mb-1">Live verification is disabled.</div>
+  <div class="small">
+    This page reads runtime configuration metadata and gateway readiness flags only.
+    It does not call Gemini, does not call Claude, does not mutate environment settings, and does not deploy.
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Read only</div>
+        <div class="fs-5 fw-semibold">{{ 'true' if readiness.read_only else 'false' }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Provider calls</div>
+        <div class="fs-5 fw-semibold">{{ 'executed' if readiness.provider_calls_executed else 'not executed' }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Live calls enabled</div>
+        <div class="fs-5 fw-semibold">{{ 'true' if readiness.live_calls_enabled else 'false' }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Providers</div>
+        <div class="fs-5 fw-semibold">{{ readiness.count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">Provider Readiness Matrix</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Configured</th>
+          <th>Checked env vars</th>
+          <th>Masked preview</th>
+          <th>Gateway</th>
+          <th>Mock</th>
+          <th>Live</th>
+          <th>Allowed models</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for provider in readiness.providers %}
+        <tr>
+          <td>
+            <div class="fw-semibold">{{ provider.name }}</div>
+            <div class="small text-muted"><code>{{ provider.id }}</code></div>
+          </td>
+          <td>
+            {% if provider.configured %}
+              <span class="badge text-bg-success">configured</span>
+              <div class="small text-muted"><code>{{ provider.configured_env_var }}</code></div>
+            {% else %}
+              <span class="badge text-bg-secondary">missing</span>
+            {% endif %}
+          </td>
+          <td class="small">
+            {% for env_var in provider.checked_env_vars %}
+              <code>{{ env_var }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </td>
+          <td>{% if provider.masked_preview %}<code>{{ provider.masked_preview }}</code>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+          <td class="small">
+            <div><code>{{ provider.gateway_route }}</code></div>
+            <div class="text-muted">{{ provider.gateway_route_status }}</div>
+          </td>
+          <td>
+            {% if provider.mock_verified %}
+              <span class="badge text-bg-success">{{ provider.mock_verification_status }}</span>
+            {% else %}
+              <span class="badge text-bg-secondary">not verified</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge text-bg-secondary">{{ provider.live_verification_status }}</span>
+            <div class="small text-muted">enabled: {{ 'true' if provider.live_call_enabled else 'false' }}</div>
+          </td>
+          <td class="small">
+            {% for model in provider.allowed_models %}
+              <code>{{ model }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </td>
+        </tr>
+        <tr>
+          <td></td>
+          <td colspan="7" class="small text-muted">
+            {% for note in provider.notes %}
+              <div>{{ note }}</div>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-header fw-bold">Safety</div>
+  <div class="card-body small">
+    <div class="row g-2">
+      {% for key, value in readiness.safety.items() %}
+      <div class="col-md-4">
+        <div class="border rounded p-2 h-100">
+          <div class="text-muted">{{ key }}</div>
+          <div class="fw-semibold">{{ 'true' if value else 'false' }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

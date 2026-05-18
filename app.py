@@ -2517,6 +2517,42 @@ AI_PROVIDER_SECRET_CONFIGS = [
 ]
 
 
+AI_PROVIDER_READINESS_CONFIGS = [
+    {
+        "id": "gemini",
+        "name": "Gemini",
+        "env_vars": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
+        "gateway_route": "external_ai_generate",
+        "default_model": "gemini-1.5-flash",
+        "readiness": "verified_with_mock",
+        "mock_verified": True,
+        "live_verified": False,
+        "live_call_enabled": False,
+        "notes": [
+            "Gemini is available as the default External AI Generate gateway provider.",
+            "Readiness is based on mocked gateway verification only.",
+            "Live verification requires a separate approval gate.",
+        ],
+    },
+    {
+        "id": "claude",
+        "name": "Claude",
+        "env_vars": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
+        "gateway_route": "external_ai_generate_mock_path",
+        "default_model": "claude-3-5-haiku",
+        "readiness": "verified_with_mock",
+        "mock_verified": True,
+        "live_verified": False,
+        "live_call_enabled": False,
+        "notes": [
+            "Claude is available as a mocked External AI Generate gateway path.",
+            "The Claude gateway function remains non-live in this phase.",
+            "Live verification requires a separate approval gate.",
+        ],
+    },
+]
+
+
 def safe_secret_prefix(value):
     text = str(value or "").strip()
     if not text:
@@ -2586,6 +2622,57 @@ def ai_provider_secret_env_status():
             "status_explanation": config["status_configured"] if configured else config["status_missing"],
         })
     return providers
+
+
+def ai_provider_readiness_status():
+    providers = []
+    for config in AI_PROVIDER_READINESS_CONFIGS:
+        matched_var = ""
+        matched_value = ""
+        for env_var in config["env_vars"]:
+            value = os.getenv(env_var, "").strip()
+            if value:
+                matched_var = env_var
+                matched_value = value
+                break
+        configured = bool(matched_value)
+        provider_id = config["id"]
+        allowed_models = list(EXTERNAL_AI_GENERATE_PROVIDER_MODELS.get(provider_id, []))
+        providers.append({
+            "id": provider_id,
+            "name": config["name"],
+            "configured": configured,
+            "checked_env_vars": list(config["env_vars"]),
+            "configured_env_var": matched_var,
+            "masked_preview": safe_secret_preview(matched_value),
+            "raw_key_exposed": False,
+            "gateway_route": config["gateway_route"],
+            "gateway_route_status": "mock_route_available" if provider_id in EXTERNAL_AI_GENERATE_PROVIDER_MODELS else "not_available",
+            "default_model": config["default_model"],
+            "allowed_models": allowed_models,
+            "readiness": config["readiness"],
+            "mock_verification_status": config["readiness"],
+            "mock_verified": bool(config["mock_verified"]),
+            "live_verification_status": "not_run",
+            "live_verified": bool(config["live_verified"]),
+            "live_call_enabled": bool(config["live_call_enabled"]),
+            "notes": list(config["notes"]),
+        })
+    return {
+        "ok": True,
+        "read_only": True,
+        "provider_calls_executed": False,
+        "live_calls_enabled": False,
+        "providers": providers,
+        "count": len(providers),
+        "safety": {
+            "no_live_provider_call": True,
+            "no_secret_output": True,
+            "no_env_mutation": True,
+            "no_deploy": True,
+            "no_production_mutation": True,
+        },
+    }
 
 
 EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS = 1000
@@ -16947,6 +17034,16 @@ def admin_ai_provider_secrets_page():
     )
 
 
+@app.route("/admin/ai-provider-readiness")
+@require_roles("owner", "admin")
+def admin_ai_provider_readiness_page():
+    return render_template(
+        "ai_provider_readiness.html",
+        app_name=APP_NAME,
+        readiness=ai_provider_readiness_status(),
+    )
+
+
 def render_external_ai_usage_page():
     rows = external_ai_usage_rows(request.args)
     summary = summarize_external_ai_usage(rows)
@@ -21803,6 +21900,12 @@ def api_admin_ai_providers():
         "read_only": True,
         "provider_calls_executed": False,
     })
+
+
+@app.route("/api/admin/ai-provider-readiness", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_ai_provider_readiness():
+    return jsonify(ai_provider_readiness_status())
 
 
 @app.route("/api/admin/external-ai-permission-profiles", methods=["GET", "POST"])

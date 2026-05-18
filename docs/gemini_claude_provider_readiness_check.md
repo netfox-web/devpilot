@@ -19,8 +19,10 @@ Providers covered:
 Related DevPilot surfaces:
 
 - `/admin/ai-provider-secrets`
+- `/admin/ai-provider-readiness`
 - `/admin/ai-providers`
 - `/admin/external-ai-policies`
+- `/api/admin/ai-provider-readiness`
 - `/api/external/ai/generate`
 - External AI usage and audit records
 
@@ -109,6 +111,44 @@ git status -sb
 ```
 
 For code changes that affect provider policy, provider routing, usage logging, or admin provider pages, run the relevant unit tests and record exact commands in the handoff status.
+
+## Readiness Dashboard
+
+The read-only AI Provider Readiness Dashboard is:
+
+```text
+GET /admin/ai-provider-readiness
+GET /api/admin/ai-provider-readiness
+```
+
+The dashboard/API reports Gemini and Claude readiness without making live provider calls.
+
+Required dashboard/API properties:
+
+- `read_only: true`
+- `provider_calls_executed: false`
+- `live_calls_enabled: false`
+- Gemini readiness: `verified_with_mock`
+- Claude readiness: `verified_with_mock`
+- Gemini `live_verified: false`
+- Claude `live_verified: false`
+- Gemini `live_call_enabled: false`
+- Claude `live_call_enabled: false`
+- configured status from runtime env metadata only
+- checked env var names
+- masked preview only
+- allowed gateway models
+- safety notes
+
+Secret-output boundary:
+
+- Do not output raw provider keys.
+- Do not output auth header values.
+- Do not output bearer token values.
+- Do not output key hashes.
+- Do not write provider credentials to docs, logs, API responses, or frontend bundles.
+
+The readiness dashboard is not a live verification gate. Live verification remains blocked until a separate explicit approval phase follows `docs/external_ai_live_verification_gate.md`.
 
 ## Safety Boundaries
 

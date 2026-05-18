@@ -113,6 +113,106 @@ class AiManualHandoffTest(unittest.TestCase):
             sess["user_id"] = self.user_id
         return client
 
+    def test_ai_provider_readiness_api_is_read_only_and_does_not_call_providers(self):
+        env = {
+            "GEMINI_API_KEY": "gemini-test-raw-secret-1234",
+            "GOOGLE_API_KEY": "",
+            "GOOGLE_GENERATIVE_AI_API_KEY": "",
+            "ANTHROPIC_API_KEY": "claude-test-raw-secret-5678",
+            "CLAUDE_API_KEY": "",
+        }
+        with patch.dict(self.app_module.os.environ, env, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                    response = self.client().get("/api/admin/ai-provider-readiness")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["provider_calls_executed"])
+        self.assertFalse(payload["live_calls_enabled"])
+        self.assertTrue(payload["safety"]["no_live_provider_call"])
+        providers = {item["id"]: item for item in payload["providers"]}
+        self.assertEqual(set(providers), {"gemini", "claude"})
+        self.assertTrue(providers["gemini"]["configured"])
+        self.assertTrue(providers["claude"]["configured"])
+        self.assertEqual(providers["gemini"]["readiness"], "verified_with_mock")
+        self.assertEqual(providers["claude"]["readiness"], "verified_with_mock")
+        self.assertTrue(providers["gemini"]["mock_verified"])
+        self.assertTrue(providers["claude"]["mock_verified"])
+        self.assertFalse(providers["gemini"]["live_verified"])
+        self.assertFalse(providers["claude"]["live_verified"])
+        self.assertFalse(providers["gemini"]["live_call_enabled"])
+        self.assertFalse(providers["claude"]["live_call_enabled"])
+        self.assertEqual(providers["gemini"]["allowed_models"], ["gemini-1.5-flash"])
+        self.assertEqual(providers["claude"]["allowed_models"], ["claude-3-5-haiku"])
+        combined = json.dumps(payload, sort_keys=True)
+        self.assertNotIn("gemini-test-raw-secret-1234", combined)
+        self.assertNotIn("claude-test-raw-secret-5678", combined)
+        self.assertNotIn("Authorization", combined)
+        self.assertNotIn("Bearer", combined)
+        self.assertNotIn("key_hash", combined)
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+
+    def test_ai_provider_readiness_page_masks_secrets_and_requires_login(self):
+        anonymous = self.app.test_client().get("/admin/ai-provider-readiness")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login", anonymous.headers.get("Location", ""))
+
+        env = {
+            "GEMINI_API_KEY": "gemini-page-raw-secret-1234",
+            "GOOGLE_API_KEY": "",
+            "GOOGLE_GENERATIVE_AI_API_KEY": "",
+            "ANTHROPIC_API_KEY": "claude-page-raw-secret-5678",
+            "CLAUDE_API_KEY": "",
+        }
+        with patch.dict(self.app_module.os.environ, env, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                    response = self.client().get("/admin/ai-provider-readiness")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        page = response.get_data(as_text=True)
+        self.assertIn("AI Provider Readiness", page)
+        self.assertIn("Gemini", page)
+        self.assertIn("Claude", page)
+        self.assertIn("verified_with_mock", page)
+        self.assertIn("gemini-1.5-flash", page)
+        self.assertIn("claude-3-5-haiku", page)
+        self.assertNotIn("gemini-page-raw-secret-1234", page)
+        self.assertNotIn("claude-page-raw-secret-5678", page)
+        self.assertNotIn("Authorization", page)
+        self.assertNotIn("Bearer", page)
+        self.assertNotIn("key_hash", page)
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+
+    def test_ai_provider_readiness_reports_missing_credentials_without_provider_calls(self):
+        env = {
+            "GEMINI_API_KEY": "",
+            "GOOGLE_API_KEY": "",
+            "GOOGLE_GENERATIVE_AI_API_KEY": "",
+            "ANTHROPIC_API_KEY": "",
+            "CLAUDE_API_KEY": "",
+        }
+        with patch.dict(self.app_module.os.environ, env, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                    response = self.client().get("/api/admin/ai-provider-readiness")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        providers = {item["id"]: item for item in response.get_json()["providers"]}
+        self.assertFalse(providers["gemini"]["configured"])
+        self.assertFalse(providers["claude"]["configured"])
+        self.assertEqual(providers["gemini"]["gateway_route_status"], "mock_route_available")
+        self.assertEqual(providers["claude"]["gateway_route_status"], "mock_route_available")
+        self.assertEqual(providers["gemini"]["masked_preview"], "")
+        self.assertEqual(providers["claude"]["masked_preview"], "")
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+
     def external_api_env(self, allow_all_sources=False):
         return {
             "DEVPILOT_EXTERNAL_API_KEYS": "external-a:key-a,external-b:key-b",
