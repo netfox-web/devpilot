@@ -1,5 +1,6 @@
 import unittest
 from copy import deepcopy
+from unittest.mock import patch
 
 from services import product_domains
 
@@ -247,7 +248,9 @@ class ProductDomainApiTest(unittest.TestCase):
     def test_controlled_deploy_routes_do_not_500(self):
         routes = [
             "/product-domains",
+            "/admin/product-domain-launch-plan",
             "/api/product-domains",
+            "/api/admin/product-domain-launch-plan",
             "/api/product-domains/validate",
             "/api/product-domains/redirect-plan",
             "/api/product-domains/redirect-plan/export?format=json",
@@ -261,6 +264,78 @@ class ProductDomainApiTest(unittest.TestCase):
                 response = client.get(route)
                 self.assertNotEqual(response.status_code, 500)
                 self.assertEqual(response.status_code, 200)
+
+    def test_product_domain_launch_plan_api_is_read_only(self):
+        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                    response = self.client().get("/api/admin/product-domain-launch-plan")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(payload["dns_write_enabled"])
+        self.assertFalse(payload["cloudflare_write_enabled"])
+        self.assertFalse(payload["nginx_write_enabled"])
+        self.assertFalse(payload["ssl_write_enabled"])
+        self.assertFalse(payload["deploy_enabled"])
+        self.assertEqual(payload["brand"]["name"], "AI Office")
+        self.assertEqual(payload["brand"]["key"], "ai_office")
+        self.assertEqual(payload["brand"]["official_domain"], "aioffice.com.tw")
+        self.assertEqual(payload["brand"]["redirect_domain"], "aioffice.tw")
+        self.assertEqual(payload["brand"]["canonical_action"], "brand_hub_canonical")
+        self.assertEqual(payload["summary"]["suite_count"], 7)
+        self.assertEqual(payload["summary"]["product_count"], 26)
+        self.assertEqual(payload["summary"]["domain_count"], 60)
+        self.assertEqual(payload["summary"]["official_count"], 27)
+        self.assertEqual(payload["summary"]["redirect_count"], 32)
+        self.assertEqual(payload["summary"]["campaign_count"], 1)
+        self.assertEqual(payload["launch_defaults"]["launch_wave"], "pending_analysis")
+        self.assertFalse(payload["launch_defaults"]["execution_allowed"])
+        self.assertEqual(len(payload["products"]), 26)
+        self.assertTrue(all(item["launch_wave"] == "pending_analysis" for item in payload["products"]))
+        self.assertTrue(all(item["execution_allowed"] is False for item in payload["products"]))
+        self.assertTrue(payload["analyst_questions"])
+        self.assertTrue(payload["safety"]["no_dns_write"])
+        self.assertTrue(payload["safety"]["no_cloudflare_write"])
+        self.assertTrue(payload["safety"]["no_nginx_write"])
+        self.assertTrue(payload["safety"]["no_ssl_write"])
+        self.assertTrue(payload["safety"]["no_deploy"])
+        self.assertTrue(payload["safety"]["no_provider_live_call"])
+        product_keys = {item["product_key"] for item in payload["products"]}
+        self.assertIn("aicrm", product_keys)
+        self.assertIn("aiad", product_keys)
+        aiad = next(item for item in payload["products"] if item["product_key"] == "aiad")
+        self.assertEqual(aiad["official_domain"], "aiad.com.tw")
+        self.assertEqual(aiad["campaign_domains"][0]["domain"], "aiad.fun")
+        combined = str(payload)
+        self.assertNotIn("Authorization", combined)
+        self.assertNotIn("Bearer", combined)
+        self.assertNotIn("key_hash", combined)
+        cloudflare_request.assert_not_called()
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+
+    def test_product_domain_launch_plan_page_owner_admin_and_anonymous_boundary(self):
+        anonymous = self.app.test_client().get("/admin/product-domain-launch-plan")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login", anonymous.headers.get("Location", ""))
+
+        response = self.client().get("/admin/product-domain-launch-plan")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        body = response.get_data(as_text=True)
+        self.assertIn("Product Domain Launch Plan", body)
+        self.assertIn("AI Office", body)
+        self.assertIn("aioffice.com.tw", body)
+        self.assertIn("pending_analysis", body)
+        self.assertIn("execution_allowed=false", body)
+        self.assertIn("AICRM", body)
+        self.assertIn("AIAD", body)
+        self.assertIn("aiad.fun", body)
+        self.assertNotIn("Authorization", body)
+        self.assertNotIn("Bearer", body)
+        self.assertNotIn("key_hash", body)
 
 
 if __name__ == "__main__":

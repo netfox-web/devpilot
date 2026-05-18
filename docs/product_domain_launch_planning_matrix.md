@@ -15,6 +15,8 @@ It is a planning document only. It does not execute DNS, redirects, SSL, Nginx, 
 - `services/product_domains.py`
 - `docs/devpilot_architecture_progress_inventory_2026-05-18.md`
 - Product Domain admin/read APIs:
+  - `/admin/product-domain-launch-plan`
+  - `/api/admin/product-domain-launch-plan`
   - `/product-domains`
   - `/api/product-domains`
   - `/api/product-domains/lookup?domain=...`
@@ -59,6 +61,34 @@ Catalog validation: ok
 | `canonical_action` | Draft canonical treatment for official, redirect, campaign, infra, or reserved domains. |
 | `analyst_decision_needed` | Product/SEO/operations decision needed before execution planning. |
 | `execution_allowed` | Always `false` in this document. |
+
+## Dashboard/API Shape
+
+The read-only dashboard/API should expose the launch planning matrix without executing infrastructure changes:
+
+```text
+GET /admin/product-domain-launch-plan
+GET /api/admin/product-domain-launch-plan
+```
+
+Required safety fields:
+
+- `read_only: true`
+- `execution_allowed: false`
+- `dns_write_enabled: false`
+- `cloudflare_write_enabled: false`
+- `nginx_write_enabled: false`
+- `ssl_write_enabled: false`
+- `deploy_enabled: false`
+
+Every product row defaults to:
+
+```text
+launch_wave: pending_analysis
+launch_readiness: catalog_ready
+canonical_action: official_domain_canonical
+execution_allowed: false
+```
 
 ## Brand Hub Matrix
 

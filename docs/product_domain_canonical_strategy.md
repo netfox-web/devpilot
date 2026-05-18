@@ -14,6 +14,15 @@ It is based on the fixed product-domain architecture:
 Brand -> Suite -> Product -> Module -> Domain
 ```
 
+Related read-only planning surfaces:
+
+```text
+GET /admin/product-domain-launch-plan
+GET /api/admin/product-domain-launch-plan
+```
+
+These surfaces display canonical strategy metadata for analyst review only. They do not execute DNS, redirect, SSL, Nginx, Cloudflare, R2, registrar, deploy, or production changes.
+
 ## Brand Canonical Rule
 
 AI Office uses one Brand Hub canonical domain:

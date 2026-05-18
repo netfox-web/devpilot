@@ -17460,6 +17460,165 @@ def product_domains_page():
     )
 
 
+PRODUCT_DOMAIN_LAUNCH_ANALYST_QUESTIONS = [
+    "Which products are first-wave launch candidates?",
+    "Should every official product domain get a standalone landing page?",
+    "Should the Brand Hub route users by suite, use case, industry, or product grid?",
+    "What is the canonical preference for .com.tw versus .tw when both exist?",
+    "Which redirect domains should stay redirects versus become campaigns or reserved domains?",
+    "What is the universal www redirect policy?",
+    "Should redirect paths and query strings be preserved?",
+    "Which infrastructure products are public products, internal/admin endpoints, or reserved platform names?",
+    "Which products require legal, trademark, pricing, demo, lead form, docs, or login decisions before launch?",
+    "What is the minimum safe production launch set?",
+]
+
+
+def product_domain_launch_decision_needed(suite_name, product_name, official_domain, redirect_domains, campaign_domains, module_name):
+    decisions = [f"Confirm launch priority and positioning for {product_name} in {suite_name}."]
+    if redirect_domains:
+        decisions.append("Confirm redirect domain treatment, path preservation, and analytics attribution.")
+    if campaign_domains:
+        decisions.append("Confirm campaign owner, expiry policy, and whether campaign domains redirect or host campaign pages.")
+    if module_name == "Infrastructure Endpoint":
+        decisions.append("Confirm whether this is a public product page, protected infrastructure endpoint, or reserved platform name.")
+    if official_domain.endswith(".tw"):
+        decisions.append("Confirm whether the .tw official domain remains the long-term canonical.")
+    return " ".join(decisions)
+
+
+def product_domain_launch_plan_context():
+    catalog = product_domain_services.product_domain_tree()
+    summary = catalog.get("summary", {})
+    role_counts = summary.get("role_counts", {})
+    brand = catalog.get("brand", {})
+    brand_domains = brand.get("domains", [])
+    official_brand_domain = next((item.get("domain") for item in brand_domains if item.get("role") == "official"), brand.get("hub_domain", ""))
+    redirect_brand_domain = next((item.get("domain") for item in brand_domains if item.get("role") == "redirect"), "")
+    products = []
+
+    for suite in catalog.get("suites", []):
+        suite_name = suite.get("name", "")
+        suite_key = suite.get("key", "")
+        for product in suite.get("products", []):
+            for module in product.get("modules", []):
+                domains = module.get("domains", [])
+                official_domain = next((domain.get("domain") for domain in domains if domain.get("role") == "official"), product.get("official_domain", ""))
+                redirect_domains = [
+                    {
+                        "domain": domain.get("domain"),
+                        "target_domain": domain.get("target_domain", ""),
+                        "role": domain.get("role"),
+                    }
+                    for domain in domains
+                    if domain.get("role") == "redirect"
+                ]
+                campaign_domains = [
+                    {
+                        "domain": domain.get("domain"),
+                        "target_domain": domain.get("target_domain", ""),
+                        "role": domain.get("role"),
+                    }
+                    for domain in domains
+                    if domain.get("role") == "campaign"
+                ]
+                products.append({
+                    "suite": suite_name,
+                    "suite_key": suite_key,
+                    "product": product.get("name", ""),
+                    "product_key": product.get("key", ""),
+                    "module": module.get("name", ""),
+                    "module_key": module.get("key", ""),
+                    "official_domain": official_domain,
+                    "domains": [
+                        {
+                            "domain": domain.get("domain"),
+                            "role": domain.get("role"),
+                            "target_domain": domain.get("target_domain", ""),
+                            "canonical_action": "official_domain_canonical" if domain.get("role") == "official" else ("redirect_to_official" if domain.get("role") == "redirect" else ("campaign_pending_analysis" if domain.get("role") == "campaign" else "pending_analysis")),
+                        }
+                        for domain in domains
+                    ],
+                    "redirect_domains": redirect_domains,
+                    "campaign_domains": campaign_domains,
+                    "launch_wave": "pending_analysis",
+                    "launch_readiness": "catalog_ready",
+                    "canonical_action": "official_domain_canonical",
+                    "analyst_decision_needed": product_domain_launch_decision_needed(
+                        suite_name,
+                        product.get("name", ""),
+                        official_domain,
+                        redirect_domains,
+                        campaign_domains,
+                        module.get("name", ""),
+                    ),
+                    "execution_allowed": False,
+                })
+
+    return {
+        "ok": True,
+        "read_only": True,
+        "execution_allowed": False,
+        "dns_write_enabled": False,
+        "cloudflare_write_enabled": False,
+        "nginx_write_enabled": False,
+        "ssl_write_enabled": False,
+        "deploy_enabled": False,
+        "brand": {
+            "name": brand.get("name", ""),
+            "key": brand.get("key", ""),
+            "official_domain": official_brand_domain,
+            "redirect_domain": redirect_brand_domain,
+            "canonical_action": "brand_hub_canonical",
+            "domains": brand_domains,
+        },
+        "summary": {
+            "suite_count": summary.get("suite_count", 0),
+            "product_count": summary.get("product_count", 0),
+            "domain_count": summary.get("domain_count", 0),
+            "official_count": role_counts.get("official", 0),
+            "redirect_count": role_counts.get("redirect", 0),
+            "campaign_count": role_counts.get("campaign", 0),
+            "infra_count": role_counts.get("infra", 0),
+            "reserved_count": role_counts.get("reserved", 0),
+        },
+        "launch_defaults": {
+            "launch_wave": "pending_analysis",
+            "execution_allowed": False,
+        },
+        "products": products,
+        "analyst_questions": list(PRODUCT_DOMAIN_LAUNCH_ANALYST_QUESTIONS),
+        "canonical_strategy": {
+            "brand_hub": "aioffice.com.tw is the AI Office Brand Hub canonical domain.",
+            "product_official": "Each Product official domain is the draft canonical product domain.",
+            "redirect": "Redirect domains should point to the Brand Hub or product official domain unless analysts reclassify them.",
+            "campaign": "Campaign domains require separate campaign owner, expiry, analytics, and redirect/page decisions.",
+            "infrastructure": "Infrastructure endpoint domains require public/private/reserved classification before launch execution.",
+        },
+        "validation": catalog.get("validation", {}),
+        "safety": {
+            "no_dns_write": True,
+            "no_cloudflare_write": True,
+            "no_nginx_write": True,
+            "no_ssl_write": True,
+            "no_deploy": True,
+            "no_secret_output": True,
+            "no_provider_live_call": True,
+            "no_production_mutation": True,
+        },
+    }
+
+
+@app.route("/admin/product-domain-launch-plan")
+@require_roles("owner", "admin")
+def product_domain_launch_plan_page():
+    return render_template(
+        "product_domain_launch_plan.html",
+        app_name=APP_NAME,
+        plan=product_domain_launch_plan_context(),
+    )
+
+
 @app.route("/domains/bind", methods=["POST"])
 @require_roles("owner", "admin")
 def domains_bind():
@@ -17634,6 +17793,12 @@ def api_product_domain_lookup():
     if not result:
         return jsonify({"ok": False, "error": "domain_not_found", "domain": domain}), 404
     return jsonify({"ok": True, "domain": domain, "result": result})
+
+
+@app.route("/api/admin/product-domain-launch-plan", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_product_domain_launch_plan():
+    return jsonify(product_domain_launch_plan_context())
 
 
 @app.route("/api/cloudflare/zones", methods=["GET"])

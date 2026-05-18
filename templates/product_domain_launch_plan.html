@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">Product Domain Launch Plan</h1>
+    <div class="text-muted small">Read-only launch planning matrix for AI Office brand, suites, products, and domains.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">READ-ONLY</span>
+      <span class="badge text-bg-secondary">NO DNS WRITE</span>
+      <span class="badge text-bg-secondary">NO CLOUDFLARE WRITE</span>
+      <span class="badge text-bg-secondary">NO DEPLOY</span>
+      <span class="badge text-bg-warning">PENDING ANALYSIS</span>
+    </div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="/product-domains">Product Domains</a>
+    <a class="btn btn-outline-secondary btn-sm" href="/api/admin/product-domain-launch-plan">JSON</a>
+  </div>
+</div>
+
+<div class="alert alert-info page-note py-2">
+  <div class="fw-semibold">Planning boundary</div>
+  <div class="small">
+    This dashboard does not execute DNS, redirect, SSL, Nginx, Cloudflare, registrar, R2, deploy, provider, or production changes.
+    All launch waves remain <code>{{ plan.launch_defaults.launch_wave }}</code> until analyst decisions are made.
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Brand</div>
+        <div class="h5 mb-1">{{ plan.brand.name }}</div>
+        <code>{{ plan.brand.key }}</code>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Brand Hub</div>
+        <div class="h5 mb-1">{{ plan.brand.official_domain }}</div>
+        <span class="badge text-bg-success">{{ plan.brand.canonical_action }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Suites</div>
+        <div class="display-6">{{ plan.summary.suite_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Products</div>
+        <div class="display-6">{{ plan.summary.product_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Domains</div>
+        <div class="display-6">{{ plan.summary.domain_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Official</div>
+        <div class="display-6">{{ plan.summary.official_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Redirect</div>
+        <div class="display-6">{{ plan.summary.redirect_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Campaign</div>
+        <div class="display-6">{{ plan.summary.campaign_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Brand Hub</div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="text-muted small">Official domain</div>
+        <code>{{ plan.brand.official_domain }}</code>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted small">Redirect domain</div>
+        <code>{{ plan.brand.redirect_domain }}</code>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted small">Canonical action</div>
+        <span class="badge text-bg-success">{{ plan.brand.canonical_action }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Canonical Strategy</div>
+  <div class="card-body small">
+    <div class="row g-2">
+      {% for key, value in plan.canonical_strategy.items() %}
+      <div class="col-md-6">
+        <div class="border rounded p-2 h-100">
+          <div class="fw-semibold">{{ key }}</div>
+          <div class="text-muted">{{ value }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <div class="fw-bold">Product Launch Matrix</div>
+      <div class="small text-muted">All launch waves are analyst-owned and currently pending analysis.</div>
+    </div>
+    <span class="badge text-bg-secondary">execution_allowed=false</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Suite</th>
+          <th>Product</th>
+          <th>Module</th>
+          <th>Official</th>
+          <th>Redirect / Campaign</th>
+          <th>Launch</th>
+          <th>Canonical</th>
+          <th>Decision needed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in plan.products %}
+        <tr>
+          <td>
+            <div class="fw-semibold">{{ item.suite }}</div>
+            <code class="small">{{ item.suite_key }}</code>
+          </td>
+          <td>
+            <div class="fw-semibold">{{ item.product }}</div>
+            <code class="small">{{ item.product_key }}</code>
+          </td>
+          <td>{{ item.module }}</td>
+          <td><code>{{ item.official_domain }}</code></td>
+          <td class="small">
+            {% for domain in item.redirect_domains %}
+              <div><span class="badge text-bg-primary">redirect</span> <code>{{ domain.domain }}</code> -> <code>{{ domain.target_domain }}</code></div>
+            {% endfor %}
+            {% for domain in item.campaign_domains %}
+              <div><span class="badge text-bg-warning">campaign</span> <code>{{ domain.domain }}</code> -> <code>{{ domain.target_domain }}</code></div>
+            {% endfor %}
+            {% if not item.redirect_domains and not item.campaign_domains %}
+              <span class="text-muted">-</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge text-bg-secondary">{{ item.launch_wave }}</span>
+            <div class="small text-muted">{{ item.launch_readiness }}</div>
+          </td>
+          <td class="small">{{ item.canonical_action }}</td>
+          <td class="small">{{ item.analyst_decision_needed }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Analyst Decisions Needed</div>
+      <div class="card-body small">
+        <ol class="mb-0">
+          {% for question in plan.analyst_questions %}
+            <li>{{ question }}</li>
+          {% endfor %}
+        </ol>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safety</div>
+      <div class="card-body small">
+        <div class="row g-2">
+          {% for key, value in plan.safety.items() %}
+          <div class="col-md-6">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">{{ key }}</div>
+              <div class="fw-semibold">{{ 'true' if value else 'false' }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
