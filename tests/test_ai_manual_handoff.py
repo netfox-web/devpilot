@@ -213,6 +213,91 @@ class AiManualHandoffTest(unittest.TestCase):
         gemini_call.assert_not_called()
         claude_call.assert_not_called()
 
+    def test_external_ai_live_verification_gate_api_is_read_only_and_does_not_call_providers(self):
+        env = {
+            "GEMINI_API_KEY": "gemini-live-gate-raw-secret-1234",
+            "ANTHROPIC_API_KEY": "claude-live-gate-raw-secret-5678",
+        }
+        with patch.dict(self.app_module.os.environ, env, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                    response = self.client().get("/api/admin/external-ai-live-verification-gate")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(payload["live_verification_allowed"])
+        self.assertFalse(payload["provider_calls_executed"])
+        self.assertFalse(payload["approval_objects_created"])
+        self.assertFalse(payload["usage_logs_written"])
+        self.assertFalse(payload["generation_results_written"])
+        self.assertTrue(payload["safety"]["no_live_provider_call"])
+        self.assertTrue(payload["safety"]["no_secret_output"])
+        providers = {item["id"]: item for item in payload["providers"]}
+        self.assertEqual(set(providers), {"gemini", "claude"})
+        self.assertEqual(providers["gemini"]["default_model"], "gemini-1.5-flash")
+        self.assertEqual(providers["claude"]["default_model"], "claude-3-5-haiku")
+        self.assertTrue(providers["gemini"]["mock_verified"])
+        self.assertTrue(providers["claude"]["mock_verified"])
+        self.assertFalse(providers["gemini"]["live_verified"])
+        self.assertFalse(providers["claude"]["live_verified"])
+        self.assertFalse(providers["gemini"]["live_call_enabled"])
+        self.assertFalse(providers["claude"]["live_call_enabled"])
+        self.assertTrue(providers["gemini"]["one_call_plan_ready"])
+        self.assertFalse(providers["claude"]["one_call_plan_ready"])
+        self.assertEqual(providers["gemini"]["approval_status"], "not_requested")
+        self.assertEqual(providers["gemini"]["constraints"]["max_provider_calls"], 1)
+        self.assertFalse(providers["gemini"]["constraints"]["streaming_allowed"])
+        self.assertFalse(providers["gemini"]["constraints"]["tool_calling_allowed"])
+        self.assertFalse(providers["gemini"]["constraints"]["fallback_allowed"])
+        self.assertFalse(providers["gemini"]["constraints"]["retry_allowed"])
+        self.assertEqual(providers["gemini"]["fixed_prompt"], "Return exactly OK.")
+        approval_ids = {item["id"] for item in payload["global_required_approvals"]}
+        self.assertEqual(approval_ids, {"product_owner", "engineering_owner", "operations_owner", "security_reviewer"})
+        self.assertTrue(all(item["status"] == "missing" for item in payload["global_required_approvals"]))
+        combined = json.dumps(payload, sort_keys=True)
+        self.assertNotIn("gemini-live-gate-raw-secret-1234", combined)
+        self.assertNotIn("claude-live-gate-raw-secret-5678", combined)
+        self.assertNotIn("Authorization:", combined)
+        self.assertNotIn("Bearer ", combined)
+        self.assertNotIn("key_hash", combined)
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+
+    def test_external_ai_live_verification_gate_page_masks_secrets_and_requires_login(self):
+        anonymous = self.app.test_client().get("/admin/external-ai-live-verification-gate")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login", anonymous.headers.get("Location", ""))
+
+        env = {
+            "GEMINI_API_KEY": "gemini-live-page-raw-secret-1234",
+            "ANTHROPIC_API_KEY": "claude-live-page-raw-secret-5678",
+        }
+        with patch.dict(self.app_module.os.environ, env, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                    response = self.client().get("/admin/external-ai-live-verification-gate")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        page = response.get_data(as_text=True)
+        self.assertIn("External AI Live Verification Gate", page)
+        self.assertIn("Live verification is not allowed", page)
+        self.assertIn("Gemini", page)
+        self.assertIn("Claude", page)
+        self.assertIn("gemini-1.5-flash", page)
+        self.assertIn("claude-3-5-haiku", page)
+        self.assertIn("Product owner approval", page)
+        self.assertIn("Return exactly OK.", page)
+        self.assertNotIn("gemini-live-page-raw-secret-1234", page)
+        self.assertNotIn("claude-live-page-raw-secret-5678", page)
+        self.assertNotIn("Authorization:", page)
+        self.assertNotIn("Bearer ", page)
+        self.assertNotIn("key_hash", page)
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+
     def external_api_env(self, allow_all_sources=False):
         return {
             "DEVPILOT_EXTERNAL_API_KEYS": "external-a:key-a,external-b:key-b",

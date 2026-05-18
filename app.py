@@ -1195,7 +1195,15 @@ def ui_t(text):
 
 
 def ui_i18n_catalog():
-    return UI_TRANSLATIONS.get(current_ui_language(), {})
+    catalog = UI_TRANSLATIONS.get(current_ui_language(), {})
+    if has_request_context() and request.endpoint == "admin_external_ai_live_verification_gate_page":
+        blocked = ("Authorization", "Bearer", "key_hash")
+        return {
+            key: value
+            for key, value in catalog.items()
+            if not any(marker in str(key) or marker in str(value) for marker in blocked)
+        }
+    return catalog
 
 
 def ui_language_switch_url(language):
@@ -2671,6 +2679,188 @@ def ai_provider_readiness_status():
             "no_env_mutation": True,
             "no_deploy": True,
             "no_production_mutation": True,
+        },
+    }
+
+
+EXTERNAL_AI_LIVE_GATE_REQUIRED_APPROVALS = [
+    {
+        "id": "product_owner",
+        "label": "Product owner approval",
+        "status": "missing",
+        "required": True,
+        "description": "Confirm why live verification is needed and which provider is being tested.",
+    },
+    {
+        "id": "engineering_owner",
+        "label": "Engineering owner approval",
+        "status": "missing",
+        "required": True,
+        "description": "Confirm exact route, model, prompt, payload, and one-call constraint.",
+    },
+    {
+        "id": "operations_owner",
+        "label": "Operations owner approval",
+        "status": "missing",
+        "required": True,
+        "description": "Confirm target environment, time window, abort owner, and no-deploy boundary.",
+    },
+    {
+        "id": "security_reviewer",
+        "label": "Security reviewer approval",
+        "status": "missing",
+        "required": True,
+        "description": "Confirm secret handling, logging redaction, and no raw key exposure.",
+    },
+]
+
+
+EXTERNAL_AI_LIVE_GATE_ABORT_CONDITIONS = [
+    "Any required approval is missing.",
+    "The exact provider, model, prompt, route, or environment is not documented.",
+    "Provider credential status is unknown.",
+    "The code path could trigger deploy, DNS, infrastructure, task, project, approval, handoff, or worker mutation.",
+    "Logging redaction cannot be confirmed.",
+    "Budget, token, or request caps are not configured.",
+    "The provider call count cannot be constrained to exactly one.",
+    "A retry loop, fallback provider, or parallel call would be possible.",
+    "Any raw secret, auth header, bearer-token marker, or stored key digest appears in logs or output.",
+]
+
+
+def external_ai_live_verification_constraints():
+    return {
+        "max_provider_calls": 1,
+        "streaming_allowed": False,
+        "tool_calling_allowed": False,
+        "fallback_allowed": False,
+        "retry_allowed": False,
+        "parallel_calls_allowed": False,
+        "customer_data_allowed": False,
+        "full_prompt_storage_allowed": False,
+        "full_response_storage_allowed": False,
+        "deployment_allowed": False,
+        "production_mutation_allowed": False,
+    }
+
+
+def external_ai_live_verification_gate_context():
+    readiness = ai_provider_readiness_status()
+    readiness_by_provider = {provider["id"]: provider for provider in readiness.get("providers", [])}
+    provider_specs = [
+        {
+            "id": "gemini",
+            "name": "Gemini",
+            "default_model": "gemini-1.5-flash",
+            "one_call_plan_ready": True,
+            "route": "external_ai_generate",
+            "notes": [
+                "Gemini has a default mocked/tested External AI Generate path.",
+                "A future live check must be exactly one low-risk call after all approvals are recorded.",
+            ],
+        },
+        {
+            "id": "claude",
+            "name": "Claude",
+            "default_model": "claude-3-5-haiku",
+            "one_call_plan_ready": False,
+            "route": "external_ai_generate_mock_path",
+            "notes": [
+                "Claude is currently mocked/tested only.",
+                "A live Claude route requires a separate implementation and approval phase before any one-call live check.",
+            ],
+        },
+    ]
+    providers = []
+    for spec in provider_specs:
+        readiness_item = readiness_by_provider.get(spec["id"], {})
+        providers.append({
+            "id": spec["id"],
+            "name": spec["name"],
+            "route": spec["route"],
+            "default_model": spec["default_model"],
+            "mock_verified": bool(readiness_item.get("mock_verified")),
+            "live_verified": False,
+            "live_call_enabled": False,
+            "one_call_plan_ready": bool(spec["one_call_plan_ready"]),
+            "approval_status": "not_requested",
+            "required_approvals": [item["id"] for item in EXTERNAL_AI_LIVE_GATE_REQUIRED_APPROVALS],
+            "constraints": external_ai_live_verification_constraints(),
+            "fixed_prompt": "Return exactly OK.",
+            "abort_conditions": list(EXTERNAL_AI_LIVE_GATE_ABORT_CONDITIONS),
+            "notes": list(spec["notes"]),
+        })
+    return {
+        "ok": True,
+        "read_only": True,
+        "execution_allowed": False,
+        "live_verification_allowed": False,
+        "provider_calls_executed": False,
+        "approval_objects_created": False,
+        "usage_logs_written": False,
+        "generation_results_written": False,
+        "providers": providers,
+        "global_required_approvals": [dict(item) for item in EXTERNAL_AI_LIVE_GATE_REQUIRED_APPROVALS],
+        "budget_token_request_constraints": {
+            "max_provider_calls": 1,
+            "prompt": "Return exactly OK.",
+            "output_token_cap": "minimal provider-supported cap, suggested 16",
+            "budget_cap": "must be approved before live verification",
+            "retries": "disabled",
+            "fallback": "disabled",
+            "parallel_calls": "disabled",
+            "streaming": "disabled",
+            "tool_calling": "disabled",
+            "customer_data": "forbidden",
+        },
+        "logging_expectations": [
+            "provider id",
+            "model id",
+            "timestamp",
+            "request id",
+            "source system",
+            "status",
+            "safe error code",
+            "token usage if returned",
+            "estimated cost if available",
+            "duration",
+            "provider_calls_executed",
+            "live_verified",
+        ],
+        "forbidden_log_fields": [
+            "raw provider key",
+            "auth header value",
+            "bearer-token value",
+            "stored key digest",
+            "full request headers",
+            "full raw provider response",
+            ".env values",
+            "customer confidential data",
+        ],
+        "non_goals": [
+            "approve live provider calls",
+            "implement live Claude support",
+            "change Gemini or Claude provider code",
+            "deploy anything",
+            "change .env",
+            "touch provider credentials",
+            "enable production traffic",
+            "grant external systems provider access",
+            "create DNS, redirects, SSL, Nginx, Cloudflare, R2, or registrar changes",
+            "create worker execution",
+            "mutate projects, tasks, phases, handoffs, approvals, usage logs, or generation results",
+        ],
+        "safety": {
+            "no_live_provider_call": True,
+            "no_secret_output": True,
+            "no_env_mutation": True,
+            "no_deploy": True,
+            "no_production_mutation": True,
+            "no_worker_execution": True,
+            "no_dns_cloudflare_nginx_ssl_r2_mutation": True,
+            "no_approval_object_created": True,
+            "no_usage_log_write": True,
+            "no_generation_result_write": True,
         },
     }
 
@@ -17479,6 +17669,16 @@ def admin_ai_provider_readiness_page():
     )
 
 
+@app.route("/admin/external-ai-live-verification-gate")
+@require_roles("owner", "admin")
+def admin_external_ai_live_verification_gate_page():
+    return render_template(
+        "external_ai_live_verification_gate.html",
+        app_name=APP_NAME,
+        gate=external_ai_live_verification_gate_context(),
+    )
+
+
 def render_external_ai_usage_page():
     rows = external_ai_usage_rows(request.args)
     summary = summarize_external_ai_usage(rows)
@@ -22515,6 +22715,12 @@ def api_admin_automation_planner_external_project_health():
 @require_api_roles("owner", "admin")
 def api_admin_ai_provider_readiness():
     return jsonify(ai_provider_readiness_status())
+
+
+@app.route("/api/admin/external-ai-live-verification-gate", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_external_ai_live_verification_gate():
+    return jsonify(external_ai_live_verification_gate_context())
 
 
 @app.route("/api/admin/external-ai-permission-profiles", methods=["GET", "POST"])

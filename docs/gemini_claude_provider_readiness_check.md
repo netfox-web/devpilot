@@ -20,9 +20,11 @@ Related DevPilot surfaces:
 
 - `/admin/ai-provider-secrets`
 - `/admin/ai-provider-readiness`
+- `/admin/external-ai-live-verification-gate`
 - `/admin/ai-providers`
 - `/admin/external-ai-policies`
 - `/api/admin/ai-provider-readiness`
+- `/api/admin/external-ai-live-verification-gate`
 - `/api/external/ai/generate`
 - External AI usage and audit records
 
@@ -149,6 +151,30 @@ Secret-output boundary:
 - Do not write provider credentials to docs, logs, API responses, or frontend bundles.
 
 The readiness dashboard is not a live verification gate. Live verification remains blocked until a separate explicit approval phase follows `docs/external_ai_live_verification_gate.md`.
+
+## Live Verification Gate UI/API
+
+The read-only live verification gate surfaces are:
+
+```text
+GET /admin/external-ai-live-verification-gate
+GET /api/admin/external-ai-live-verification-gate
+```
+
+Required gate properties:
+
+- `read_only: true`
+- `execution_allowed: false`
+- `live_verification_allowed: false`
+- `provider_calls_executed: false`
+- `approval_objects_created: false`
+- `usage_logs_written: false`
+- `generation_results_written: false`
+- all required approvals show `status: missing`
+- Gemini one-call plan is display-ready only
+- Claude one-call plan remains not ready until live routing is separately implemented and approved
+
+The gate UI/API must not call Gemini, call Claude, enable live provider routing, create approval records, write usage logs, or write generation results.
 
 ## Safety Boundaries
 

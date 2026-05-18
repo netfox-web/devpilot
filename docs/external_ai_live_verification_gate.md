@@ -10,6 +10,15 @@ Define the explicit approval gate required before any live Gemini or Claude veri
 
 This document does not approve live verification by itself. It describes prerequisites, constraints, abort conditions, logging expectations, and non-goals for a future separately approved one-call verification phase.
 
+Read-only gate surfaces:
+
+```text
+GET /admin/external-ai-live-verification-gate
+GET /api/admin/external-ai-live-verification-gate
+```
+
+These surfaces display the checklist only. They do not create approval objects, enable live verification, call providers, write usage logs, write generation results, deploy, change `.env`, or mutate production settings.
+
 ## Live Verification Prerequisites
 
 Before any live provider call is allowed, all prerequisites must be satisfied:
@@ -120,6 +129,17 @@ Approval record should include:
 - storage policy
 - abort conditions
 - responsible operator
+
+Current UI/API gate status:
+
+```text
+approval_status: not_requested
+live_verification_allowed: false
+execution_allowed: false
+provider_calls_executed: false
+```
+
+The gate page/API is not an approval workflow. It lists required approvals but does not record them.
 
 ## Budget, Token, and Request Constraints
 
