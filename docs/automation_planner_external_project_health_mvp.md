@@ -28,6 +28,8 @@ Primary inputs:
 
 Existing surfaces that can provide context:
 
+- `/admin/automation-planner/external-project-health`
+- `/api/admin/automation-planner/external-project-health`
 - `/admin/external-projects`
 - `/admin/external-projects/<source_system>/<external_project_id>`
 - `/admin/external-integration-diagnostics`
@@ -97,7 +99,16 @@ Draft shape:
     "provider_calls_executed": false,
     "deployment_executed": false,
     "dns_changes_executed": false,
-    "secrets_accessed": false
+    "cloudflare_changes_executed": false,
+    "ssl_changes_executed": false,
+    "nginx_changes_executed": false,
+    "r2_changes_executed": false,
+    "secrets_accessed": false,
+    "env_changed": false,
+    "project_mutation_executed": false,
+    "task_mutation_executed": false,
+    "approval_created": false,
+    "handoff_mutation_executed": false
   },
   "generated_at": "2026-05-18T00:00:00"
 }
@@ -175,7 +186,7 @@ This MVP does not:
 
 ### UI
 
-Proposed owner/admin page:
+Owner/admin page:
 
 ```text
 /admin/automation-planner/external-project-health
@@ -196,7 +207,7 @@ Suggested UI sections:
 
 ### API
 
-Proposed owner/admin API:
+Owner/admin API:
 
 ```text
 GET /api/admin/automation-planner/external-project-health
@@ -218,6 +229,13 @@ Expected API properties:
 - no deployment calls
 - no infrastructure mutation
 - deterministic score from local records
+
+Implementation notes:
+
+- If `source_system` is omitted, return an empty selected state with source options and `health_status: not_available`.
+- If selected source/project data is missing, return a safe blocked or attention-needed payload instead of HTTP 500.
+- The health endpoint must not create draft automation plans. Draft plan creation remains a separate later phase.
+- The endpoint may reuse existing read helpers such as registry, events, diagnostics, handoff rows, and usage summaries.
 
 ## Test Plan
 

@@ -460,5 +460,224 @@ class AutomationPlanStoreTest(unittest.TestCase):
         cloudflare_call.assert_not_called()
 
 
+class AutomationPlannerExternalProjectHealthTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import app as app_module
+
+        cls.app_module = app_module
+        cls.app = app_module.app
+        cls.app.testing = True
+        with cls.app.app_context():
+            owner = app_module.query_one("SELECT id FROM users WHERE role IN ('owner', 'admin') AND is_active=1 ORDER BY id LIMIT 1")
+        cls.user_id = owner["id"]
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.key_store_path = Path(self.temp_dir.name) / "external_api_keys.json"
+        self.registry_path = Path(self.temp_dir.name) / "external_project_registry.json"
+        self.events_path = Path(self.temp_dir.name) / "external_project_events.json"
+        self.usage_path = Path(self.temp_dir.name) / "external_ai_usage_log.json"
+        self.env_patch = patch.dict(
+            os.environ,
+            {
+                "DEVPILOT_EXTERNAL_API_KEY_STORE_PATH": str(self.key_store_path),
+                "DEVPILOT_EXTERNAL_PROJECT_REGISTRY_PATH": str(self.registry_path),
+                "DEVPILOT_EXTERNAL_PROJECT_EVENTS_PATH": str(self.events_path),
+                "DEVPILOT_EXTERNAL_AI_USAGE_LOG_PATH": str(self.usage_path),
+                "DEVPILOT_EXTERNAL_API_KEYS": "",
+            },
+            clear=False,
+        )
+        self.env_patch.start()
+        self.write_health_fixture()
+
+    def tearDown(self):
+        self.env_patch.stop()
+        self.temp_dir.cleanup()
+
+    def client(self):
+        client = self.app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = self.user_id
+        return client
+
+    def write_json(self, path, payload):
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def write_health_fixture(self):
+        self.write_json(self.key_store_path, {
+            "keys": [
+                {
+                    "id": "extkey_health",
+                    "source_system": "health-source",
+                    "key_prefix": "dp_ext_health",
+                    "key_hash": "hash-health-source",
+                    "label": "Health source",
+                    "created_at": "2026-05-18 09:00:00",
+                    "last_used_at": "2026-05-18 09:10:00",
+                }
+            ]
+        })
+        self.write_json(self.registry_path, {
+            "projects": [
+                {
+                    "source_system": "health-source",
+                    "external_project_id": "health-prod",
+                    "name": "Health Production",
+                    "project_type": "ai-saas",
+                    "environment": "production",
+                    "status": "active",
+                    "repo_url": "https://github.com/example/health-prod",
+                    "app_url": "https://health.example.test",
+                    "healthcheck_url": "https://health.example.test/health",
+                    "primary_domain": "health.example.test",
+                    "domain_status": "approved",
+                    "created_at": "2026-05-18 09:00:00",
+                    "updated_at": "2026-05-18 09:15:00",
+                    "last_seen_at": "2026-05-18 09:15:00",
+                }
+            ]
+        })
+        self.write_json(self.events_path, {
+            "events": [
+                {
+                    "source_system": "health-source",
+                    "external_project_id": "health-prod",
+                    "event_type": "healthcheck_ok",
+                    "status": "success",
+                    "message": "Project is healthy",
+                    "environment": "production",
+                    "created_at": "2026-05-18 09:20:00",
+                }
+            ]
+        })
+        self.write_json(self.usage_path, {
+            "usage": [
+                {
+                    "id": "usage_health",
+                    "source_system": "health-source",
+                    "request_id": "req-health",
+                    "provider": "gemini",
+                    "model": "gemini-1.5-flash",
+                    "capability": "summary",
+                    "status": "completed",
+                    "input_chars": 10,
+                    "output_chars": 2,
+                    "input_token_estimate": 3,
+                    "output_token_estimate": 1,
+                    "created_at": "2026-05-18 09:25:00",
+                }
+            ]
+        })
+
+    def table_counts(self):
+        with self.app.app_context():
+            return {
+                "projects": self.app_module.query_one("SELECT COUNT(*) AS count FROM projects")["count"],
+                "tasks": self.app_module.query_one("SELECT COUNT(*) AS count FROM tasks")["count"],
+                "project_phases": self.app_module.query_one("SELECT COUNT(*) AS count FROM project_phases")["count"],
+                "approval_requests": self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"],
+                "handoff_logs": self.app_module.query_one("SELECT COUNT(*) AS count FROM handoff_logs")["count"],
+            }
+
+    def test_external_project_health_empty_state_requires_no_source(self):
+        with patch.object(self.app_module, "ai_handoff_rows", return_value=[]):
+            response = self.client().get("/api/admin/automation-planner/external-project-health")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertEqual(payload["health_status"], "not_available")
+        self.assertEqual(payload["risk_score"], 0)
+        self.assertEqual(payload["source_system"], "")
+        self.assertTrue(payload["context"]["sources"])
+        self.assertTrue(payload["safety_checks"]["provider_calls_executed"] is False)
+
+    def test_external_project_health_api_is_read_only_and_low_risk_for_healthy_fixture(self):
+        before = self.table_counts()
+        with patch.object(self.app_module, "ai_handoff_rows", return_value=[]) as handoff_rows:
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                    with patch.object(self.app_module, "call_task_provider") as provider_call:
+                        with patch.object(self.app_module, "run_ai_task") as run_task:
+                            with patch.object(self.app_module, "dispatch_ai_console_task") as dispatch_task:
+                                with patch.object(self.app_module, "cloudflare_request") as cloudflare_call:
+                                    response = self.client().get(
+                                        "/api/admin/automation-planner/external-project-health?source_system=health-source&external_project_id=health-prod"
+                                    )
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertEqual(payload["source_system"], "health-source")
+        self.assertEqual(payload["external_project_id"], "health-prod")
+        self.assertEqual(payload["health_status"], "healthy")
+        self.assertEqual(payload["risk_level"], "low")
+        self.assertEqual(payload["risk_score"], 0)
+        self.assertEqual(payload["context"]["project"]["external_project_id"], "health-prod")
+        self.assertEqual(payload["context"]["usage_summary"]["success_count"], 1)
+        self.assertTrue(any(item["id"] == "recent_events" and item["status"] == "pass" for item in payload["signals"]))
+        self.assertTrue(all(item["execution_allowed"] is False for item in payload["recommended_actions"]))
+        self.assertFalse(payload["safety_checks"]["provider_calls_executed"])
+        self.assertFalse(payload["safety_checks"]["deployment_executed"])
+        self.assertFalse(payload["safety_checks"]["dns_changes_executed"])
+        self.assertFalse(payload["safety_checks"]["cloudflare_changes_executed"])
+        self.assertFalse(payload["safety_checks"]["project_mutation_executed"])
+        combined = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        self.assertNotIn("key_hash", combined)
+        self.assertNotIn("hash-health-source", combined)
+        self.assertNotIn("Authorization", combined)
+        self.assertNotIn("Bearer", combined)
+        self.assertEqual(before, self.table_counts())
+        handoff_rows.assert_called()
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+        provider_call.assert_not_called()
+        run_task.assert_not_called()
+        dispatch_task.assert_not_called()
+        cloudflare_call.assert_not_called()
+
+    def test_external_project_health_missing_project_returns_blocked_without_500(self):
+        with patch.object(self.app_module, "ai_handoff_rows", return_value=[]):
+            response = self.client().get(
+                "/api/admin/automation-planner/external-project-health?source_system=health-source&external_project_id=missing-prod"
+            )
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertEqual(payload["health_status"], "blocked")
+        self.assertEqual(payload["risk_level"], "blocked")
+        self.assertIn("external_project_id was not found for this source", payload["blockers"])
+        self.assertTrue(any(item["id"] == "project_selected" and item["status"] == "fail" for item in payload["signals"]))
+
+    def test_external_project_health_page_owner_admin_and_anonymous_boundary(self):
+        anonymous_page = self.app.test_client().get("/admin/automation-planner/external-project-health")
+        self.assertEqual(anonymous_page.status_code, 302)
+        self.assertIn("/login", anonymous_page.headers.get("Location", ""))
+
+        anonymous_api = self.app.test_client().get("/api/admin/automation-planner/external-project-health")
+        self.assertEqual(anonymous_api.status_code, 403)
+
+        with patch.object(self.app_module, "ai_handoff_rows", return_value=[]):
+            response = self.client().get(
+                "/admin/automation-planner/external-project-health?source_system=health-source&external_project_id=health-prod"
+            )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        body = response.get_data(as_text=True)
+        self.assertIn("External Project Health", body)
+        self.assertIn("health-source", body)
+        self.assertIn("health-prod", body)
+        self.assertIn("healthy", body)
+        self.assertIn("Planning-only MVP", body)
+        self.assertNotIn("key_hash", body)
+        self.assertNotIn("Authorization", body)
+        self.assertNotIn("Bearer", body)
+
+
 if __name__ == "__main__":
     unittest.main()

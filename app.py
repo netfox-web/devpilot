@@ -16810,6 +16810,427 @@ def collect_automation_context(source_system, external_project_id=None):
     }
 
 
+def automation_planner_external_project_health_safety_checks():
+    return {
+        "provider_calls_executed": False,
+        "deployment_executed": False,
+        "dns_changes_executed": False,
+        "cloudflare_changes_executed": False,
+        "ssl_changes_executed": False,
+        "nginx_changes_executed": False,
+        "r2_changes_executed": False,
+        "secrets_accessed": False,
+        "env_changed": False,
+        "project_mutation_executed": False,
+        "task_mutation_executed": False,
+        "approval_created": False,
+        "handoff_mutation_executed": False,
+        "worker_execution": False,
+    }
+
+
+def automation_planner_health_signal(signal_id, status, severity, message, score=0):
+    return {
+        "id": signal_id,
+        "status": status,
+        "severity": severity,
+        "message": message,
+        "score": score,
+    }
+
+
+def automation_planner_health_action(action_type, title, description, requires_approval=False):
+    return {
+        "type": action_type,
+        "title": title,
+        "description": description,
+        "requires_approval": bool(requires_approval),
+        "execution_allowed": False,
+    }
+
+
+def automation_planner_external_project_health_level(score, blockers):
+    if blockers or score >= 85:
+        return "blocked", "blocked"
+    if score >= 60:
+        return "attention_needed", "high"
+    if score >= 25:
+        return "attention_needed", "medium"
+    return "healthy", "low"
+
+
+def automation_planner_external_project_health_context(source_system=None, external_project_id=None):
+    selected_source = external_api_key_preview(source_system, 120)
+    selected_project_id = external_api_key_preview(external_project_id, 160)
+    sources = external_integration_source_catalog()
+
+    if not selected_source:
+        return {
+            "ok": True,
+            "read_only": True,
+            "execution_allowed": False,
+            "source_system": "",
+            "external_project_id": "",
+            "health_status": "not_available",
+            "risk_level": "low",
+            "risk_score": 0,
+            "summary": "Select a source_system to generate a read-only external project health view.",
+            "signals": [
+                automation_planner_health_signal(
+                    "source_selection",
+                    "not_available",
+                    "info",
+                    "No source_system was selected.",
+                    0,
+                )
+            ],
+            "blockers": [],
+            "warnings": [],
+            "recommended_actions": [
+                automation_planner_health_action(
+                    "manual_check",
+                    "Select an external source",
+                    "Choose a source_system and optional external_project_id to inspect local registry, event, handoff, usage, and diagnostic signals.",
+                )
+            ],
+            "context": {
+                "sources": sources,
+                "project": {},
+                "projects": [],
+                "recent_events": [],
+                "recent_handoffs": [],
+                "usage_summary": {},
+                "diagnostics": {},
+            },
+            "safety_checks": automation_planner_external_project_health_safety_checks(),
+        }
+
+    context = collect_automation_context(selected_source, selected_project_id)
+    project = context.get("project") or {}
+    projects = context.get("projects") or []
+    events = context.get("events") or []
+    handoffs = context.get("handoffs") or []
+    usage_rows = context.get("usage_rows") or []
+    usage_summary = context.get("usage_summary") or {}
+    diagnostics = context.get("diagnostics") or {}
+    key_status = context.get("key_status") or {}
+    score = 0
+    signals = []
+    blockers = []
+    warnings = []
+    recommended_actions = []
+
+    if not context.get("source_exists"):
+        score += 85
+        blockers.append("source_system was not found in external integration context")
+        signals.append(automation_planner_health_signal(
+            "source_exists",
+            "fail",
+            "blocked",
+            "The selected source_system is not present in keys, registry, events, usage, or handoffs.",
+            85,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "metadata_update",
+            "Register or configure the external source",
+            "Create a managed External API Key or register project metadata for this source_system before planning automation.",
+        ))
+    else:
+        signals.append(automation_planner_health_signal(
+            "source_exists",
+            "pass",
+            "info",
+            "The selected source_system exists in local integration context.",
+            0,
+        ))
+
+    if not key_status.get("active_count"):
+        score += 50
+        warnings.append("No active external API credential is visible for this source.")
+        signals.append(automation_planner_health_signal(
+            "active_credential",
+            "warn",
+            "high",
+            "No active external API credential was found for this source.",
+            50,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "policy_review",
+            "Review external API credential status",
+            "Confirm whether this source should have an active DevPilot External API Key before relying on automated health signals.",
+        ))
+    else:
+        signals.append(automation_planner_health_signal(
+            "active_credential",
+            "pass",
+            "info",
+            "At least one active external API credential is visible.",
+            0,
+        ))
+
+    if selected_project_id and not project:
+        score += 85
+        blockers.append("external_project_id was not found for this source")
+        signals.append(automation_planner_health_signal(
+            "project_selected",
+            "fail",
+            "blocked",
+            "The selected external_project_id is not registered for this source.",
+            85,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "metadata_update",
+            "Register the external project",
+            "Ask the external project to register metadata through the existing registry API before planning remediation.",
+        ))
+    elif project:
+        signals.append(automation_planner_health_signal(
+            "project_selected",
+            "pass",
+            "info",
+            "The selected external project is registered.",
+            0,
+        ))
+    elif not projects:
+        score += 25
+        warnings.append("No external project registry record is available for this source.")
+        signals.append(automation_planner_health_signal(
+            "project_registry",
+            "warn",
+            "medium",
+            "No registered external project was found for this source.",
+            25,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "metadata_update",
+            "Register project metadata",
+            "Ask the external project to send a registry record with project identity, runtime URL, repo URL, and healthcheck URL.",
+        ))
+    else:
+        signals.append(automation_planner_health_signal(
+            "project_registry",
+            "pass",
+            "info",
+            f"{len(projects)} registered external project record(s) are available.",
+            0,
+        ))
+
+    target_project = project or (projects[0] if len(projects) == 1 else {})
+    if target_project:
+        missing_runtime = not (target_project.get("app_url") or target_project.get("healthcheck_url"))
+        missing_repo = not target_project.get("repo_url")
+        if missing_runtime:
+            score += 20
+            warnings.append("Runtime URL or healthcheck URL metadata is missing.")
+            signals.append(automation_planner_health_signal(
+                "runtime_metadata",
+                "warn",
+                "medium",
+                "Runtime URL or healthcheck URL metadata is missing.",
+                20,
+            ))
+            recommended_actions.append(automation_planner_health_action(
+                "metadata_update",
+                "Confirm runtime metadata",
+                "Update external project metadata with app_url and/or healthcheck_url.",
+            ))
+        else:
+            signals.append(automation_planner_health_signal("runtime_metadata", "pass", "info", "Runtime or healthcheck metadata is present.", 0))
+        if missing_repo:
+            score += 10
+            warnings.append("Repository URL metadata is missing.")
+            signals.append(automation_planner_health_signal(
+                "repo_metadata",
+                "warn",
+                "low",
+                "Repository URL metadata is missing.",
+                10,
+            ))
+        else:
+            signals.append(automation_planner_health_signal("repo_metadata", "pass", "info", "Repository URL metadata is present.", 0))
+
+    failed_events = [item for item in events if item.get("status") in ("failed", "blocked", "warning")]
+    success_events = [item for item in events if item.get("status") in ("success", "info", "running")]
+    if not events:
+        score += 25
+        warnings.append("No recent external project event is available.")
+        signals.append(automation_planner_health_signal(
+            "recent_events",
+            "not_available",
+            "medium",
+            "No recent external project event is available.",
+            25,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "manual_check",
+            "Request a healthcheck event",
+            "Ask the external project to send a safe healthcheck_ok event through the project events API.",
+        ))
+    elif failed_events:
+        score += 30
+        warnings.append("Recent external project events include warning, failed, or blocked status.")
+        signals.append(automation_planner_health_signal(
+            "recent_events",
+            "warn",
+            "high",
+            f"{len(failed_events)} recent event(s) are warning, failed, or blocked.",
+            30,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "manual_check",
+            "Review failed external events",
+            "Inspect recent event messages before any operational change.",
+        ))
+    else:
+        if success_events:
+            score -= 10
+        signals.append(automation_planner_health_signal(
+            "recent_events",
+            "pass",
+            "info",
+            f"{len(events)} recent event record(s) were summarized.",
+            -10 if success_events else 0,
+        ))
+
+    pending_handoffs = [item for item in handoffs if item.get("handoff_status") in ("pending", "accepted")]
+    high_risk_handoffs = [item for item in pending_handoffs if item.get("risk_level") == "high"]
+    if high_risk_handoffs:
+        score += 30
+        warnings.append("Pending high-risk handoff requires review.")
+        signals.append(automation_planner_health_signal(
+            "recent_handoffs",
+            "warn",
+            "high",
+            f"{len(high_risk_handoffs)} pending high-risk handoff(s) require review.",
+            30,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "handoff_review",
+            "Review high-risk handoffs",
+            "Open AI Handoffs and resolve pending high-risk handoffs manually.",
+        ))
+    elif pending_handoffs:
+        score += 15
+        warnings.append("Pending handoff requires review.")
+        signals.append(automation_planner_health_signal(
+            "recent_handoffs",
+            "warn",
+            "medium",
+            f"{len(pending_handoffs)} pending handoff(s) require review.",
+            15,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "handoff_review",
+            "Review pending handoffs",
+            "Open AI Handoffs and decide whether each pending handoff should be accepted, completed, or rejected manually.",
+        ))
+    else:
+        signals.append(automation_planner_health_signal(
+            "recent_handoffs",
+            "pass" if handoffs else "not_available",
+            "info",
+            f"{len(handoffs)} recent handoff record(s) were summarized.",
+            0,
+        ))
+
+    failed_usage_count = usage_summary.get("failed_count") or 0
+    if failed_usage_count:
+        score += 20
+        warnings.append("Recent External AI usage includes failed or rejected requests.")
+        signals.append(automation_planner_health_signal(
+            "usage_summary",
+            "warn",
+            "medium",
+            f"{failed_usage_count} recent External AI usage request(s) failed or were rejected.",
+            20,
+        ))
+        recommended_actions.append(automation_planner_health_action(
+            "policy_review",
+            "Review External AI usage failures",
+            "Inspect usage records and source policy before enabling additional automation.",
+        ))
+    else:
+        signals.append(automation_planner_health_signal(
+            "usage_summary",
+            "pass" if usage_rows else "not_available",
+            "info",
+            f"{len(usage_rows)} recent External AI usage record(s) were summarized.",
+            0,
+        ))
+
+    diagnostic_warning_count = 0
+    for key in ("active_key_never_used",):
+        if diagnostics.get(key):
+            diagnostic_warning_count += 1
+    if diagnostic_warning_count:
+        diagnostic_score = min(30, diagnostic_warning_count * 10)
+        score += diagnostic_score
+        warnings.append("Diagnostics include integration warnings.")
+        signals.append(automation_planner_health_signal(
+            "diagnostics",
+            "warn",
+            "medium",
+            "Diagnostics include integration warnings.",
+            diagnostic_score,
+        ))
+    else:
+        signals.append(automation_planner_health_signal(
+            "diagnostics",
+            "pass" if diagnostics else "not_available",
+            "info",
+            "No diagnostic warning was detected." if diagnostics else "Diagnostics are not available for this selection.",
+            0,
+        ))
+
+    if target_project and target_project.get("repo_url") and (target_project.get("app_url") or target_project.get("healthcheck_url")):
+        score -= 10
+
+    score = max(0, min(100, score))
+    health_status, risk_level = automation_planner_external_project_health_level(score, blockers)
+    if not recommended_actions:
+        recommended_actions.append(automation_planner_health_action(
+            "manual_check",
+            "Continue read-only monitoring",
+            "Current local signals look healthy. Continue monitoring before planning higher-risk automation.",
+        ))
+
+    summary_target = selected_project_id or selected_source
+    if health_status == "healthy":
+        summary = f"{summary_target} has healthy local integration signals for this MVP."
+    elif health_status == "blocked":
+        summary = f"{summary_target} is blocked by missing required local integration context."
+    else:
+        summary = f"{summary_target} needs attention before any future automation planning."
+
+    return {
+        "ok": True,
+        "read_only": True,
+        "execution_allowed": False,
+        "source_system": selected_source,
+        "external_project_id": selected_project_id,
+        "health_status": health_status,
+        "risk_level": risk_level,
+        "risk_score": score,
+        "summary": summary,
+        "signals": signals,
+        "blockers": blockers,
+        "warnings": warnings,
+        "recommended_actions": recommended_actions,
+        "context": {
+            "sources": sources,
+            "source_summary": context.get("source_summary") or {},
+            "project": project,
+            "projects": projects,
+            "recent_events": events[:10],
+            "recent_handoffs": handoffs[:10],
+            "usage_summary": usage_summary,
+            "recent_usage": usage_rows[:10],
+            "diagnostics": diagnostics or {},
+        },
+        "safety_checks": automation_planner_external_project_health_safety_checks(),
+    }
+
+
 def generate_automation_plan_from_context(source_system, external_project_id=None):
     context = collect_automation_context(source_system, external_project_id)
     source = context.get("source_system")
@@ -17011,6 +17432,20 @@ def admin_automation_planner_page():
         "automation_planner.html",
         app_name=APP_NAME,
         planner=automation_planner_payload(request.args),
+    )
+
+
+@app.route("/admin/automation-planner/external-project-health")
+@require_roles("owner", "admin")
+def admin_automation_planner_external_project_health_page():
+    health = automation_planner_external_project_health_context(
+        request.args.get("source_system"),
+        request.args.get("external_project_id"),
+    )
+    return render_template(
+        "automation_planner_external_project_health.html",
+        app_name=APP_NAME,
+        health=health,
     )
 
 
@@ -22065,6 +22500,15 @@ def api_admin_ai_providers():
         "read_only": True,
         "provider_calls_executed": False,
     })
+
+
+@app.route("/api/admin/automation-planner/external-project-health", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_automation_planner_external_project_health():
+    return jsonify(automation_planner_external_project_health_context(
+        request.args.get("source_system"),
+        request.args.get("external_project_id"),
+    ))
 
 
 @app.route("/api/admin/ai-provider-readiness", methods=["GET"])

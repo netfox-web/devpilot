@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">External Project Health</h1>
+    <div class="text-muted small">Automation Planner read-only health view for external project registry, events, handoffs, usage, and diagnostics.</div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary" href="/admin/automation-planner">Automation Planner</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-sources{% if health.source_system %}/{{ health.source_system|urlencode }}{% endif %}">External Sources</a>
+    <a class="btn btn-outline-secondary" href="/admin/external-integration-diagnostics{% if health.source_system %}?source_system={{ health.source_system|urlencode }}{% endif %}">Diagnostics</a>
+    <a class="btn btn-outline-secondary" href="/api/admin/automation-planner/external-project-health{% if health.source_system %}?source_system={{ health.source_system|urlencode }}{% if health.external_project_id %}&external_project_id={{ health.external_project_id|urlencode }}{% endif %}{% endif %}">JSON</a>
+  </div>
+</div>
+
+<div class="alert alert-warning page-note">
+  <div class="fw-semibold">Planning-only MVP</div>
+  <div class="small">
+    This page does not call providers, run workers, deploy, write DNS, write Cloudflare, write Nginx, change SSL, mutate R2,
+    modify `.env`, or mutate project, task, phase, approval, or handoff records.
+  </div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="/admin/automation-planner/external-project-health">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label">Source system</label>
+        <select class="form-select" name="source_system">
+          <option value="">Select source</option>
+          {% for source in health.context.sources %}
+            <option value="{{ source.source_system }}" {% if health.source_system == source.source_system %}selected{% endif %}>
+              {{ source.source_system }}{% if source.project_count %} - projects {{ source.project_count }}{% endif %}{% if source.event_count %} - events {{ source.event_count }}{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label">External project</label>
+        <select class="form-select" name="external_project_id">
+          <option value="">All projects / source summary</option>
+          {% for project in health.context.projects %}
+            <option value="{{ project.external_project_id }}" {% if health.external_project_id == project.external_project_id %}selected{% endif %}>
+              {{ project.name or project.external_project_id }} / {{ project.external_project_id }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-primary">Inspect</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Health</div>
+        <div class="h4 mb-0">{{ health.health_status }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Risk</div>
+        <div class="h4 mb-0">{{ health.risk_level }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Risk score</div>
+        <div class="display-6">{{ health.risk_score }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Execution allowed</div>
+        <div class="h4 mb-0">{{ 'true' if health.execution_allowed else 'false' }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-info py-2">{{ health.summary }}</div>
+
+<div class="row g-3">
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Signals</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Signal</th><th>Status</th><th>Severity</th><th>Score</th><th>Message</th></tr></thead>
+          <tbody>
+            {% for signal in health.signals %}
+            <tr>
+              <td><code>{{ signal.id }}</code></td>
+              <td><span class="badge text-bg-secondary">{{ signal.status }}</span></td>
+              <td>{{ signal.severity }}</td>
+              <td>{{ signal.score }}</td>
+              <td class="small">{{ signal.message }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recommended Actions</div>
+      <div class="list-group list-group-flush">
+        {% for action in health.recommended_actions %}
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between gap-2">
+            <div class="fw-semibold">{{ action.title }}</div>
+            <span class="badge text-bg-secondary">{{ action.type }}</span>
+          </div>
+          <div class="small text-muted">{{ action.description }}</div>
+          <div class="small mt-1">requires_approval={{ 'true' if action.requires_approval else 'false' }} / execution_allowed={{ 'true' if action.execution_allowed else 'false' }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Blockers / Warnings</div>
+      <div class="card-body small">
+        <div class="fw-semibold mb-1">Blockers</div>
+        {% if health.blockers %}
+          <ul>
+            {% for item in health.blockers %}<li>{{ item }}</li>{% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted mb-3">No blockers.</div>
+        {% endif %}
+        <div class="fw-semibold mb-1">Warnings</div>
+        {% if health.warnings %}
+          <ul class="mb-0">
+            {% for item in health.warnings %}<li>{{ item }}</li>{% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted">No warnings.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safety Checks</div>
+      <div class="card-body small">
+        <div class="row g-2">
+          {% for key, value in health.safety_checks.items() %}
+          <div class="col-md-6">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">{{ key }}</div>
+              <div class="fw-semibold">{{ 'true' if value else 'false' }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Project Context</div>
+      <div class="card-body small">
+        {% if health.context.project %}
+          <dl class="row mb-0">
+            <dt class="col-5">source</dt><dd class="col-7"><code>{{ health.context.project.source_system }}</code></dd>
+            <dt class="col-5">project</dt><dd class="col-7"><code>{{ health.context.project.external_project_id }}</code></dd>
+            <dt class="col-5">name</dt><dd class="col-7">{{ health.context.project.name }}</dd>
+            <dt class="col-5">status</dt><dd class="col-7">{{ health.context.project.status }}</dd>
+            <dt class="col-5">app url</dt><dd class="col-7 text-break">{{ health.context.project.app_url or '-' }}</dd>
+            <dt class="col-5">healthcheck</dt><dd class="col-7 text-break">{{ health.context.project.healthcheck_url or '-' }}</dd>
+          </dl>
+        {% else %}
+          <div class="text-muted">No single project selected.</div>
+          <div class="mt-2">Projects in context: {{ health.context.projects|length }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Recent Events</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Event</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>
+            {% for event in health.context.recent_events %}
+            <tr><td>{{ event.event_type }}</td><td>{{ event.status }}</td><td class="small text-muted">{{ event.created_at }}</td></tr>
+            {% else %}
+            <tr><td colspan="3" class="text-muted text-center py-3">No events.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Usage Summary</div>
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-6">requests</dt><dd class="col-6">{{ health.context.usage_summary.total_requests|default(0) }}</dd>
+          <dt class="col-6">success</dt><dd class="col-6">{{ health.context.usage_summary.success_count|default(0) }}</dd>
+          <dt class="col-6">failed</dt><dd class="col-6">{{ health.context.usage_summary.failed_count|default(0) }}</dd>
+          <dt class="col-6">tokens</dt><dd class="col-6">{{ health.context.usage_summary.total_tokens|default(0) }}</dd>
+          <dt class="col-6">estimated cost</dt><dd class="col-6">{{ health.context.usage_summary.estimated_cost_usd|default(0) }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
