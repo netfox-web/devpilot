@@ -10,6 +10,8 @@ This document turns the current DevPilot Product Domain catalog into a launch pl
 
 Implementation status: the launch plan dashboard/API was implemented in Phase 3 (`55e0418`), and the domain execution dry-run center was implemented in Phase 6 (`5c680bf`). Execution remains disabled. This document does not execute DNS, redirects, SSL, Nginx, Cloudflare, R2, registrar, deployment, hosting, or production setting changes.
 
+Approval workflow boundary: Phase 8 defines future approval objects for `domain_execution`, `dns_write`, `cloudflare_write`, `nginx_write`, `ssl_change`, `registrar_nameserver_change`, and `r2_mutation` in `docs/approval_object_workflow_design.md`. This matrix remains planning-only and does not create approvals or execute domain actions.
+
 ## Source Inputs
 
 - `services/product_domains.py`

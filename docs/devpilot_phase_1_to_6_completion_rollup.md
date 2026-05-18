@@ -187,6 +187,14 @@ Needs approval:
 - Connect approval checklist concepts to existing `approval_requests`.
 - No execution.
 
+Phase 8 design source:
+
+```text
+docs/approval_object_workflow_design.md
+```
+
+The design keeps approval objects as a future unifying layer for live provider calls, domain execution, deploy, infrastructure mutation, worker execution, and project/task lifecycle changes. It does not create approvals or execute actions.
+
 ### Phase 9 - Task Queue Generator
 
 - Convert ChatGPT, GitHub issue, or admin note inputs into `docs/ai_coding_agent_task_queue.md` pending items.

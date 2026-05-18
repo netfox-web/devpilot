@@ -12,6 +12,8 @@ This document does not approve live verification by itself. It describes prerequ
 
 Implementation status: implemented as read-only UI/API in Phase 5 (`439dd2d`). The gate displays prerequisites and required approvals only; `live_verification_allowed=false` and `execution_allowed=false`.
 
+Approval workflow boundary: Phase 8 defines `external_ai_live_verification` approval objects in `docs/approval_object_workflow_design.md`. This document remains a gate checklist only. It does not create approval objects, approve live calls, or execute provider requests.
+
 Read-only gate surfaces:
 
 ```text

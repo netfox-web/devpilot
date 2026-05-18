@@ -10,6 +10,8 @@ This document proposes a canonical-domain strategy for the AI Office Product Dom
 
 Implementation status: canonical strategy metadata is surfaced in the Phase 3 Product Domain Launch Plan Dashboard and the Phase 6 Domain Execution Dry-run Center. These surfaces are read-only; no DNS, redirect, SSL, Nginx, Cloudflare, R2, registrar, deploy, or production mutation is executed.
 
+Approval workflow boundary: Phase 8 defines future approval objects for canonical-domain execution decisions in `docs/approval_object_workflow_design.md`. This strategy remains advisory and does not create approvals or write redirects, DNS, SSL, Nginx, Cloudflare, R2, registrar, deploy, or production settings.
+
 It is based on the fixed product-domain architecture:
 
 ```text

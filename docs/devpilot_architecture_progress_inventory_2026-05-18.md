@@ -64,6 +64,14 @@ Recommended next phases:
 - Phase 11: Optional Live Verification Implementation after approval.
 - Phase 12: Domain Execution Approval Workflow.
 
+Phase 8 design note:
+
+```text
+docs/approval_object_workflow_design.md
+```
+
+Approval Object Workflow is the proposed unifying layer for future high-risk action requests. It should model request intent, risk level, dry-run snapshot, required approvers, safety checks, abort conditions, status, and audit trail before any live provider call, domain execution, deploy, DNS/Cloudflare/Nginx/SSL/R2 mutation, worker execution, or project/task lifecycle mutation is allowed.
+
 ## 1. Core Admin Console
 
 DevPilot has a broad admin console for operations and safety review.
@@ -91,6 +99,7 @@ Current posture:
 - Read-only first.
 - Dry-run before write.
 - Explicit approval before production-impacting actions.
+- Future high-risk approval intent should converge on approval objects before execution is considered.
 
 ## 2. Product Domain Architecture
 
@@ -409,6 +418,7 @@ Implementation status:
 - External Project Health Planner is implemented as read-only UI/API in Phase 4.
 - It reports health, risk score, signals, blockers, warnings, recommended actions, context, and safety checks.
 - Execution remains disabled.
+- Future recommended actions that require mutation should create approval intent first, not execute directly.
 
 Analyst decision:
 

@@ -4,6 +4,8 @@ This runbook defines a safe scheduled-task pattern for letting local Codex perio
 
 Implementation status: implemented in Phase 1 (`7e9d233`) as a local task-queue-driven runner. The runner reads `docs/ai_coding_agent_task_queue.md`, does not query GitHub Issues directly, does not require `gh`, and logs only when no pending task exists.
 
+Approval workflow boundary: Phase 8 keeps the scheduled runner from creating approval objects. Future queue-driven approval creation should require an explicit pending task and should default to draft approval objects only, not execution.
+
 Final status:
 
 ```text

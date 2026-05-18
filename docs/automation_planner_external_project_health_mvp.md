@@ -12,6 +12,8 @@ The MVP should help operators inspect external project registry records, events,
 
 Implementation status: implemented as read-only UI/API in Phase 4 (`a9d3e17`). It does not deploy, restart services, call AI providers, create DNS records, change Cloudflare, change SSL, change Nginx, mutate R2, change `.env`, or touch secrets.
 
+Approval workflow boundary: Phase 8 defines future approval objects for planner recommendations that require mutation in `docs/approval_object_workflow_design.md`. This health planner remains read-only and does not create approval objects or execute recommended actions.
+
 ## Inputs
 
 Primary inputs:

@@ -11,6 +11,8 @@ It is intentionally a readiness check, not an activation step. Passing this chec
 
 Implementation status: the AI Provider Readiness Dashboard was implemented as read-only UI/API in Phase 2 (`2428b1f`), and the External AI Live Verification Gate was implemented as read-only UI/API in Phase 5 (`439dd2d`). Provider live calls remain disabled and require a later explicit approval phase.
 
+Approval workflow boundary: Phase 8 defines future `external_ai_live_verification` approval objects in `docs/approval_object_workflow_design.md`. This readiness checklist does not create approvals, approve live verification, call Gemini, call Claude, or enable provider traffic.
+
 ## Scope
 
 Providers covered:
