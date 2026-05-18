@@ -633,7 +633,7 @@ Important mismatch:
 - Actual staging port from Docker: `5012->5000`
 - Port `5011` is occupied by `gkh-dispatch`.
 
-Corrected NAS-side preflight result:
+Corrected NAS-side preflight result, now superseded:
 
 | Check | Result | Notes |
 | --- | --- | --- |
@@ -661,46 +661,68 @@ Corrected NAS-side preflight result:
 | `docker-compose.yml` | pass | exists |
 | `.env` | pass | exists; content not printed |
 | `data/uploads/backups/scripts` | pass | exist |
-| port `5012` evidence | pass | `devpilot-project-manager-staging` maps `5012->5000` |
+| port `5012` evidence | superseded | `devpilot-project-manager-staging` maps `5012->5000`; later human correction says the correct port should be `5010` |
+
+Latest target contradiction:
+
+```text
+classification: target contradiction detected
+gate: blocked
+```
+
+The earlier corrected preflight was for `/volume1/docker-staging/devpilot` on port `5012`. Human correction later stated that `5012` is old and that the correct port should be `5010`.
+
+This creates a major staging / production boundary contradiction because earlier Docker evidence associated `5010` with:
+
+- container `devpilot-project-manager`
+- compose project `devpilot`
+- service `devpilot`
+- working directory `/volume1/docker/devpilot`
+- production URL `https://devpilot.aicenter.com.tw/`
+
+Therefore, the corrected NAS-side preflight must no longer be treated as passed. The readiness gate is blocked until the staging / production target boundary is revalidated.
 
 Remaining blockers:
 
 - Old documented expected path does not exist.
 - Old documented planned port is not the staging port.
+- Target contradiction detected: `5012` was previously treated as staging, but human correction now says the correct port should be `5010`.
+- Prior evidence associates `5010` with the production runtime and production URL.
 - Production and staging evidence must remain separated.
 - Production URL must not be treated as staging evidence.
 - Staging public URL/domain is still unconfirmed.
 - Documentation expected path and port must be updated in any later approved docs phase if `/volume1/docker-staging/devpilot:5012` remains the chosen target.
 - Runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
-- Deployment still requires separate explicit human approval.
+- No further deployment action may proceed until the target contradiction is resolved.
 
 Required unblock:
 
 - Human must decide one of:
-  - proceed to a separate explicit deployment approval phase, or
-  - update deployment docs from `/volume1/docker/devpilot-staging:5011` to `/volume1/docker-staging/devpilot:5012` in a docs-only correction phase, or
-  - stop deployment readiness if staging URL/domain ownership remains unresolved.
+  - `5010` is production only; staging target still needs separate confirmation.
+  - `5010` is the intended target for this operation, meaning this is production readiness, not staging.
+  - staging / production labels are outdated and must be remapped before any deployment process continues.
 
 Staging public URL / domain must be explicitly confirmed before readiness can pass. The production URL `https://devpilot.aicenter.com.tw/` is not staging evidence.
 
 Deployment decision:
 
-- Deployment is not approved.
-- Deployment was not executed.
-- Corrected NAS-side read-only preflight passed.
-- Passing corrected NAS-side preflight does not equal deployment approval.
-- Deployment must not proceed.
+- Classification is `target contradiction detected`.
+- Gate is `blocked`.
+- A staging deployment build/up was executed against `/volume1/docker-staging/devpilot` on port `5012` before the later port correction arrived.
+- That execution must not be treated as approval to continue.
+- No further deployment, restart, build, pull, or Docker action is approved.
+- Readiness must not be marked passed until the staging / production boundary is revalidated.
 
 Safety confirmation:
 
-- No deploy was executed.
-- No restart was executed.
-- No build or pull was executed.
+- No further deploy is approved.
+- No further restart is approved.
+- No further build or pull is approved.
 - No `docker run` was executed.
-- No `docker compose up/down/restart/build/pull` was executed.
+- No `docker compose down/restart/pull` was executed.
 - No `git pull/push/merge/rebase` was executed on NAS.
 - No `mkdir/rm/mv/cp` was executed on NAS.
-- No file edits were made on NAS.
+- Source files were synced to `/volume1/docker-staging/devpilot` as part of the previously approved staging deployment attempt; no additional NAS file edits are approved after the contradiction.
 - No NAS setting was changed.
 - No `.env` content was read or printed.
 - No secrets were touched.
@@ -710,12 +732,13 @@ Safety confirmation:
 
 DevPilot appears structurally ready for a NAS staging/test deployment plan, but this report is not an approval to deploy.
 
-Current readiness is conditional go for planning and preflight only.
+Current readiness is blocked because the staging target and port are contradictory.
 
 Primary blockers before actual staging deployment:
 
-- Verify `/volume1/docker/devpilot-staging` exists and contains the intended commit.
-- Verify Docker Compose config maps `5011:5000`.
+- Revalidate whether `5010` is production-only or the intended target for this operation.
+- Revalidate whether `/volume1/docker-staging/devpilot:5012` is still staging or an outdated staging runtime.
+- Do not treat `https://devpilot.aicenter.com.tw/` as staging evidence; it is production.
 - Prepare staging-only `.env` without exposing values.
 - Confirm persistent storage and backup/rollback plan.
 - Confirm reverse proxy and SSL remain deferred for the first staging/test instance.
