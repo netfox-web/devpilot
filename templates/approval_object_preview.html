@@ -13,6 +13,7 @@
     </div>
   </div>
   <div>
+    <a class="btn btn-outline-secondary btn-sm" href="/admin/approval-objects">Approval Objects</a>
     <a class="btn btn-outline-secondary btn-sm" href="/admin/ai-coding-agent-task-generator">Task Generator</a>
   </div>
 </div>
@@ -20,8 +21,9 @@
 <div class="alert alert-warning page-note py-2">
   <div class="fw-semibold">Approval boundary</div>
   <div class="small">
-    This page previews an approval payload only. It does not save to DB/JSON/file, create <code>approval_requests</code>,
-    approve, execute, call providers, write usage logs, or write generation results.
+    This page previews an approval payload. Level 7B allows explicitly creating a persisted draft through
+    <code>/api/admin/approval-objects/draft</code>, but drafts still do not create <code>approval_requests</code>,
+    approve, reject, execute, call providers, write usage logs, or write generation results.
   </div>
 </div>
 
@@ -55,6 +57,7 @@
             </select>
           </div>
           <button class="btn btn-primary" type="submit">Preview</button>
+          <button class="btn btn-outline-warning ms-2" id="create-draft-button" type="button">Create Draft Only</button>
         </form>
       </div>
     </div>
@@ -135,6 +138,28 @@ document.getElementById("approval-preview-form").addEventListener("submit", asyn
     .map((item) => `<span class="badge text-bg-warning me-1">${item.role}: ${item.status}</span>`)
     .join("");
   document.getElementById("approval_json").textContent = JSON.stringify(data.approval_preview, null, 2);
+});
+
+document.getElementById("create-draft-button").addEventListener("click", async function () {
+  const payload = {
+    type: document.getElementById("type").value,
+    title: document.getElementById("title").value,
+    source_surface: document.getElementById("source_surface").value,
+    risk_level: document.getElementById("risk_level").value,
+    target: {},
+    dry_run_snapshot: {preview_only: true}
+  };
+  const response = await fetch("/api/admin/approval-objects/draft", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (data.ok && data.approval_object && data.approval_object.id) {
+    window.location.href = `/admin/approval-objects/${data.approval_object.id}`;
+  } else {
+    document.getElementById("approval_json").textContent = JSON.stringify(data, null, 2);
+  }
 });
 </script>
 {% endblock %}

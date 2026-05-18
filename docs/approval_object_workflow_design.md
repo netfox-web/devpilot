@@ -1,7 +1,7 @@
 # Approval Object Workflow Design
 
 Date: 2026-05-18
-Status: preview-only UI/API scaffold implemented in Level 7; approval persistence remains disabled
+Status: draft persistence implemented in Level 7B; approval and execution remain disabled
 
 ## Purpose
 
@@ -10,6 +10,8 @@ Approval Object Workflow is the future human approval layer for high-risk DevPil
 It does not execute actions automatically. It provides a shared model for request intent, risk level, dry-run or diff snapshot, required approvers, status, safety checks, abort conditions, and audit trail.
 
 Level 7 implementation status: draft-only preview UI/API is available at `/admin/approval-object-preview` and `/api/admin/approval-object-preview`. It does not save approval objects, create `approval_requests`, approve, execute, call providers, write usage logs, or write generation results.
+
+Level 7B implementation status: persisted draft approval objects are available through `/admin/approval-objects`, `/api/admin/approval-objects`, and `/api/admin/approval-objects/draft`. Draft persistence does not approve, reject, execute, create `approval_requests`, call providers, write usage logs, or write generation results.
 
 The goal is to make high-risk action review consistent across provider verification, domain execution, deployment, infrastructure mutation, worker execution, and project/task lifecycle changes.
 

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">Approval Objects</h1>
+    <div class="text-muted small">Draft approval objects for high-risk actions. Draft-only; no approval or execution.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">DRAFTS ONLY</span>
+      <span class="badge text-bg-secondary">NO APPROVE</span>
+      <span class="badge text-bg-secondary">NO REJECT</span>
+      <span class="badge text-bg-secondary">NO EXECUTE</span>
+      <span class="badge text-bg-secondary">NO PROVIDER CALL</span>
+    </div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="/admin/approval-object-preview">Preview Draft</a>
+    <a class="btn btn-outline-secondary btn-sm" href="/api/admin/approval-objects">JSON</a>
+  </div>
+</div>
+
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">Draft persistence boundary</div>
+  <div class="small">
+    Approval objects here are saved drafts only. This page does not create <code>approval_requests</code>,
+    approve, reject, execute, call providers, write usage logs, deploy, or mutate infrastructure.
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="fw-bold">Draft Approval Objects</div>
+    <span class="badge text-bg-secondary">{{ approval_objects|length }} records</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Title</th>
+          <th>Status</th>
+          <th>Risk</th>
+          <th>Created</th>
+          <th>Execution</th>
+          <th>Approvals</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in approval_objects %}
+        <tr>
+          <td><a href="/admin/approval-objects/{{ item.id }}"><code>{{ item.id }}</code></a></td>
+          <td><span class="badge text-bg-light">{{ item.type }}</span></td>
+          <td>{{ item.title }}</td>
+          <td><span class="badge text-bg-warning">{{ item.status }}</span></td>
+          <td><span class="badge text-bg-danger">{{ item.risk_level }}</span></td>
+          <td class="small">{{ item.created_at }}</td>
+          <td class="small">execution_allowed={{ 'true' if item.execution_allowed else 'false' }}</td>
+          <td class="small">{{ item.required_approvals|length }} required</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-muted text-center py-4">No approval drafts yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

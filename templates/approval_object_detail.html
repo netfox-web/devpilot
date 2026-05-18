@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">Approval Object Detail</h1>
+    <div class="text-muted small">Draft-only approval object detail. No approve, reject, or execute controls.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">DRAFT ONLY</span>
+      <span class="badge text-bg-secondary">NO EXECUTION</span>
+      <span class="badge text-bg-secondary">NO APPROVAL_REQUESTS MUTATION</span>
+    </div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="/admin/approval-objects">Approval Objects</a>
+    {% if approval_object %}
+    <a class="btn btn-outline-secondary btn-sm" href="/api/admin/approval-objects/{{ approval_object.id }}">JSON</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if not_found %}
+<div class="alert alert-danger">Approval object not found: <code>{{ approval_id }}</code></div>
+{% else %}
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">Draft-only boundary</div>
+  <div class="small">
+    This record is a persisted draft only. It cannot approve, reject, execute, call providers, write usage logs,
+    deploy, mutate DNS/Cloudflare/Nginx/SSL/R2, or mutate project/task/phase/handoff state.
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Status</div>
+        <div class="h5 mb-0">{{ approval_object.status }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Risk</div>
+        <div class="h5 mb-0">{{ approval_object.risk_level }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Execution</div>
+        <div class="h5 mb-0">{{ 'true' if approval_object.execution_allowed else 'false' }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Required approvals</div>
+        <div class="h5 mb-0">{{ approval_object.required_approvals|length }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">Summary</div>
+  <div class="card-body small">
+    <div><span class="text-muted">ID:</span> <code>{{ approval_object.id }}</code></div>
+    <div><span class="text-muted">Type:</span> {{ approval_object.type }}</div>
+    <div><span class="text-muted">Title:</span> {{ approval_object.title }}</div>
+    <div><span class="text-muted">Source:</span> {{ approval_object.source_surface }}</div>
+    <div><span class="text-muted">Requested by:</span> {{ approval_object.requested_by }}</div>
+    <div><span class="text-muted">Created:</span> {{ approval_object.created_at }}</div>
+    <div><span class="text-muted">Updated:</span> {{ approval_object.updated_at }}</div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Required Approvals</div>
+      <div class="card-body small">
+        {% for item in approval_object.required_approvals %}
+        <div class="border rounded p-2 mb-2">
+          <div class="fw-semibold">{{ item.role }}</div>
+          <span class="badge text-bg-warning">{{ item.status }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safety Checks</div>
+      <div class="card-body small">
+        {% for key, value in approval_object.safety_checks.items() %}
+        <div class="d-flex justify-content-between border-bottom py-1">
+          <span>{{ key }}</span>
+          <strong>{{ 'true' if value else 'false' }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Target</div>
+      <div class="card-body"><pre class="mb-0 small">{{ approval_object.target | tojson(indent=2) }}</pre></div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Dry-run Snapshot</div>
+      <div class="card-body"><pre class="mb-0 small">{{ approval_object.dry_run_snapshot | tojson(indent=2) }}</pre></div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-0">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Abort Conditions</div>
+      <div class="card-body small">
+        <ol class="mb-0">
+          {% for item in approval_object.abort_conditions %}
+          <li>{{ item }}</li>
+          {% endfor %}
+        </ol>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Audit Events</div>
+      <div class="card-body small">
+        {% for item in approval_object.audit_events %}
+        <div class="border rounded p-2 mb-2">
+          <div class="fw-semibold">{{ item.event }}</div>
+          <div>{{ item.summary }}</div>
+          <div class="text-muted">{{ item.actor }} / {{ item.created_at }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

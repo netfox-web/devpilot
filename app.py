@@ -53,6 +53,7 @@ EXTERNAL_AI_GENERATION_RESULTS_STORE_PATH = DATA_DIR / "external_ai_generation_r
 EXTERNAL_AI_USAGE_LOG_STORE_PATH = DATA_DIR / "external_ai_usage_log.json"
 EXTERNAL_PROJECT_REGISTRY_STORE_PATH = DATA_DIR / "external_project_registry.json"
 EXTERNAL_PROJECT_EVENTS_STORE_PATH = DATA_DIR / "external_project_events.json"
+APPROVAL_OBJECTS_PATH = DATA_DIR / "approval_objects.json"
 API_TOKEN = os.getenv("API_TOKEN", "change-me-token")
 _DEV_PILOT_API_URL_RAW = os.getenv("DEV_PILOT_API_URL", "").strip().rstrip("/")
 # 一鍵複製回寫指令 / README 範例皆以 .env 的 DEV_PILOT_API_URL 為準；未設定時預設本機開發埠
@@ -3184,6 +3185,158 @@ def approval_object_preview(payload):
             "no_persistence": True,
         },
     }
+
+
+def approval_objects_store_path():
+    raw_path = os.getenv("DEVPILOT_APPROVAL_OBJECTS_PATH", "").strip()
+    return Path(raw_path) if raw_path else APPROVAL_OBJECTS_PATH
+
+
+def approval_payload_contains_sensitive_marker(value):
+    if isinstance(value, dict):
+        return any(approval_payload_contains_sensitive_marker(key) or approval_payload_contains_sensitive_marker(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(approval_payload_contains_sensitive_marker(item) for item in value)
+    return contains_sensitive_marker(str(value or ""))
+
+
+def normalize_approval_object_record(record):
+    if not isinstance(record, dict):
+        return None
+    approval_id = str(record.get("id") or "").strip()
+    approval_type = str(record.get("type") or "").strip()
+    if not approval_id or approval_type not in APPROVAL_PREVIEW_REQUIRED_ROLES:
+        return None
+    status = str(record.get("status") or "draft").strip()
+    if status != "draft":
+        status = "draft"
+    risk_level = str(record.get("risk_level") or "high").strip().lower()
+    if risk_level not in {"high", "critical"}:
+        risk_level = "high"
+    required_approvals = record.get("required_approvals") if isinstance(record.get("required_approvals"), list) else []
+    safety_checks = record.get("safety_checks") if isinstance(record.get("safety_checks"), dict) else approval_preview_safety_checks()
+    audit_events = record.get("audit_events") if isinstance(record.get("audit_events"), list) else []
+    return {
+        "id": approval_id,
+        "type": approval_type,
+        "title": safe_task_text(record.get("title"), fallback="Approval draft"),
+        "status": status,
+        "risk_level": risk_level,
+        "source_surface": safe_task_text(record.get("source_surface"), fallback="manual_draft"),
+        "requested_by": safe_task_text(record.get("requested_by"), fallback="unknown"),
+        "created_at": str(record.get("created_at") or now_str()),
+        "updated_at": str(record.get("updated_at") or now_str()),
+        "expires_at": record.get("expires_at") if record.get("expires_at") else None,
+        "execution_allowed": False,
+        "execution_mode": "none",
+        "target": record.get("target") if isinstance(record.get("target"), dict) else {},
+        "dry_run_snapshot": record.get("dry_run_snapshot") if isinstance(record.get("dry_run_snapshot"), dict) else {},
+        "required_approvals": required_approvals,
+        "safety_checks": safety_checks,
+        "abort_conditions": record.get("abort_conditions") if isinstance(record.get("abort_conditions"), list) else list(APPROVAL_PREVIEW_ABORT_CONDITIONS),
+        "audit_events": audit_events,
+        "approval_object_created": True,
+        "execution_result": None,
+    }
+
+
+def load_approval_objects():
+    path = approval_objects_store_path()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, TypeError):
+        return []
+    items = raw.get("approval_objects") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return []
+    records = []
+    for item in items:
+        normalized = normalize_approval_object_record(item)
+        if normalized:
+            records.append(normalized)
+    return records
+
+
+def save_approval_objects(records):
+    path = approval_objects_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [record for record in (normalize_approval_object_record(item) for item in records) if record]
+    payload = {"approval_objects": normalized, "updated_at": now_str()}
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def list_approval_objects(filters=None):
+    filters = filters or {}
+    records = load_approval_objects()
+    approval_type = str(filters.get("type") or "").strip()
+    status = str(filters.get("status") or "").strip()
+    if approval_type:
+        records = [record for record in records if record.get("type") == approval_type]
+    if status:
+        records = [record for record in records if record.get("status") == status]
+    return sorted(records, key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
+
+
+def get_approval_object(approval_id):
+    approval_id = str(approval_id or "").strip()
+    if not approval_id:
+        return None
+    for record in load_approval_objects():
+        if record.get("id") == approval_id:
+            return record
+    return None
+
+
+def create_approval_object_draft(payload, actor=None):
+    payload = payload or {}
+    if approval_payload_contains_sensitive_marker(payload):
+        raise ValueError("approval_payload_contains_sensitive_marker")
+    preview = approval_object_preview(payload)
+    approval_preview = preview.get("approval_preview") or {}
+    now = now_str()
+    actor_name = safe_task_text(actor or ((current_user() or {}).get("username") if has_request_context() else "") or current_role() or "system", fallback="system")
+    records = load_approval_objects()
+    approval_id = f"approval_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(6)}"
+    record = {
+        "id": approval_id,
+        "type": approval_preview.get("type"),
+        "title": approval_preview.get("title"),
+        "status": "draft",
+        "risk_level": approval_preview.get("risk_level"),
+        "source_surface": approval_preview.get("source_surface"),
+        "requested_by": actor_name,
+        "created_at": now,
+        "updated_at": now,
+        "expires_at": None,
+        "execution_allowed": False,
+        "execution_mode": "none",
+        "target": approval_preview.get("target") if isinstance(approval_preview.get("target"), dict) else {},
+        "dry_run_snapshot": approval_preview.get("dry_run_snapshot") if isinstance(approval_preview.get("dry_run_snapshot"), dict) else {},
+        "required_approvals": approval_preview.get("required_approvals") if isinstance(approval_preview.get("required_approvals"), list) else [],
+        "safety_checks": approval_preview.get("safety_checks") if isinstance(approval_preview.get("safety_checks"), dict) else approval_preview_safety_checks(),
+        "abort_conditions": approval_preview.get("abort_conditions") if isinstance(approval_preview.get("abort_conditions"), list) else list(APPROVAL_PREVIEW_ABORT_CONDITIONS),
+        "audit_events": [
+            {
+                "event": "draft_created",
+                "actor": actor_name,
+                "created_at": now,
+                "summary": "Draft approval object created. No execution.",
+            }
+        ],
+        "approval_object_created": True,
+        "execution_result": None,
+    }
+    normalized = normalize_approval_object_record(record)
+    records.append(normalized)
+    save_approval_objects(records)
+    return normalized
 
 
 EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS = 1000
@@ -18035,6 +18188,43 @@ def admin_approval_object_preview_page():
     )
 
 
+@app.route("/admin/approval-objects")
+@require_roles("owner", "admin")
+def admin_approval_objects_page():
+    records = list_approval_objects({
+        "type": request.args.get("type", ""),
+        "status": request.args.get("status", ""),
+    })
+    return render_template(
+        "approval_objects.html",
+        app_name=APP_NAME,
+        approval_objects=records,
+        approval_types=sorted(APPROVAL_PREVIEW_REQUIRED_ROLES),
+        filters=request.args,
+    )
+
+
+@app.route("/admin/approval-objects/<approval_id>")
+@require_roles("owner", "admin")
+def admin_approval_object_detail_page(approval_id):
+    approval_object = get_approval_object(approval_id)
+    if not approval_object:
+        return render_template(
+            "approval_object_detail.html",
+            app_name=APP_NAME,
+            approval_object=None,
+            not_found=True,
+            approval_id=approval_id,
+        ), 404
+    return render_template(
+        "approval_object_detail.html",
+        app_name=APP_NAME,
+        approval_object=approval_object,
+        not_found=False,
+        approval_id=approval_id,
+    )
+
+
 def render_external_ai_usage_page():
     rows = external_ai_usage_rows(request.args)
     summary = summarize_external_ai_usage(rows)
@@ -23331,6 +23521,76 @@ def api_admin_ai_coding_agent_task_generator_preview():
 def api_admin_approval_object_preview():
     payload = request.get_json(silent=True) or {}
     return jsonify(approval_object_preview(payload))
+
+
+@app.route("/api/admin/approval-objects", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_approval_objects():
+    records = list_approval_objects({
+        "type": request.args.get("type", ""),
+        "status": request.args.get("status", ""),
+    })
+    return jsonify({
+        "ok": True,
+        "read_only": True,
+        "execution_allowed": False,
+        "approval_objects": records,
+        "count": len(records),
+    })
+
+
+@app.route("/api/admin/approval-objects/<approval_id>", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_approval_object_detail(approval_id):
+    record = get_approval_object(approval_id)
+    if not record:
+        return jsonify({
+            "ok": False,
+            "error": "approval_object_not_found",
+            "approval_id": approval_id,
+            "read_only": True,
+            "execution_allowed": False,
+        }), 404
+    return jsonify({
+        "ok": True,
+        "read_only": True,
+        "execution_allowed": False,
+        "approval_object": record,
+    })
+
+
+@app.route("/api/admin/approval-objects/draft", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_approval_object_draft_create():
+    payload = request.get_json(silent=True) or {}
+    try:
+        record = create_approval_object_draft(payload)
+    except ValueError as exc:
+        if str(exc) == "approval_payload_contains_sensitive_marker":
+            return jsonify({
+                "ok": False,
+                "error": "approval_payload_contains_sensitive_marker",
+                "approval_object_created": False,
+                "execution_allowed": False,
+                "provider_calls_executed": False,
+                "approval_request_created": False,
+            }), 400
+        return jsonify({
+            "ok": False,
+            "error": str(exc),
+            "approval_object_created": False,
+            "execution_allowed": False,
+        }), 400
+    return jsonify({
+        "ok": True,
+        "approval_object_created": True,
+        "execution_allowed": False,
+        "provider_calls_executed": False,
+        "approval_request_created": False,
+        "usage_logs_written": False,
+        "generation_results_written": False,
+        "approval_object": record,
+    }), 201
 
 
 @app.route("/api/admin/external-ai-permission-profiles", methods=["GET", "POST"])

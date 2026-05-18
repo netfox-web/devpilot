@@ -29,6 +29,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.usage_log_path = Path(self.key_store_dir.name) / "external_ai_usage_log.json"
         self.external_project_registry_path = Path(self.key_store_dir.name) / "external_project_registry.json"
         self.external_project_events_path = Path(self.key_store_dir.name) / "external_project_events.json"
+        self.approval_objects_path = Path(self.key_store_dir.name) / "approval_objects.json"
         self.key_store_patch = patch.object(self.app_module, "EXTERNAL_API_KEY_STORE_PATH", self.key_store_path)
         self.policy_store_patch = patch.object(self.app_module, "EXTERNAL_AI_POLICY_STORE_PATH", self.policy_store_path)
         self.profile_store_patch = patch.object(self.app_module, "EXTERNAL_AI_PERMISSION_PROFILE_STORE_PATH", self.profile_store_path)
@@ -36,6 +37,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.usage_log_patch = patch.object(self.app_module, "EXTERNAL_AI_USAGE_LOG_STORE_PATH", self.usage_log_path)
         self.external_project_registry_patch = patch.object(self.app_module, "EXTERNAL_PROJECT_REGISTRY_STORE_PATH", self.external_project_registry_path)
         self.external_project_events_patch = patch.object(self.app_module, "EXTERNAL_PROJECT_EVENTS_STORE_PATH", self.external_project_events_path)
+        self.approval_objects_patch = patch.object(self.app_module, "APPROVAL_OBJECTS_PATH", self.approval_objects_path)
         self.key_store_env_patch = patch.dict(
             self.app_module.os.environ,
             {
@@ -46,6 +48,7 @@ class AiManualHandoffTest(unittest.TestCase):
                 "DEVPILOT_EXTERNAL_AI_USAGE_LOG_PATH": str(self.usage_log_path),
                 "DEVPILOT_EXTERNAL_PROJECT_REGISTRY_PATH": str(self.external_project_registry_path),
                 "DEVPILOT_EXTERNAL_PROJECT_EVENTS_PATH": str(self.external_project_events_path),
+                "DEVPILOT_APPROVAL_OBJECTS_PATH": str(self.approval_objects_path),
             },
             clear=False,
         )
@@ -56,6 +59,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.usage_log_patch.start()
         self.external_project_registry_patch.start()
         self.external_project_events_patch.start()
+        self.approval_objects_patch.start()
         self.key_store_env_patch.start()
         with self.app.app_context():
             now = self.app_module.now_str()
@@ -100,6 +104,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.key_store_env_patch.stop()
         self.external_project_events_patch.stop()
         self.external_project_registry_patch.stop()
+        self.approval_objects_patch.stop()
         self.usage_log_patch.stop()
         self.generation_results_patch.stop()
         self.profile_store_patch.stop()
@@ -420,6 +425,134 @@ class AiManualHandoffTest(unittest.TestCase):
         handoff_save.assert_not_called()
         approval_create.assert_not_called()
         subprocess_run.assert_not_called()
+
+    def test_approval_object_draft_persistence_is_draft_only_and_isolated(self):
+        self.assertFalse(self.approval_objects_path.exists())
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+            with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                with patch.object(self.app_module, "cloudflare_request") as cloudflare_call:
+                    with patch.object(self.app_module, "create_approval_request") as approval_create:
+                        response = self.client().post("/api/admin/approval-objects/draft", json={
+                            "type": "external_ai_live_verification",
+                            "title": "Persist Gemini live verification draft",
+                            "source_surface": "/admin/external-ai-live-verification-gate",
+                            "risk_level": "high",
+                            "target": {"provider": "gemini", "model": "gemini-1.5-flash"},
+                            "dry_run_snapshot": {"preview_only": True},
+                        })
+
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["approval_object_created"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(payload["provider_calls_executed"])
+        self.assertFalse(payload["approval_request_created"])
+        self.assertFalse(payload["usage_logs_written"])
+        self.assertFalse(payload["generation_results_written"])
+        record = payload["approval_object"]
+        self.assertTrue(record["id"].startswith("approval_"))
+        self.assertEqual(record["type"], "external_ai_live_verification")
+        self.assertEqual(record["status"], "draft")
+        self.assertEqual(record["risk_level"], "high")
+        self.assertFalse(record["execution_allowed"])
+        self.assertEqual(record["execution_mode"], "none")
+        self.assertTrue(record["approval_object_created"])
+        self.assertIsNone(record["execution_result"])
+        roles = {item["role"] for item in record["required_approvals"]}
+        self.assertEqual(roles, {"product_owner", "engineering_owner", "operations_owner", "security_reviewer"})
+        self.assertTrue(all(item["status"] == "missing" for item in record["required_approvals"]))
+        self.assertEqual(record["audit_events"][0]["event"], "draft_created")
+        self.assertIn("No execution", record["audit_events"][0]["summary"])
+        combined = json.dumps(payload, sort_keys=True)
+        self.assertNotIn("Authorization", combined)
+        self.assertNotIn("Bearer", combined)
+        self.assertNotIn("key_hash", combined)
+        self.assertTrue(self.approval_objects_path.exists())
+
+        list_response = self.client().get("/api/admin/approval-objects")
+        self.assertEqual(list_response.status_code, 200, list_response.get_data(as_text=True))
+        list_payload = list_response.get_json()
+        self.assertTrue(list_payload["read_only"])
+        self.assertFalse(list_payload["execution_allowed"])
+        self.assertEqual(list_payload["count"], 1)
+        self.assertEqual(list_payload["approval_objects"][0]["id"], record["id"])
+
+        detail_response = self.client().get(f"/api/admin/approval-objects/{record['id']}")
+        self.assertEqual(detail_response.status_code, 200, detail_response.get_data(as_text=True))
+        self.assertEqual(detail_response.get_json()["approval_object"]["id"], record["id"])
+
+        missing_response = self.client().get("/api/admin/approval-objects/missing")
+        self.assertEqual(missing_response.status_code, 404)
+        self.assertEqual(missing_response.get_json()["error"], "approval_object_not_found")
+
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_before, approval_count_after)
+        self.assertFalse(self.generation_results_path.exists())
+        self.assertFalse(self.usage_log_path.exists())
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+        cloudflare_call.assert_not_called()
+        approval_create.assert_not_called()
+
+    def test_approval_object_draft_rejects_sensitive_payload_without_persisting(self):
+        response = self.client().post("/api/admin/approval-objects/draft", json={
+            "type": "external_ai_live_verification",
+            "title": "Authorization Bearer fake-secret",
+            "source_surface": "/admin/external-ai-live-verification-gate",
+            "risk_level": "critical",
+            "target": {"provider": "gemini", "api_key": "fake-secret"},
+            "dry_run_snapshot": {"key_hash": "abc123"},
+        })
+
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "approval_payload_contains_sensitive_marker")
+        self.assertFalse(payload["approval_object_created"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(self.approval_objects_path.exists())
+        combined = json.dumps(payload, sort_keys=True)
+        self.assertNotIn("fake-secret", combined)
+        self.assertNotIn("Bearer", combined)
+        self.assertNotIn("key_hash", combined)
+
+    def test_approval_objects_pages_require_login_and_render_drafts(self):
+        anonymous = self.app.test_client().get("/admin/approval-objects")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login", anonymous.headers.get("Location", ""))
+
+        create_response = self.client().post("/api/admin/approval-objects/draft", json={
+            "type": "domain_execution",
+            "title": "Persist domain execution draft",
+            "source_surface": "/admin/domain-execution-dry-run",
+            "risk_level": "critical",
+            "target": {"domain": "aioffice.com.tw"},
+            "dry_run_snapshot": {"planned_dns_records": 27},
+        })
+        record = create_response.get_json()["approval_object"]
+
+        list_page = self.client().get("/admin/approval-objects")
+        self.assertEqual(list_page.status_code, 200, list_page.get_data(as_text=True))
+        list_body = list_page.get_data(as_text=True)
+        self.assertIn("Approval Objects", list_body)
+        self.assertIn(record["id"], list_body)
+        self.assertIn("DRAFTS ONLY", list_body)
+        self.assertIn("execution_allowed=false", list_body)
+
+        detail_page = self.client().get(f"/admin/approval-objects/{record['id']}")
+        self.assertEqual(detail_page.status_code, 200, detail_page.get_data(as_text=True))
+        detail_body = detail_page.get_data(as_text=True)
+        self.assertIn("Approval Object Detail", detail_body)
+        self.assertIn("DRAFT ONLY", detail_body)
+        self.assertIn("dns_cloudflare_owner", detail_body)
+        self.assertNotIn("Authorization", detail_body)
+        self.assertNotIn("Bearer", detail_body)
+        self.assertNotIn("key_hash", detail_body)
 
     def external_api_env(self, allow_all_sources=False):
         return {

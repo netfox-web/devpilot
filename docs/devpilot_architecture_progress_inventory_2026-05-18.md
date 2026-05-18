@@ -98,6 +98,14 @@ Level 7 adds preview-only UI/API for task queue generation and approval object p
 
 The scaffold supports low-risk docs-only task queue patch previews and high-risk approval draft previews. It does not write the task queue, call Codex, create approval objects, create `approval_requests`, call providers, deploy, or mutate DNS/Cloudflare/Nginx/SSL/R2/workers/production.
 
+Level 7B draft persistence note:
+
+```text
+docs/level_7b_approval_draft_persistence.md
+```
+
+Level 7B adds persisted draft approval objects at `/admin/approval-objects`, `/api/admin/approval-objects`, and `/api/admin/approval-objects/draft`. Drafts remain `status=draft`, `execution_allowed=false`, and `execution_mode=none`. No approve/reject/execute endpoint exists, `approval_requests` is not mutated, and no provider, DNS, Cloudflare, Nginx, SSL, R2, deploy, worker, project, task, phase, handoff, or production mutation occurs.
+
 ## 1. Core Admin Console
 
 DevPilot has a broad admin console for operations and safety review.

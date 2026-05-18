@@ -31,6 +31,7 @@ Implemented behavior:
 - Read-only UI/API requests are classified as medium risk.
 - High-risk live provider, DNS, Cloudflare, Nginx, SSL, R2, deploy, worker, and production mutation requests are classified as `approval_draft_only` or `blocked`.
 - Approval Object Preview returns a draft-only approval payload with required roles, abort conditions, safety checks, and no persistence.
+- Level 7B Approval Draft Persistence can save draft approval objects for review.
 
 ## What Remains Disabled
 
@@ -38,7 +39,7 @@ Implemented behavior:
 - No generated task is written to `docs/ai_coding_agent_task_queue.md`.
 - No Codex call is made.
 - No commit or push is allowed.
-- No approval object is saved.
+- Approval objects may be saved only as Level 7B drafts.
 - No `approval_requests` row is created.
 - No provider live call is made.
 - No usage log or generation result is written.
@@ -91,23 +92,25 @@ The preview response includes:
 
 ## Next Phases
 
-### Level 7A - Persist Approval Drafts
+### Level 7B - Approval Draft Persistence
 
-Persist approval drafts only after schema, role, redaction, and audit requirements are reviewed.
+Implemented in `docs/level_7b_approval_draft_persistence.md`.
 
-### Level 7B - Approval Inbox
+Persist approval drafts only. No approve, reject, execute, or `approval_requests` workflow exists in this phase.
+
+### Level 7C - Approval Inbox
 
 Add an owner/admin inbox for approval drafts, missing approvals, rejected approvals, and stale dry-run snapshots.
 
-### Level 7C - Runner Consumes Low-risk Tasks
+### Level 7D - Runner Consumes Low-risk Tasks
 
 Allow reviewed low-risk task queue patches to reach the scheduled runner. The runner still must not infer work or auto-commit/push unless the task explicitly says so.
 
-### Level 7D - High-risk Approval Routing
+### Level 7E - High-risk Approval Routing
 
 Route high-risk requests into approval drafts and required approver workflows. Execution remains disabled.
 
-### Level 7E - Limited Execution Adapters
+### Level 8 - Limited Execution Adapters
 
 Only after explicit approval, add narrowly scoped execution adapters. Live provider, DNS, Cloudflare, Nginx, SSL, R2, deploy, worker, and production actions require separate implementation phases.
 
