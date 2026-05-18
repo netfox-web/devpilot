@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">Approval Object Preview</h1>
+    <div class="text-muted small">Draft-only approval payload preview for high-risk actions.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">DRAFT PREVIEW ONLY</span>
+      <span class="badge text-bg-secondary">NO APPROVAL CREATED</span>
+      <span class="badge text-bg-secondary">NO EXECUTION</span>
+      <span class="badge text-bg-secondary">NO PROVIDER CALL</span>
+      <span class="badge text-bg-secondary">NO PERSISTENCE</span>
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-outline-secondary btn-sm" href="/admin/ai-coding-agent-task-generator">Task Generator</a>
+  </div>
+</div>
+
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">Approval boundary</div>
+  <div class="small">
+    This page previews an approval payload only. It does not save to DB/JSON/file, create <code>approval_requests</code>,
+    approve, execute, call providers, write usage logs, or write generation results.
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Preview Input</div>
+      <div class="card-body">
+        <form id="approval-preview-form">
+          <div class="mb-3">
+            <label class="form-label" for="type">Type</label>
+            <select class="form-select" id="type" name="type">
+              {% for type in approval_types %}
+              <option value="{{ type }}">{{ type }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="title">Title</label>
+            <input class="form-control" id="title" name="title" value="Preview high-risk approval">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="source_surface">Source surface</label>
+            <input class="form-control" id="source_surface" name="source_surface" value="/admin/external-ai-live-verification-gate">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="risk_level">Risk level</label>
+            <select class="form-select" id="risk_level" name="risk_level">
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" type="submit">Preview</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold">Current Preview</div>
+      <div class="card-body small">
+        <div class="row g-2 mb-3">
+          <div class="col-md-4">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">status</div>
+              <div class="fw-semibold" id="status">{{ preview.approval_preview.status }}</div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">type</div>
+              <div class="fw-semibold" id="approval_type">{{ preview.approval_preview.type }}</div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">execution_allowed</div>
+              <div class="fw-semibold" id="execution_allowed">{{ 'true' if preview.execution_allowed else 'false' }}</div>
+            </div>
+          </div>
+        </div>
+        <h2 class="h6">Required Approvals</h2>
+        <div id="required_approvals" class="mb-3">
+          {% for item in preview.approval_preview.required_approvals %}
+          <span class="badge text-bg-warning me-1">{{ item.role }}: {{ item.status }}</span>
+          {% endfor %}
+        </div>
+        <h2 class="h6">Approval Preview JSON</h2>
+        <pre class="border rounded bg-light p-3 mb-0" id="approval_json">{{ preview.approval_preview | tojson(indent=2) }}</pre>
+      </div>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Safety</div>
+      <div class="card-body small">
+        <div class="row g-2" id="safety-flags">
+          {% for key, value in preview.safety.items() %}
+          <div class="col-md-6">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">{{ key }}</div>
+              <div class="fw-semibold">{{ 'true' if value else 'false' }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById("approval-preview-form").addEventListener("submit", async function (event) {
+  event.preventDefault();
+  const payload = {
+    type: document.getElementById("type").value,
+    title: document.getElementById("title").value,
+    source_surface: document.getElementById("source_surface").value,
+    risk_level: document.getElementById("risk_level").value,
+    target: {},
+    dry_run_snapshot: {preview_only: true}
+  };
+  const response = await fetch("/api/admin/approval-object-preview", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  document.getElementById("status").textContent = data.approval_preview.status;
+  document.getElementById("approval_type").textContent = data.approval_preview.type;
+  document.getElementById("execution_allowed").textContent = String(data.execution_allowed);
+  document.getElementById("required_approvals").innerHTML = data.approval_preview.required_approvals
+    .map((item) => `<span class="badge text-bg-warning me-1">${item.role}: ${item.status}</span>`)
+    .join("");
+  document.getElementById("approval_json").textContent = JSON.stringify(data.approval_preview, null, 2);
+});
+</script>
+{% endblock %}

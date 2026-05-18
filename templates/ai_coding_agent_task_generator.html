@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">AI Coding Agent Task Generator</h1>
+    <div class="text-muted small">Preview-only task queue patch generator for safe scheduled Codex work.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">PREVIEW ONLY</span>
+      <span class="badge text-bg-secondary">NO EXECUTION</span>
+      <span class="badge text-bg-secondary">NO CODEX CALL</span>
+      <span class="badge text-bg-secondary">NO COMMIT</span>
+      <span class="badge text-bg-secondary">NO PUSH</span>
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-outline-secondary btn-sm" href="/admin/approval-object-preview">Approval Preview</a>
+  </div>
+</div>
+
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">Level 7 boundary</div>
+  <div class="small">
+    This page does not write <code>docs/ai_coding_agent_task_queue.md</code>, call Codex, create approval objects,
+    commit, push, deploy, call providers, or mutate DNS/Cloudflare/Nginx/SSL/R2/production systems.
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Preview Input</div>
+      <div class="card-body">
+        <form id="task-generator-form">
+          <div class="mb-3">
+            <label class="form-label" for="source">Source</label>
+            <select class="form-select" id="source" name="source">
+              {% for source in source_options %}
+              <option value="{{ source }}">{{ source }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="title">Title</label>
+            <input class="form-control" id="title" name="title" value="Draft docs-only planning update">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="request">Request</label>
+            <textarea class="form-control" id="request" name="request" rows="5">Update docs with a safe planning note.</textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="requested_files">Requested files</label>
+            <textarea class="form-control" id="requested_files" name="requested_files" rows="3">docs/example.md</textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="requested_actions">Requested actions</label>
+            <textarea class="form-control" id="requested_actions" name="requested_actions" rows="3">docs</textarea>
+          </div>
+          <button class="btn btn-primary" type="submit">Preview</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header fw-bold">Current Preview</div>
+      <div class="card-body small">
+        <div class="row g-2 mb-3">
+          <div class="col-md-4">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">classification</div>
+              <div class="fw-semibold" id="classification">{{ preview.classification }}</div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">risk_level</div>
+              <div class="fw-semibold" id="risk_level">{{ preview.risk_level }}</div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">execution_allowed</div>
+              <div class="fw-semibold" id="execution_allowed">{{ 'true' if preview.execution_allowed else 'false' }}</div>
+            </div>
+          </div>
+        </div>
+        <pre class="border rounded bg-light p-3 mb-0" id="task_queue_patch">{{ preview.task_queue_patch }}</pre>
+      </div>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">Safety</div>
+      <div class="card-body small">
+        <div class="row g-2" id="safety-flags">
+          {% for key, value in preview.safety.items() %}
+          <div class="col-md-6">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">{{ key }}</div>
+              <div class="fw-semibold">{{ 'true' if value else 'false' }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById("task-generator-form").addEventListener("submit", async function (event) {
+  event.preventDefault();
+  const lines = (value) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  const payload = {
+    source: document.getElementById("source").value,
+    title: document.getElementById("title").value,
+    request: document.getElementById("request").value,
+    requested_files: lines(document.getElementById("requested_files").value),
+    requested_actions: lines(document.getElementById("requested_actions").value)
+  };
+  const response = await fetch("/api/admin/ai-coding-agent-task-generator/preview", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  document.getElementById("classification").textContent = data.classification;
+  document.getElementById("risk_level").textContent = data.risk_level;
+  document.getElementById("execution_allowed").textContent = String(data.execution_allowed);
+  document.getElementById("task_queue_patch").textContent = data.task_queue_patch;
+});
+</script>
+{% endblock %}

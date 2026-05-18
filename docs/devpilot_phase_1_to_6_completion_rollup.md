@@ -208,6 +208,14 @@ docs/ai_coding_agent_task_queue_generator_design.md
 
 The design keeps queue generation as a reviewable patch/draft process. It does not call Codex, invoke the scheduled runner, commit, push, create approval objects, or execute high-risk actions.
 
+Level 7 scaffold source:
+
+```text
+docs/level_7_safe_ai_automation_scaffold.md
+```
+
+Level 7 implements preview-only UI/API for task queue generation and approval object previews. Low-risk docs-only requests can generate reviewable task queue patch previews; high-risk requests are classified as `approval_draft_only` or `blocked`. Execution, persistence, provider calls, infrastructure writes, commit, and push remain disabled.
+
 ### Phase 10 - Readiness Rollup Dashboard
 
 - Add one admin page showing provider, domain, automation, and runner readiness.

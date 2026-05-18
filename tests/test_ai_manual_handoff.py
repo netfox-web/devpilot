@@ -298,6 +298,129 @@ class AiManualHandoffTest(unittest.TestCase):
         gemini_call.assert_not_called()
         claude_call.assert_not_called()
 
+    def test_task_queue_generator_page_requires_login_and_owner_admin_can_preview(self):
+        anonymous = self.app.test_client().get("/admin/ai-coding-agent-task-generator")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login", anonymous.headers.get("Location", ""))
+
+        response = self.client().get("/admin/ai-coding-agent-task-generator")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        page = response.get_data(as_text=True)
+        self.assertIn("AI Coding Agent Task Generator", page)
+        self.assertIn("PREVIEW ONLY", page)
+        self.assertIn("NO EXECUTION", page)
+        self.assertIn("NO CODEX CALL", page)
+        self.assertNotIn("Authorization", page)
+        self.assertNotIn("Bearer", page)
+        self.assertNotIn("key_hash", page)
+
+    def test_task_queue_generator_preview_classifies_safe_and_high_risk_requests_without_side_effects(self):
+        task_queue_path = self.app_module.BASE_DIR / "docs" / "ai_coding_agent_task_queue.md"
+        before_text = task_queue_path.read_text(encoding="utf-8")
+        with self.app.app_context():
+            approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+
+        client = self.client()
+        with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+            with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                with patch.object(self.app_module, "cloudflare_request") as cloudflare_call:
+                    with patch.object(self.app_module, "save_ai_task_handoff") as handoff_save:
+                        with patch.object(self.app_module, "create_approval_request") as approval_create:
+                            with patch.object(self.app_module.subprocess, "run") as subprocess_run:
+                                docs_response = client.post("/api/admin/ai-coding-agent-task-generator/preview", json={
+                                    "source": "chatgpt",
+                                    "title": "Update analyst docs",
+                                    "request": "Add a docs-only planning summary.",
+                                    "requested_files": ["docs/level_7_safe_ai_automation_scaffold.md"],
+                                    "requested_actions": ["docs"],
+                                })
+                                ui_response = client.post("/api/admin/ai-coding-agent-task-generator/preview", json={
+                                    "source": "admin_note",
+                                    "title": "Add read-only dashboard preview",
+                                    "request": "Design a read-only UI/API preview with tests.",
+                                    "requested_files": ["app.py", "templates/example.html", "tests/test_ai_manual_handoff.py"],
+                                    "requested_actions": ["read-only dashboard"],
+                                })
+                                live_response = client.post("/api/admin/ai-coding-agent-task-generator/preview", json={
+                                    "source": "approval_object",
+                                    "title": "Run live Gemini check",
+                                    "request": "Request a live provider Gemini verification call.",
+                                    "requested_files": ["docs/external_ai_live_verification_gate.md"],
+                                    "requested_actions": ["live provider"],
+                                })
+                                dns_response = client.post("/api/admin/ai-coding-agent-task-generator/preview", json={
+                                    "source": "domain_dry_run",
+                                    "title": "DNS deploy request",
+                                    "request": "Write DNS records and deploy domain changes.",
+                                    "requested_files": ["docs/product_domain_launch_planning_matrix.md"],
+                                    "requested_actions": ["dns write", "deploy"],
+                                })
+                                secret_response = client.post("/api/admin/ai-coding-agent-task-generator/preview", json={
+                                    "source": "admin_note",
+                                    "title": "Use Authorization Bearer value",
+                                    "request": "Use Authorization: Bearer super-secret-token and key_hash=abc",
+                                    "requested_files": [".env"],
+                                    "requested_actions": ["secret"],
+                                })
+
+        for response in (docs_response, ui_response, live_response, dns_response, secret_response):
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            payload = response.get_json()
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["read_only"])
+            self.assertFalse(payload["execution_allowed"])
+            self.assertFalse(payload["commit_allowed"])
+            self.assertFalse(payload["push_allowed"])
+            self.assertFalse(payload["task_queue_written"])
+            self.assertFalse(payload["codex_called"])
+            self.assertFalse(payload["approval_object_created"])
+            self.assertTrue(payload["safety"]["no_deploy"])
+            self.assertTrue(payload["safety"]["no_provider_live_call"])
+            self.assertTrue(payload["safety"]["no_dns_cloudflare_nginx_ssl_r2_mutation"])
+            combined = json.dumps(payload, sort_keys=True)
+            self.assertNotIn("Authorization", combined)
+            self.assertNotIn("Bearer", combined)
+            self.assertNotIn("key_hash", combined)
+            self.assertNotIn("super-secret-token", combined)
+
+        docs_payload = docs_response.get_json()
+        self.assertEqual(docs_payload["classification"], "docs_only")
+        self.assertEqual(docs_payload["risk_level"], "low")
+        self.assertFalse(docs_payload["requires_approval"])
+        self.assertIn("- [ ]", docs_payload["task_queue_patch"])
+        self.assertIn("Execution mode: docs_only", docs_payload["task_queue_patch"])
+
+        ui_payload = ui_response.get_json()
+        self.assertEqual(ui_payload["classification"], "read_only_ui")
+        self.assertEqual(ui_payload["risk_level"], "medium")
+
+        live_payload = live_response.get_json()
+        self.assertEqual(live_payload["classification"], "approval_draft_only")
+        self.assertEqual(live_payload["risk_level"], "high")
+        self.assertTrue(live_payload["requires_approval"])
+        self.assertIn("Execution mode: approval_draft_only", live_payload["task_queue_patch"])
+
+        dns_payload = dns_response.get_json()
+        self.assertEqual(dns_payload["classification"], "approval_draft_only")
+        self.assertEqual(dns_payload["risk_level"], "high")
+        self.assertTrue(dns_payload["requires_approval"])
+
+        secret_payload = secret_response.get_json()
+        self.assertEqual(secret_payload["classification"], "blocked")
+        self.assertEqual(secret_payload["risk_level"], "critical")
+        self.assertTrue(secret_payload["requires_approval"])
+
+        self.assertEqual(before_text, task_queue_path.read_text(encoding="utf-8"))
+        with self.app.app_context():
+            approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        self.assertEqual(approval_count_before, approval_count_after)
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+        cloudflare_call.assert_not_called()
+        handoff_save.assert_not_called()
+        approval_create.assert_not_called()
+        subprocess_run.assert_not_called()
+
     def external_api_env(self, allow_all_sources=False):
         return {
             "DEVPILOT_EXTERNAL_API_KEYS": "external-a:key-a,external-b:key-b",

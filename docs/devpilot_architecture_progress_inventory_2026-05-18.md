@@ -81,6 +81,23 @@ docs/ai_coding_agent_task_queue_generator_design.md
 
 Task Queue Generator is the proposed safe translation layer for turning ChatGPT tasks, GitHub issues labeled `codex-task`, admin notes, analyst decisions, Approval Object drafts, Product Domain decisions, and External Project Health recommendations into explicit `docs/ai_coding_agent_task_queue.md` pending task items. It produces reviewable queue patches only; it does not call Codex, commit, push, create approvals, or execute tasks.
 
+Level 7 scaffold note:
+
+```text
+docs/level_7_safe_ai_automation_scaffold.md
+```
+
+Level 7 adds preview-only UI/API for task queue generation and approval object previews:
+
+```text
+/admin/ai-coding-agent-task-generator
+/api/admin/ai-coding-agent-task-generator/preview
+/admin/approval-object-preview
+/api/admin/approval-object-preview
+```
+
+The scaffold supports low-risk docs-only task queue patch previews and high-risk approval draft previews. It does not write the task queue, call Codex, create approval objects, create `approval_requests`, call providers, deploy, or mutate DNS/Cloudflare/Nginx/SSL/R2/workers/production.
+
 ## 1. Core Admin Console
 
 DevPilot has a broad admin console for operations and safety review.

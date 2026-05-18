@@ -4,6 +4,8 @@ This file is the local scheduled-runner task source for DevPilot AI coding agent
 
 Generator design status: Phase 9 defines a future Task Queue Generator in `docs/ai_coding_agent_task_queue_generator_design.md`. The generator is design-only at this stage and does not execute tasks, call Codex, create approvals, commit, or push.
 
+Level 7 status: the Task Queue Generator now has preview-only UI/API. It still does not write this file directly; queue patches remain reviewable drafts until a later explicit phase.
+
 Final status:
 
 ```text

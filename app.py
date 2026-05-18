@@ -2865,6 +2865,327 @@ def external_ai_live_verification_gate_context():
     }
 
 
+TASK_GENERATOR_ALLOWED_SOURCES = {
+    "chatgpt",
+    "github_issue",
+    "admin_note",
+    "analyst_decision",
+    "approval_object",
+    "domain_dry_run",
+    "health_planner",
+}
+
+TASK_GENERATOR_FORBIDDEN_FILES = [
+    ".env",
+    "data/",
+    "uploads/",
+    "logs/",
+    ".local_backups/",
+    "scripts/",
+]
+
+TASK_GENERATOR_SAFETY = {
+    "no_deploy": True,
+    "no_secrets": True,
+    "no_provider_live_call": True,
+    "no_dns_cloudflare_nginx_ssl_r2_mutation": True,
+    "no_production_mutation": True,
+    "no_worker_execution": True,
+    "no_approval_object_created": True,
+    "no_task_queue_write": True,
+    "no_commit": True,
+    "no_push": True,
+}
+
+TASK_GENERATOR_SECRET_MARKERS = [
+    "authorization",
+    "bearer",
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "key_hash",
+    ".env",
+    "private key",
+]
+
+TASK_GENERATOR_CRITICAL_MARKERS = [
+    "live provider",
+    "live gemini",
+    "live claude",
+    "provider live call",
+    "dns write",
+    "cloudflare write",
+    "nginx write",
+    "ssl change",
+    "ssl write",
+    "r2 mutation",
+    "deploy",
+    "production mutation",
+    "registrar",
+    "nameserver",
+    "worker execution",
+]
+
+TASK_GENERATOR_READ_ONLY_UI_MARKERS = [
+    "dashboard",
+    "ui",
+    "api",
+    "read-only",
+    "read only",
+    "preview",
+]
+
+TASK_GENERATOR_TEST_MARKERS = [
+    "test only",
+    "pytest",
+    "unit test",
+    "verification only",
+]
+
+APPROVAL_PREVIEW_REQUIRED_ROLES = {
+    "external_ai_live_verification": ["product_owner", "engineering_owner", "operations_owner", "security_reviewer"],
+    "domain_execution": ["domain_owner", "product_owner", "operations_owner", "dns_cloudflare_owner", "security_reviewer"],
+    "deploy": ["product_owner", "engineering_owner", "operations_owner", "deployment_owner", "security_reviewer"],
+    "worker_execution": ["engineering_owner", "operations_owner", "safety_reviewer"],
+    "provider_budget_change": ["product_owner", "finance_budget_owner", "security_reviewer"],
+    "project_task_phase_mutation": ["product_owner", "project_owner", "operations_owner"],
+}
+
+APPROVAL_PREVIEW_ABORT_CONDITIONS = [
+    "Any required approval is missing or rejected.",
+    "The target, source surface, risk level, or dry-run snapshot changes after review.",
+    "A raw secret, auth header, bearer token, key hash, or .env value appears in the request or output.",
+    "The request would execute a provider call, DNS/Cloudflare/Nginx/SSL/R2 mutation, deploy, worker, or production change before approval.",
+    "Rollback owner, budget, request cap, or abort owner is missing for a high-risk action.",
+]
+
+
+def normalize_task_generator_source(value):
+    source = str(value or "").strip().lower()
+    return source if source in TASK_GENERATOR_ALLOWED_SOURCES else "admin_note"
+
+
+def safe_task_text(value, fallback="Untitled task"):
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    if contains_sensitive_marker(text):
+        return "Sensitive request details omitted from preview"
+    return text[:200]
+
+
+def contains_sensitive_marker(text):
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in TASK_GENERATOR_SECRET_MARKERS)
+
+
+def normalize_requested_files(files):
+    if not isinstance(files, list):
+        return []
+    normalized = []
+    for item in files:
+        value = str(item or "").strip().replace("\\", "/")
+        if value and value not in normalized:
+            normalized.append(value)
+    return normalized[:20]
+
+
+def task_generator_classification(payload):
+    title = str(payload.get("title") or "")
+    request_text = str(payload.get("request") or "")
+    requested_actions = payload.get("requested_actions") if isinstance(payload.get("requested_actions"), list) else []
+    requested_files = normalize_requested_files(payload.get("requested_files"))
+    combined = " ".join([title, request_text, " ".join(str(item) for item in requested_actions), " ".join(requested_files)]).lower()
+
+    if not title.strip() or not request_text.strip():
+        return "blocked", "critical", True, "Ambiguous request: title and request are required."
+    if contains_sensitive_marker(combined):
+        return "blocked", "critical", True, "Sensitive marker detected; queue task must not expose secrets or .env values."
+    if any(marker in combined for marker in TASK_GENERATOR_CRITICAL_MARKERS):
+        if any(marker in combined for marker in ["secret", ".env", "authorization", "bearer", "key_hash"]):
+            return "blocked", "critical", True, "High-risk request includes sensitive material."
+        return "approval_draft_only", "high", True, "High-risk action requires approval draft only; execution remains disabled."
+    if any(marker in combined for marker in TASK_GENERATOR_TEST_MARKERS):
+        return "test_only", "low", False, "Test-only request."
+    if any(marker in combined for marker in TASK_GENERATOR_READ_ONLY_UI_MARKERS):
+        return "read_only_ui", "medium", False, "Read-only UI/API request."
+    if all(path.startswith("docs/") for path in requested_files) or "docs" in combined or "documentation" in combined:
+        return "docs_only", "low", False, "Docs-only request."
+    return "blocked", "critical", True, "Ambiguous request: generator cannot infer safe scope."
+
+
+def task_generator_verification_for_classification(classification):
+    if classification == "docs_only":
+        return ["git diff --check", "git status -sb"]
+    if classification == "read_only_ui":
+        return [".\\.venv\\Scripts\\python.exe -m py_compile app.py", "targeted pytest for changed routes", "git diff --check"]
+    if classification == "test_only":
+        return ["targeted pytest", "git diff --check"]
+    return ["review approval draft or blocked request manually"]
+
+
+def task_generator_allowed_files(classification, requested_files):
+    safe_files = [path for path in requested_files if not any(path == forbidden.rstrip("/") or path.startswith(forbidden) for forbidden in TASK_GENERATOR_FORBIDDEN_FILES)]
+    if classification == "docs_only":
+        return [path for path in safe_files if path.startswith("docs/")] or ["docs/"]
+    if classification == "read_only_ui":
+        return safe_files or ["app.py", "templates/", "tests/", "docs/"]
+    if classification == "test_only":
+        return safe_files or ["tests/"]
+    if classification == "approval_draft_only":
+        return ["docs/"]
+    return []
+
+
+def build_task_queue_patch(payload, classification, risk_level, requires_approval, allowed_files, verification):
+    source = normalize_task_generator_source(payload.get("source"))
+    title = safe_task_text(payload.get("title"))
+    scope = safe_task_text(payload.get("request"), fallback="Review request details manually")
+    task_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:48] or "task"
+    task_id = f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{source}-{task_slug}"
+    commit_policy = "no"
+    lines = [
+        f"- [ ] {task_id}: {title}",
+        f"  - Source: {source}",
+        f"  - Scope: {scope}",
+        "  - Allowed files:",
+    ]
+    if allowed_files:
+        lines.extend([f"    - {path}" for path in allowed_files])
+    else:
+        lines.append("    - none")
+    lines.extend([
+        "  - Forbidden files:",
+        *[f"    - {path}" for path in TASK_GENERATOR_FORBIDDEN_FILES],
+        f"  - Risk level: {risk_level}",
+        f"  - Execution mode: {classification}",
+        "  - Verification:",
+        *[f"    - {item}" for item in verification],
+        f"  - Commit/push: {commit_policy}",
+        f"  - Approval required: {'true' if requires_approval else 'false'}",
+        "  - Safety:",
+        "    - no deploy",
+        "    - no secrets",
+        "    - no provider live call",
+        "    - no DNS write",
+        "    - no Cloudflare write",
+        "    - no Nginx write",
+        "    - no SSL write",
+        "    - no R2 mutation",
+    ])
+    return "\n".join(lines)
+
+
+def ai_coding_agent_task_generator_preview(payload):
+    payload = payload or {}
+    classification, risk_level, requires_approval, reason = task_generator_classification(payload)
+    requested_files = normalize_requested_files(payload.get("requested_files"))
+    allowed_files = task_generator_allowed_files(classification, requested_files)
+    verification = task_generator_verification_for_classification(classification)
+    task_queue_patch = build_task_queue_patch(payload, classification, risk_level, requires_approval, allowed_files, verification)
+    return {
+        "ok": True,
+        "read_only": True,
+        "execution_allowed": False,
+        "task_generated": classification != "blocked",
+        "classification": classification,
+        "risk_level": risk_level,
+        "requires_approval": bool(requires_approval),
+        "commit_allowed": False,
+        "push_allowed": False,
+        "task_queue_patch": task_queue_patch,
+        "allowed_files": allowed_files,
+        "forbidden_files": list(TASK_GENERATOR_FORBIDDEN_FILES),
+        "verification": verification,
+        "reason": reason,
+        "source": normalize_task_generator_source(payload.get("source")),
+        "task_queue_written": False,
+        "codex_called": False,
+        "approval_object_created": False,
+        "safety": dict(TASK_GENERATOR_SAFETY),
+    }
+
+
+def approval_preview_safety_checks():
+    return {
+        "secrets_exposed": False,
+        "env_change": False,
+        "provider_live_call": False,
+        "dns_write": False,
+        "cloudflare_write": False,
+        "nginx_write": False,
+        "ssl_change": False,
+        "registrar_nameserver_change": False,
+        "r2_mutation": False,
+        "deploy": False,
+        "worker_execution": False,
+        "project_task_phase_mutation": False,
+        "handoff_transition": False,
+        "approval_request_created": False,
+        "usage_log_written": False,
+        "generation_result_written": False,
+    }
+
+
+def approval_object_preview(payload):
+    payload = payload or {}
+    approval_type = str(payload.get("type") or "external_ai_live_verification").strip().lower()
+    if approval_type not in APPROVAL_PREVIEW_REQUIRED_ROLES:
+        approval_type = "project_task_phase_mutation"
+    risk_level = str(payload.get("risk_level") or "high").strip().lower()
+    if risk_level not in {"high", "critical"}:
+        risk_level = "high"
+    target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    dry_run_snapshot = payload.get("dry_run_snapshot") if isinstance(payload.get("dry_run_snapshot"), dict) else {}
+    required_approvals = [
+        {
+            "role": role,
+            "status": "missing",
+            "approved_by": None,
+            "approved_at": None,
+        }
+        for role in APPROVAL_PREVIEW_REQUIRED_ROLES[approval_type]
+    ]
+    return {
+        "ok": True,
+        "read_only": True,
+        "draft_only": True,
+        "approval_object_created": False,
+        "execution_allowed": False,
+        "provider_calls_executed": False,
+        "approval_requests_created": False,
+        "usage_logs_written": False,
+        "generation_results_written": False,
+        "approval_preview": {
+            "id": "preview_only",
+            "type": approval_type,
+            "title": safe_task_text(payload.get("title"), fallback="Approval preview"),
+            "status": "draft_preview",
+            "risk_level": risk_level,
+            "source_surface": safe_task_text(payload.get("source_surface"), fallback="manual_preview"),
+            "execution_mode": "none",
+            "execution_allowed": False,
+            "target": target,
+            "dry_run_snapshot": dry_run_snapshot,
+            "required_approvals": required_approvals,
+            "safety_checks": approval_preview_safety_checks(),
+            "abort_conditions": list(APPROVAL_PREVIEW_ABORT_CONDITIONS),
+            "audit_events": [],
+        },
+        "safety": {
+            "no_deploy": True,
+            "no_secrets": True,
+            "no_provider_live_call": True,
+            "no_dns_cloudflare_nginx_ssl_r2_mutation": True,
+            "no_production_mutation": True,
+            "no_worker_execution": True,
+            "no_approval_request_created": True,
+            "no_persistence": True,
+        },
+    }
+
+
 EXTERNAL_AI_POLICY_DEFAULT_MAX_TOKENS = 1000
 EXTERNAL_AI_POLICY_DEFAULT_DAILY_REQUEST_LIMIT = 100
 EXTERNAL_AI_POLICY_DEFAULT_DAILY_TOKEN_LIMIT = 50000
@@ -17679,6 +18000,41 @@ def admin_external_ai_live_verification_gate_page():
     )
 
 
+@app.route("/admin/ai-coding-agent-task-generator")
+@require_roles("owner", "admin")
+def admin_ai_coding_agent_task_generator_page():
+    return render_template(
+        "ai_coding_agent_task_generator.html",
+        app_name=APP_NAME,
+        preview=ai_coding_agent_task_generator_preview({
+            "source": "admin_note",
+            "title": "Preview docs-only task",
+            "request": "Draft a docs-only planning update.",
+            "requested_files": ["docs/"],
+            "requested_actions": ["docs"],
+        }),
+        source_options=sorted(TASK_GENERATOR_ALLOWED_SOURCES),
+    )
+
+
+@app.route("/admin/approval-object-preview")
+@require_roles("owner", "admin")
+def admin_approval_object_preview_page():
+    return render_template(
+        "approval_object_preview.html",
+        app_name=APP_NAME,
+        preview=approval_object_preview({
+            "type": "external_ai_live_verification",
+            "title": "Preview external AI live verification approval",
+            "source_surface": "/admin/external-ai-live-verification-gate",
+            "risk_level": "high",
+            "target": {"provider": "gemini", "model": "gemini-1.5-flash"},
+            "dry_run_snapshot": {"preview_only": True},
+        }),
+        approval_types=sorted(APPROVAL_PREVIEW_REQUIRED_ROLES),
+    )
+
+
 def render_external_ai_usage_page():
     rows = external_ai_usage_rows(request.args)
     summary = summarize_external_ai_usage(rows)
@@ -22961,6 +23317,20 @@ def api_admin_ai_provider_readiness():
 @require_api_roles("owner", "admin")
 def api_admin_external_ai_live_verification_gate():
     return jsonify(external_ai_live_verification_gate_context())
+
+
+@app.route("/api/admin/ai-coding-agent-task-generator/preview", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_ai_coding_agent_task_generator_preview():
+    payload = request.get_json(silent=True) or {}
+    return jsonify(ai_coding_agent_task_generator_preview(payload))
+
+
+@app.route("/api/admin/approval-object-preview", methods=["POST"])
+@require_api_roles("owner", "admin")
+def api_admin_approval_object_preview():
+    payload = request.get_json(silent=True) or {}
+    return jsonify(approval_object_preview(payload))
 
 
 @app.route("/api/admin/external-ai-permission-profiles", methods=["GET", "POST"])

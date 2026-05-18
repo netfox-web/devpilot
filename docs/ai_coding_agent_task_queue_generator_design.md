@@ -1,7 +1,7 @@
 # AI Coding Agent Task Queue Generator Design
 
 Date: 2026-05-18
-Status: design draft, docs-only
+Status: implemented as preview-only UI/API in Level 7; no execution
 
 ## Purpose
 
@@ -10,6 +10,8 @@ Task Queue Generator is the future safe translation layer that converts high-lev
 It does not execute tasks. It does not call Codex. It does not commit. It does not push.
 
 It only produces a reviewable task queue patch, pull request, or draft that a human or a later approved workflow can inspect before the scheduled runner sees a pending task.
+
+Level 7 implementation status: preview-only UI/API is available at `/admin/ai-coding-agent-task-generator` and `/api/admin/ai-coding-agent-task-generator/preview`. It still does not write `docs/ai_coding_agent_task_queue.md`, call Codex, create approvals, commit, push, or execute tasks.
 
 ## Current Runner Model
 

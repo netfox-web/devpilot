@@ -678,6 +678,79 @@ class AutomationPlannerExternalProjectHealthTest(unittest.TestCase):
         self.assertNotIn("Authorization", body)
         self.assertNotIn("Bearer", body)
 
+    def test_approval_object_preview_page_owner_admin_and_anonymous_boundary(self):
+        anonymous_page = self.app.test_client().get("/admin/approval-object-preview")
+        self.assertEqual(anonymous_page.status_code, 302)
+        self.assertIn("/login", anonymous_page.headers.get("Location", ""))
+
+        response = self.client().get("/admin/approval-object-preview")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        body = response.get_data(as_text=True)
+        self.assertIn("Approval Object Preview", body)
+        self.assertIn("DRAFT PREVIEW ONLY", body)
+        self.assertIn("NO APPROVAL CREATED", body)
+        self.assertIn("NO EXECUTION", body)
+        self.assertNotIn("key_hash", body)
+        self.assertNotIn("Authorization", body)
+        self.assertNotIn("Bearer", body)
+
+    def test_approval_object_preview_api_is_draft_only_and_has_no_side_effects(self):
+        before = self.table_counts()
+        with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+            with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                with patch.object(self.app_module, "cloudflare_request") as cloudflare_call:
+                    with patch.object(self.app_module, "create_approval_request") as approval_create:
+                        external_ai_response = self.client().post("/api/admin/approval-object-preview", json={
+                            "type": "external_ai_live_verification",
+                            "title": "Preview Gemini live verification",
+                            "source_surface": "/admin/external-ai-live-verification-gate",
+                            "risk_level": "high",
+                            "target": {"provider": "gemini", "model": "gemini-1.5-flash"},
+                            "dry_run_snapshot": {"preview_only": True},
+                        })
+                        domain_response = self.client().post("/api/admin/approval-object-preview", json={
+                            "type": "domain_execution",
+                            "title": "Preview domain execution",
+                            "source_surface": "/admin/domain-execution-dry-run",
+                            "risk_level": "critical",
+                            "target": {"domain": "aioffice.com.tw"},
+                            "dry_run_snapshot": {"planned_dns_records": 27},
+                        })
+
+        for response in (external_ai_response, domain_response):
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            payload = response.get_json()
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["read_only"])
+            self.assertTrue(payload["draft_only"])
+            self.assertFalse(payload["approval_object_created"])
+            self.assertFalse(payload["execution_allowed"])
+            self.assertFalse(payload["provider_calls_executed"])
+            self.assertFalse(payload["approval_requests_created"])
+            self.assertFalse(payload["usage_logs_written"])
+            self.assertFalse(payload["generation_results_written"])
+            self.assertEqual(payload["approval_preview"]["id"], "preview_only")
+            self.assertEqual(payload["approval_preview"]["status"], "draft_preview")
+            self.assertEqual(payload["approval_preview"]["execution_mode"], "none")
+            self.assertEqual(payload["approval_preview"]["audit_events"], [])
+            self.assertFalse(payload["approval_preview"]["safety_checks"]["approval_request_created"])
+            self.assertFalse(payload["approval_preview"]["safety_checks"]["usage_log_written"])
+            self.assertFalse(payload["approval_preview"]["safety_checks"]["generation_result_written"])
+            combined = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            self.assertNotIn("key_hash", combined)
+            self.assertNotIn("Authorization", combined)
+            self.assertNotIn("Bearer", combined)
+
+        external_roles = {item["role"] for item in external_ai_response.get_json()["approval_preview"]["required_approvals"]}
+        self.assertEqual(external_roles, {"product_owner", "engineering_owner", "operations_owner", "security_reviewer"})
+        domain_roles = {item["role"] for item in domain_response.get_json()["approval_preview"]["required_approvals"]}
+        self.assertEqual(domain_roles, {"domain_owner", "product_owner", "operations_owner", "dns_cloudflare_owner", "security_reviewer"})
+        self.assertEqual(before, self.table_counts())
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+        cloudflare_call.assert_not_called()
+        approval_create.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

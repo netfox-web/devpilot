@@ -8,6 +8,8 @@ Approval workflow boundary: Phase 8 keeps the scheduled runner from creating app
 
 Task queue generator boundary: Phase 9 defines `docs/ai_coding_agent_task_queue_generator_design.md` as a future safe translation layer. The runner remains a consumer of `docs/ai_coding_agent_task_queue.md`; it should not generate queue items, query GitHub Issues, create approvals, or infer work from upstream sources.
 
+Level 7 status: task generation is implemented as preview-only UI/API. The runner still consumes only explicit queue items and does not auto-commit, auto-push, execute generated previews, or create approval objects.
+
 Final status:
 
 ```text
