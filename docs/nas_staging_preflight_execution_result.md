@@ -22,6 +22,8 @@ The deployment readiness gate must remain blocked. NAS-side read-only checks rea
 - Docker / Compose inspection: completed, read-only.
 - Actual staging runtime indicated by Docker labels: `/volume1/docker-staging/devpilot`.
 - Actual staging port indicated by Docker: `5012->5000`.
+- Human-confirmed production URL: `https://devpilot.aicenter.com.tw/`.
+- Staging public URL / domain: unconfirmed.
 - `.env` content: not printed.
 - Compose config result summary: OK for `/volume1/docker/devpilot`, `/volume1/docker/devpilot_project_manager`, and `/volume1/docker-staging/devpilot`; failed for `/volume1/worktrees/devpilot-build-321df5d`.
 - `py_compile` result: pass. `app.py` compiled successfully from the local repo.
@@ -40,6 +42,7 @@ The deployment readiness gate must remain blocked. NAS-side read-only checks rea
 - Docker is available via `/usr/local/bin/docker`.
 - Docker Compose is available via `/usr/local/bin/docker compose`.
 - Docker labels identified `devpilot-project-manager-staging` as the running staging container.
+- Human confirmed `https://devpilot.aicenter.com.tw/` is production, not staging.
 
 ## Not Completed
 
@@ -91,6 +94,14 @@ Failure reasons:
 
 ## Docker / Compose Runtime Evidence
 
+Production and staging must be separated. The production public URL is human-confirmed:
+
+```text
+https://devpilot.aicenter.com.tw/
+```
+
+This URL must not be used as staging evidence.
+
 Docker / Compose:
 
 - Docker available: yes, via `/usr/local/bin/docker`
@@ -137,6 +148,10 @@ Candidate compose checks using the full Docker binary path:
 
 Important mismatch:
 
+- Production URL: `https://devpilot.aicenter.com.tw/`
+- Likely production runtime: `/volume1/docker/devpilot` on `5010->5000`
+- Likely staging runtime: `/volume1/docker-staging/devpilot` on `5012->5000`
+- Staging public URL / domain: unconfirmed
 - Documented expected path: `/volume1/docker/devpilot-staging`
 - Actual staging working directory: `/volume1/docker-staging/devpilot`
 - Documented planned port: `5011:5000`
@@ -187,6 +202,9 @@ Important mismatch:
 - Expected path does not exist.
 - No candidate confirms latest synced commit `d8a65d8`.
 - No candidate confirms previous commit `61a0e74`.
+- Production and staging evidence must remain separated.
+- Production URL must not be treated as staging evidence.
+- Staging public URL/domain is still unconfirmed.
 - Documentation expected path and port do not match the actual Docker staging runtime.
 - Runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
 - Correct staging target still requires human confirmation.
@@ -220,5 +238,7 @@ Preflight is blocked because a candidate runtime path was identified but not yet
 - update deployment docs from `/volume1/docker/devpilot-staging:5011` to `/volume1/docker-staging/devpilot:5012` if this is the intended staging environment,
 - provision the originally documented path `/volume1/docker/devpilot-staging` through an approved setup process,
 - stop deployment readiness until path/port ownership is resolved.
+
+Staging public URL / domain must be explicitly confirmed before readiness can pass. The production URL `https://devpilot.aicenter.com.tw/` is not staging evidence.
 
 Do not mark readiness as passed and do not proceed to deployment approval until a human-confirmed staging path passes read-only preflight.

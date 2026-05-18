@@ -535,6 +535,7 @@ Result summary:
   - compose project `devpilot-staging`
   - working directory `/volume1/docker-staging/devpilot`
   - port `5012->5000`
+- Human confirmation later identified `https://devpilot.aicenter.com.tw/` as the production URL, not a staging URL.
 - No deployment, restart, Docker start/build command, reverse proxy change, SSL change, DNS/Cloudflare change, `.env` output, or secret output was performed.
 
 ## Deployment Readiness Gate Status
@@ -559,6 +560,7 @@ Completed:
 - Docker / Compose read-only inspection was executed.
 - Docker is available via `/usr/local/bin/docker`.
 - Docker Compose is available via `/usr/local/bin/docker compose`.
+- Human confirmed production URL: `https://devpilot.aicenter.com.tw/`.
 
 Not completed:
 
@@ -589,6 +591,14 @@ Failure reasons:
 
 Docker / Compose runtime evidence:
 
+Production and staging must be separated. The production public URL is human-confirmed:
+
+```text
+https://devpilot.aicenter.com.tw/
+```
+
+This URL must not be used as staging evidence.
+
 | Container | Image | Status | Port | Compose project | Service | Working dir | Config file |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `devpilot-project-manager` | `devpilot-devpilot` | Up 4 days | `5010->5000` | `devpilot` | `devpilot` | `/volume1/docker/devpilot` | `/volume1/docker/devpilot/docker-compose.yml` |
@@ -607,6 +617,10 @@ Candidate compose checks using the full Docker binary path:
 
 Important mismatch:
 
+- Production URL: `https://devpilot.aicenter.com.tw/`
+- Likely production runtime: `/volume1/docker/devpilot` on `5010->5000`
+- Likely staging runtime: `/volume1/docker-staging/devpilot` on `5012->5000`
+- Staging public URL / domain: unconfirmed
 - Documented expected path: `/volume1/docker/devpilot-staging`
 - Actual staging working directory from Docker labels: `/volume1/docker-staging/devpilot`
 - Documented planned port: `5011:5000`
@@ -618,6 +632,9 @@ Remaining blockers:
 - Expected path does not exist.
 - No candidate confirms latest synced commit `d8a65d8`.
 - No candidate confirms previous commit `61a0e74`.
+- Production and staging evidence must remain separated.
+- Production URL must not be treated as staging evidence.
+- Staging public URL/domain is still unconfirmed.
 - Documentation expected path and port do not match the actual Docker staging runtime.
 - Runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
 - Correct staging target still requires human confirmation.
@@ -629,6 +646,8 @@ Required unblock:
   - update deployment docs from `/volume1/docker/devpilot-staging:5011` to `/volume1/docker-staging/devpilot:5012` if this is the intended staging environment,
   - provision the originally documented path `/volume1/docker/devpilot-staging` through an approved setup process,
   - stop deployment readiness until path/port ownership is resolved.
+
+Staging public URL / domain must be explicitly confirmed before readiness can pass. The production URL `https://devpilot.aicenter.com.tw/` is not staging evidence.
 
 Deployment decision:
 
