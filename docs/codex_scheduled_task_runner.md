@@ -2,6 +2,8 @@
 
 This runbook defines a safe scheduled-task pattern for letting local Codex periodically check whether DevPilot has new AI coding-agent work, without requiring the user to paste logs back into ChatGPT.
 
+Implementation status: implemented in Phase 1 (`7e9d233`) as a local task-queue-driven runner. The runner reads `docs/ai_coding_agent_task_queue.md`, does not query GitHub Issues directly, does not require `gh`, and logs only when no pending task exists.
+
 Final status:
 
 ```text

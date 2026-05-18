@@ -19,11 +19,50 @@ The system direction is safety-first:
 Current local repository note:
 
 ```text
-main is aligned with origin/main.
-docs/ai_coding_agent_handoff_status.md has a local scheduled-run update that is not committed.
+Phase 1-6 implementation work has been completed and pushed to main.
+The current architecture posture is read-only first, dry-run before execution, and explicit approval before live provider or infrastructure mutation.
 ```
 
-That local handoff change should be reviewed separately before commit or restore.
+Phase 1-6 completion rollup:
+
+```text
+Phase 1 Runner Reliability: 7e9d233
+Phase 2 AI Provider Readiness Dashboard: 2428b1f
+Phase 3 Product Domain Launch Plan Dashboard: 55e0418
+Phase 4 External Project Health Planner: a9d3e17
+Phase 5 External AI Live Verification Gate: 439dd2d
+Phase 6 Domain Execution Dry-run Center: 5c680bf
+```
+
+Latest capability map:
+
+- AI Coding Agent Operations: local task-queue-driven runner, no GitHub issue polling, no `gh` dependency.
+- External AI Governance: provider readiness dashboard plus live verification gate, with live calls still disabled.
+- Product Domain / Domain Operations: catalog, launch plan, redirect plan, canonical strategy, and domain execution dry-run center.
+- Automation Planner / External Project Health: read-only project health planner with risk, blockers, warnings, recommended actions, and safety checks.
+
+Route summary added through Phase 6:
+
+```text
+/admin/ai-provider-readiness
+/api/admin/ai-provider-readiness
+/admin/product-domain-launch-plan
+/api/admin/product-domain-launch-plan
+/admin/automation-planner/external-project-health
+/api/admin/automation-planner/external-project-health
+/admin/external-ai-live-verification-gate
+/api/admin/external-ai-live-verification-gate
+/admin/domain-execution-dry-run
+/api/admin/domain-execution-dry-run
+```
+
+Recommended next phases:
+
+- Phase 8: Approval Object Workflow Design.
+- Phase 9: Task Queue Generator.
+- Phase 10: Readiness Rollup Dashboard.
+- Phase 11: Optional Live Verification Implementation after approval.
+- Phase 12: Domain Execution Approval Workflow.
 
 ## 1. Core Admin Console
 
@@ -111,6 +150,8 @@ Current status:
 - Catalog model exists.
 - Admin UI and read APIs exist.
 - Redirect plan exports exist.
+- Product Domain Launch Plan Dashboard is implemented as a read-only UI/API.
+- Domain Execution Dry-run Center is implemented as a read-only UI/API.
 - No DNS, Cloudflare, Nginx, registrar, or SSL changes are performed by this catalog.
 
 Analyst questions:
@@ -161,6 +202,7 @@ Current dry-run status:
 - Product Domain catalog, launch plan, redirect plan, and canonical strategy can be combined into preview actions.
 - Preview actions require approval and keep `execution_allowed=false`.
 - The dry-run center does not call Cloudflare, write DNS records, generate Nginx files, change SSL, mutate registrar/nameservers, deploy, call providers, run workers, or modify production settings.
+- Implementation status: implemented as read-only UI/API in Phase 6; execution remains disabled.
 
 Pending planning decisions:
 
@@ -247,6 +289,15 @@ Gemini default provider: gemini-1.5-flash
 Claude mocked/tested path: claude-3-5-haiku
 ```
 
+Implemented read-only governance surfaces:
+
+```text
+/admin/ai-provider-readiness
+/api/admin/ai-provider-readiness
+/admin/external-ai-live-verification-gate
+/api/admin/external-ai-live-verification-gate
+```
+
 Supported text capabilities:
 
 - `generate`
@@ -261,6 +312,7 @@ Important current boundary:
 
 - Claude support is not live-provider-enabled in this phase.
 - The Claude gateway function is mock/test oriented unless a later phase explicitly enables live calls.
+- Gemini and Claude live verification gates are implemented, but `live_verification_allowed=false`.
 - Usage logging stores hashes and short summaries by default, not full prompt/response.
 - Idempotent replay avoids duplicate provider calls for completed results.
 
@@ -352,6 +404,12 @@ Current non-goals:
 - No worker execution.
 - No automatic remediation.
 
+Implementation status:
+
+- External Project Health Planner is implemented as read-only UI/API in Phase 4.
+- It reports health, risk score, signals, blockers, warnings, recommended actions, context, and safety checks.
+- Execution remains disabled.
+
 Analyst decision:
 
 - Which category should Automation Planner serve first:
@@ -374,7 +432,7 @@ scripts/codex_check_tasks.ps1
 Recent commit:
 
 ```text
-a8ec235 chore: add Codex scheduled task runner script
+7e9d233 chore: make Codex runner task-queue driven
 ```
 
 Runner design:
@@ -385,20 +443,21 @@ Runner design:
 - Uses `C:\Program Files\nodejs\npx.cmd`.
 - Calls `npx -y @openai/codex@latest exec`.
 - `.local_backups/` and `logs/` are ignored by Git.
+- Reads `docs/ai_coding_agent_task_queue.md` as the local scheduled-runner task source.
+- Does not query GitHub Issues directly.
+- Does not require `gh`.
+- If no pending task exists, logs only and does not modify files.
 
 Current issue:
 
-- The scheduled runner can update `docs/ai_coding_agent_handoff_status.md`.
-- The latest local handoff file reports a blocked scheduled run because GitHub issue source could not be verified from that runner environment.
-- `gh` is not installed in that runner shell.
-- Shell network access to GitHub may fail in scheduled context.
+- Task queue auto-generation is not implemented yet.
+- Whether the runner may ever auto-commit or auto-push remains an owner policy decision.
 
 Planning options:
 
-- Install/configure `gh`.
-- Use DevPilot managed GitHub API status/token path.
-- Make scheduled runner handoff-file-only.
-- Make GitHub issue polling a later explicit phase.
+- Generate task queue entries from GitHub issues, admin UI notes, or analyst docs.
+- Keep automatic execution disabled until explicit owner policy is approved.
+- Route runner decisions through a future readiness rollup dashboard.
 
 ## 9. Testing and Verification Coverage
 

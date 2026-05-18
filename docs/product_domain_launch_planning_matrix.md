@@ -2,13 +2,13 @@
 
 Date: 2026-05-18
 Audience: analyst, product planning, SEO planning, operations planning
-Status: planning draft, no implementation changes
+Status: launch plan implemented as read-only UI/API in Phase 3; domain dry-run implemented as read-only UI/API in Phase 6
 
 ## Purpose
 
 This document turns the current DevPilot Product Domain catalog into a launch planning matrix for analyst review.
 
-It is a planning document only. It does not execute DNS, redirects, SSL, Nginx, Cloudflare, R2, registrar, deployment, hosting, or production setting changes.
+Implementation status: the launch plan dashboard/API was implemented in Phase 3 (`55e0418`), and the domain execution dry-run center was implemented in Phase 6 (`5c680bf`). Execution remains disabled. This document does not execute DNS, redirects, SSL, Nginx, Cloudflare, R2, registrar, deployment, hosting, or production setting changes.
 
 ## Source Inputs
 

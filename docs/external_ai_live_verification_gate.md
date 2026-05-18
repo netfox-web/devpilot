@@ -2,13 +2,15 @@
 
 Date: 2026-05-18
 Audience: product owner, engineering owner, operations owner, security reviewer
-Status: approval gate draft, docs-only
+Status: implemented as read-only UI/API in Phase 5; live verification remains disabled
 
 ## Purpose
 
 Define the explicit approval gate required before any live Gemini or Claude verification call is allowed from DevPilot.
 
 This document does not approve live verification by itself. It describes prerequisites, constraints, abort conditions, logging expectations, and non-goals for a future separately approved one-call verification phase.
+
+Implementation status: implemented as read-only UI/API in Phase 5 (`439dd2d`). The gate displays prerequisites and required approvals only; `live_verification_allowed=false` and `execution_allowed=false`.
 
 Read-only gate surfaces:
 

@@ -1,13 +1,15 @@
 # Gemini and Claude Provider Readiness Check
 
 Date: 2026-05-15
-Status: implementation readiness check
+Status: readiness dashboard implemented in Phase 2; live verification gate implemented in Phase 5; live calls remain disabled
 
 ## Purpose
 
 This checklist defines how to decide whether Gemini and Claude are ready to be enabled in DevPilot provider-governed workflows.
 
 It is intentionally a readiness check, not an activation step. Passing this checklist does not deploy code, call providers, expose keys, enable customer traffic, or change production settings.
+
+Implementation status: the AI Provider Readiness Dashboard was implemented as read-only UI/API in Phase 2 (`2428b1f`), and the External AI Live Verification Gate was implemented as read-only UI/API in Phase 5 (`439dd2d`). Provider live calls remain disabled and require a later explicit approval phase.
 
 ## Scope
 

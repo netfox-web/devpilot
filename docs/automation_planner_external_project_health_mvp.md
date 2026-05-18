@@ -2,7 +2,7 @@
 
 Date: 2026-05-18
 Audience: product planning, engineering planning, operations planning
-Status: technical design draft, docs-only
+Status: implemented as read-only UI/API in Phase 4; execution remains disabled
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Define a first Automation Planner MVP focused on external project health.
 
 The MVP should help operators inspect external project registry records, events, diagnostics, handoffs, and AI usage signals, then produce a read-only health plan with risk level, blockers, recommended checks, and suggested next actions.
 
-This design does not modify runtime code. It does not deploy, restart services, call AI providers, create DNS records, change Cloudflare, change SSL, change Nginx, mutate R2, change `.env`, or touch secrets.
+Implementation status: implemented as read-only UI/API in Phase 4 (`a9d3e17`). It does not deploy, restart services, call AI providers, create DNS records, change Cloudflare, change SSL, change Nginx, mutate R2, change `.env`, or touch secrets.
 
 ## Inputs
 
