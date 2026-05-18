@@ -527,7 +527,9 @@ Result summary:
 
 - Local repo checks passed.
 - Local `app.py` py_compile passed.
-- NAS shell access was not available from the workstation session, so NAS Docker, Compose, repo path, `.env`, persistent directories, compose config, and port `5011` checks remain blocked.
+- NAS shell access later reached `chaokun@211.75.219.184`; hostname reported `disney`.
+- NAS-side preflight failed because the expected staging path `/volume1/docker/devpilot-staging` does not exist.
+- Candidate path discovery and fingerprint checks were read-only. None of the candidates passed the readiness gate.
 - No deployment, restart, Docker start/build command, reverse proxy change, SSL change, DNS/Cloudflare change, `.env` output, or secret output was performed.
 
 ## Deployment Readiness Gate Status
@@ -535,7 +537,7 @@ Result summary:
 Current gate status:
 
 ```text
-blocked: missing NAS shell access / NAS operator result
+blocked: NAS-side preflight failed
 ```
 
 Completed:
@@ -546,24 +548,59 @@ Completed:
 - Commit `61a0e74` was confirmed docs-only and limited to:
   - `docs/nas_staging_deployment_readiness_check.md`
   - `docs/nas_staging_preflight_execution_result.md`
+- SSH reached the NAS host as `chaokun@211.75.219.184`.
+- NAS hostname was reported as `disney`.
+- Read-only path discovery and candidate fingerprint checks were executed.
 
 Not completed:
 
-- NAS-side read-only shell preflight has not been executed.
-- No NAS hostname, path, runtime, or container result is available.
-- `docker compose config` has not been verified on NAS.
-- NAS disk, container, project-path, `.env`, `data/`, `uploads/`, and `logs/` state has not been verified.
+- The expected staging path `/volume1/docker/devpilot-staging` was not found.
+- No candidate path confirmed the latest synced commit `d8a65d8`.
+- No candidate path confirmed the previous docs commit `61a0e74`.
+- Candidate `docker compose config` checks failed.
+- NAS staging readiness was not marked passed.
+
+Failure reasons:
+
+1. Expected staging path missing:
+   - `/volume1/docker/devpilot-staging`
+2. Candidate paths checked:
+   - `/volume1/docker-staging/devpilot`
+   - `/volume1/docker/devpilot_project_manager`
+   - `/volume1/docker/devpilot`
+   - `/volume1/worktrees/devpilot-build-321df5d`
+3. Candidate fingerprint summary:
+
+| Candidate path | Exists | Git repo | Commit status | Compose file | `.env` | Compose config | Staging likelihood |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `/volume1/docker-staging/devpilot` | yes | no | cannot confirm `d8a65d8` or `61a0e74` | yes | yes, content not printed | FAILED | medium-low |
+| `/volume1/docker/devpilot_project_manager` | yes | no | cannot confirm `d8a65d8` or `61a0e74` | yes | yes, content not printed | FAILED | low |
+| `/volume1/docker/devpilot` | yes | no | cannot confirm `d8a65d8` or `61a0e74` | yes | yes, content not printed | FAILED | low |
+| `/volume1/worktrees/devpilot-build-321df5d` | yes | yes, detached `HEAD` | does not include `d8a65d8` or `61a0e74` in latest log | yes | no | FAILED | low |
+
+Remaining blockers:
+
+- Expected path does not exist.
+- No candidate confirms latest synced commit `d8a65d8`.
+- No candidate confirms previous commit `61a0e74`.
+- All candidate compose config checks failed.
+- Several candidate runtime dirs appear to be copied deployments rather than git worktrees.
+- Correct staging path still requires human confirmation or setup.
 
 Required unblock:
 
-- A NAS operator must run the documented read-only checks on `/volume1/docker/devpilot-staging`, or
-- an explicit NAS shell / SSH target must be provided with read-only authorization.
+- Human must decide one of:
+  - confirm the real NAS staging path,
+  - create or provision the expected staging path through an approved setup process,
+  - update documentation if the expected path is wrong,
+  - abandon deployment readiness until the NAS staging environment is corrected.
 
 Deployment decision:
 
 - Deployment is not approved.
 - Deployment was not executed.
-- Readiness must not be marked passed before a NAS-side result is available.
+- Readiness must not be marked passed.
+- Deployment must not proceed.
 
 Safety confirmation:
 
@@ -571,9 +608,14 @@ Safety confirmation:
 - No restart was executed.
 - No build or pull was executed.
 - No `docker run` was executed.
+- No `docker compose up/down/restart/build/pull` was executed.
+- No `git pull/push/merge/rebase` was executed on NAS.
+- No `mkdir/rm/mv/cp` was executed on NAS.
+- No file edits were made on NAS.
 - No NAS setting was changed.
 - No `.env` content was read or printed.
 - No secrets were touched.
+- No NAS/Nginx/DNS/Cloudflare/SSL setting was changed.
 
 ## Readiness Conclusion
 
