@@ -39,6 +39,7 @@ Current surfaces that can produce approval intent in a later phase:
 - External Project Health Planner: `/admin/automation-planner/external-project-health`
 - AI Provider Readiness Dashboard: `/admin/ai-provider-readiness`
 - Codex task queue: `docs/ai_coding_agent_task_queue.md`
+- Task Queue Generator design: `docs/ai_coding_agent_task_queue_generator_design.md`
 - Manual operator note
 
 These inputs should remain read-only until a later implementation phase explicitly creates approval objects.
@@ -258,6 +259,12 @@ Until a later phase implements creation, recommended actions stay advisory and `
 The scheduled runner should not create approval objects in Phase 8.
 
 Future queue-driven approval creation should require an explicit pending task and should default to draft approval objects only, not execution.
+
+### Task Queue Generator
+
+The Task Queue Generator can translate a future Approval Object draft into an explicit `docs/ai_coding_agent_task_queue.md` pending item.
+
+It should not approve the object, execute the object, call Codex, commit, push, or mutate runtime data. Its output should be a reviewable queue patch with source, allowed files, forbidden files, risk level, execution mode, verification, commit/push policy, approval requirement, and safety boundaries.
 
 ## Storage and API Proposal
 

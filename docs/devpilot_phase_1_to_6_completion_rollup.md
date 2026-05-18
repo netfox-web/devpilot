@@ -200,6 +200,14 @@ The design keeps approval objects as a future unifying layer for live provider c
 - Convert ChatGPT, GitHub issue, or admin note inputs into `docs/ai_coding_agent_task_queue.md` pending items.
 - No automatic execution yet.
 
+Phase 9 design source:
+
+```text
+docs/ai_coding_agent_task_queue_generator_design.md
+```
+
+The design keeps queue generation as a reviewable patch/draft process. It does not call Codex, invoke the scheduled runner, commit, push, create approval objects, or execute high-risk actions.
+
 ### Phase 10 - Readiness Rollup Dashboard
 
 - Add one admin page showing provider, domain, automation, and runner readiness.

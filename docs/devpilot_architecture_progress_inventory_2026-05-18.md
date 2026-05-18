@@ -37,6 +37,7 @@ Phase 6 Domain Execution Dry-run Center: 5c680bf
 Latest capability map:
 
 - AI Coding Agent Operations: local task-queue-driven runner, no GitHub issue polling, no `gh` dependency.
+- Task Queue Generator: design-only safe translation layer for future queue patches.
 - External AI Governance: provider readiness dashboard plus live verification gate, with live calls still disabled.
 - Product Domain / Domain Operations: catalog, launch plan, redirect plan, canonical strategy, and domain execution dry-run center.
 - Automation Planner / External Project Health: read-only project health planner with risk, blockers, warnings, recommended actions, and safety checks.
@@ -71,6 +72,14 @@ docs/approval_object_workflow_design.md
 ```
 
 Approval Object Workflow is the proposed unifying layer for future high-risk action requests. It should model request intent, risk level, dry-run snapshot, required approvers, safety checks, abort conditions, status, and audit trail before any live provider call, domain execution, deploy, DNS/Cloudflare/Nginx/SSL/R2 mutation, worker execution, or project/task lifecycle mutation is allowed.
+
+Phase 9 design note:
+
+```text
+docs/ai_coding_agent_task_queue_generator_design.md
+```
+
+Task Queue Generator is the proposed safe translation layer for turning ChatGPT tasks, GitHub issues labeled `codex-task`, admin notes, analyst decisions, Approval Object drafts, Product Domain decisions, and External Project Health recommendations into explicit `docs/ai_coding_agent_task_queue.md` pending task items. It produces reviewable queue patches only; it does not call Codex, commit, push, create approvals, or execute tasks.
 
 ## 1. Core Admin Console
 
@@ -461,6 +470,7 @@ Runner design:
 Current issue:
 
 - Task queue auto-generation is not implemented yet.
+- Task Queue Generator is design-only and does not execute, commit, push, or call Codex.
 - Whether the runner may ever auto-commit or auto-push remains an owner policy decision.
 
 Planning options:

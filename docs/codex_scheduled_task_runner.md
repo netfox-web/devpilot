@@ -6,6 +6,8 @@ Implementation status: implemented in Phase 1 (`7e9d233`) as a local task-queue-
 
 Approval workflow boundary: Phase 8 keeps the scheduled runner from creating approval objects. Future queue-driven approval creation should require an explicit pending task and should default to draft approval objects only, not execution.
 
+Task queue generator boundary: Phase 9 defines `docs/ai_coding_agent_task_queue_generator_design.md` as a future safe translation layer. The runner remains a consumer of `docs/ai_coding_agent_task_queue.md`; it should not generate queue items, query GitHub Issues, create approvals, or infer work from upstream sources.
+
 Final status:
 
 ```text
@@ -88,6 +90,8 @@ No unchecked task in docs/ai_coding_agent_task_queue.md -> write log only -> sto
 ```
 
 The scheduled runner must not query GitHub Issues directly and must not require `gh`.
+
+Future task generation should happen outside the runner as a reviewable patch to `docs/ai_coding_agent_task_queue.md`.
 
 ## Safe Runner Policy
 

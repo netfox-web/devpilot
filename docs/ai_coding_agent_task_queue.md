@@ -2,6 +2,8 @@
 
 This file is the local scheduled-runner task source for DevPilot AI coding agents.
 
+Generator design status: Phase 9 defines a future Task Queue Generator in `docs/ai_coding_agent_task_queue_generator_design.md`. The generator is design-only at this stage and does not execute tasks, call Codex, create approvals, commit, or push.
+
 Final status:
 
 ```text
@@ -30,11 +32,31 @@ No pending scheduled Codex task.
 
 ```markdown
 - [ ] TASK-ID: Short task title
+  - Source: chatgpt|github_issue|admin_note|analyst_decision|approval_object
   - Scope: What Codex should do.
-  - Allowed files: Paths Codex may modify.
-  - Verification: Commands Codex should run.
-  - Commit/push: yes/no, with exact rules.
-  - Safety: Extra boundaries for this task.
+  - Allowed files:
+    - Paths Codex may modify.
+  - Forbidden files:
+    - .env
+    - data/
+    - uploads/
+    - logs/
+    - .local_backups/
+  - Risk level: low|medium|high|critical
+  - Execution mode: docs_only|read_only_ui|test_only|approval_draft_only|blocked
+  - Verification:
+    - Commands Codex should run.
+  - Commit/push: no|yes_with_exact_message
+  - Approval required: true|false
+  - Safety:
+    - no deploy
+    - no secrets
+    - no provider live call
+    - no DNS write
+    - no Cloudflare write
+    - no Nginx write
+    - no SSL write
+    - no R2 mutation
 ```
 
 ## Completed Tasks
