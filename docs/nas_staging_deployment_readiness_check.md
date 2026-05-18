@@ -1,7 +1,7 @@
 # NAS Staging Deployment Readiness Check
 
 Date: 2026-05-18
-Status: readiness report, docs-only, no deployment
+Status: readiness report and Docker staging preflight command plan, docs-only, no deployment
 
 ## 1. Current Repo Status
 
@@ -16,6 +16,7 @@ Conclusion:
 - Local `main` is aligned with `origin/main`.
 - This report is docs-only.
 - No deployment, restart, NAS setting change, production change, DNS/Cloudflare/Nginx/SSL write, `.env` edit, or secret access was performed.
+- Topology decision recorded: Docker staging at `/volume1/docker/devpilot-staging` with port mapping `5011:5000`.
 
 ## 2. Required Runtime
 
@@ -90,13 +91,13 @@ NAS Docker examples map:
 5010:5000
 ```
 
-Recommended staging port:
+Selected staging port:
 
 ```text
 5011:5000
 ```
 
-Final staging port must be chosen by the operator to avoid conflicting with production or existing DevPilot containers.
+The operator selected Docker staging on port `5011:5000`. Preflight must still confirm the port does not conflict with production or existing NAS containers.
 
 ### Data Directory
 
@@ -219,63 +220,154 @@ Staging rules:
 - If using Docker, mount `data/` and `uploads/` as persistent volumes.
 - Add a staging-specific backup plan before testing any write-capable admin feature.
 
-## 5. NAS Staging Topology Proposal
+## 5. NAS Staging Topology Decision
 
 ### App Path
 
-Option A, Docker staging:
+Selected Docker staging path:
 
 ```text
 /volume1/docker/devpilot-staging
 ```
 
-Option B, venv staging:
+Venv staging is not selected for this phase.
+
+### Port Mapping
 
 ```text
-/volume1/apps/devpilot-staging
+5011:5000
 ```
 
 ### Venv Path
 
-If using venv staging:
+Not applicable for the selected Docker staging topology.
 
-```text
-/volume1/apps/devpilot-staging/.venv
-```
+### Service Command Plan
 
-### Service Command
+The service command is documented for a later approved staging deployment phase only.
 
-Docker proposal:
+Command plan, do not run during readiness review:
 
 ```bash
+cd /volume1/docker/devpilot-staging
 docker compose up -d --build
-```
-
-Venv proposal:
-
-```bash
-cd /volume1/apps/devpilot-staging
-. .venv/bin/activate
-HOST=0.0.0.0 PORT=5011 FLASK_DEBUG=0 python app.py
 ```
 
 No service command was run during this readiness check.
 
-### Reverse Proxy Pending
+### Reverse Proxy
 
-Reverse proxy is pending.
+Reverse proxy is explicitly deferred.
 
-Do not write Nginx, Synology reverse proxy, or Cloudflare Tunnel config until a separate approved staging deployment phase.
+Do not write Nginx, Synology reverse proxy, Cloudflare Tunnel, DNS, or Cloudflare config in this phase.
 
-### SSL Pending
+### SSL
 
-SSL is pending.
+SSL is explicitly deferred.
 
-Do not request certificates, change SSL mode, change Nginx SSL config, or change Cloudflare SSL settings during readiness review.
+Do not request certificates, change SSL mode, change Nginx SSL config, or change Cloudflare SSL settings in this phase.
+
+## 5A. Docker Staging Preflight Checklist
+
+This checklist is a command plan only. Do not run these commands until a separate approved staging preflight/execution step.
+
+### Operator Decisions Locked
+
+```text
+Topology: Docker staging
+App path: /volume1/docker/devpilot-staging
+Port mapping: 5011:5000
+Reverse proxy: deferred / no change
+SSL: deferred / no change
+Secrets: do not print, copy into docs, or commit
+Production: no change
+```
+
+### Source Layout Plan
+
+The staging app directory should contain a working copy or deployment copy of the DevPilot repository:
+
+```bash
+cd /volume1/docker/devpilot-staging
+test -f app.py
+test -f Dockerfile
+test -f docker-compose.yml
+test -f requirements.txt
+```
+
+### Compose Port Check Plan
+
+The selected staging mapping should be:
+
+```text
+5011:5000
+```
+
+Preflight should inspect compose config without starting containers:
+
+```bash
+cd /volume1/docker/devpilot-staging
+docker compose config
+```
+
+Expected check:
+
+```text
+ports includes 5011:5000
+```
+
+### Persistent Directory Plan
+
+Staging should use local Docker-mounted runtime directories:
+
+```bash
+cd /volume1/docker/devpilot-staging
+mkdir -p data uploads logs
+test -d data
+test -d uploads
+test -d logs
+```
+
+Do not commit runtime data. Do not copy production runtime data unless separately approved.
+
+### Staging Environment Plan
+
+Staging `.env` must exist before actual deployment, but contents must never be printed into terminal logs, docs, screenshots, or chat.
+
+Preflight command plan:
+
+```bash
+cd /volume1/docker/devpilot-staging
+test -f .env
+```
+
+Required staging-safe settings by name:
+
+```text
+HOST
+PORT
+FLASK_DEBUG
+DATABASE_PATH
+API_TOKEN
+SECRET_KEY
+DEV_PILOT_API_URL
+```
+
+Recommended staging values by policy, not secrets:
+
+```text
+HOST=0.0.0.0
+PORT=5000
+FLASK_DEBUG=0
+DATABASE_PATH=data/project_manager.db
+DEV_PILOT_API_URL=http://NAS_IP:5011
+```
+
+Do not print `API_TOKEN` or `SECRET_KEY`.
 
 ## 6. Preflight Commands
 
-Run these on NAS staging only after an explicit staging preparation step.
+Run these on NAS staging only after an explicit staging preflight step.
 
 Repository and files:
 
@@ -288,7 +380,7 @@ test -f Dockerfile
 test -f docker-compose.nas.example.yml
 ```
 
-Python / dependency preflight:
+Python / dependency preflight, optional because Docker is selected:
 
 ```bash
 python --version
@@ -308,11 +400,12 @@ test -d uploads
 test -d logs
 ```
 
-Docker preflight, if Docker is used:
+Docker preflight for selected topology:
 
 ```bash
 docker --version
 docker compose version
+cd /volume1/docker/devpilot-staging
 docker compose config
 ```
 
@@ -357,17 +450,21 @@ Before staging deployment:
 Rollback outline for a later approved staging deployment:
 
 ```bash
+cd /volume1/docker/devpilot-staging
 docker compose down
 git checkout <previous_staging_commit>
 docker compose up -d --build
 ```
 
-For venv staging:
+Because Docker staging is selected, venv rollback is not part of the current topology.
+
+Preflight-only rollback check:
 
 ```bash
-git checkout <previous_staging_commit>
-. .venv/bin/activate
-python -m pip install -r requirements.txt
+cd /volume1/docker/devpilot-staging
+git log --oneline -5
+test -d data
+test -d uploads
 ```
 
 Actual stop/start commands require a separate approved deployment phase.
@@ -397,13 +494,14 @@ This readiness check did not and must not:
 ### Go Conditions
 
 - Repo is clean and on the intended staging commit.
-- Python 3.12 or Docker build path is available.
-- `requirements.txt` installs successfully.
+- Docker and Docker Compose are available on NAS.
+- `/volume1/docker/devpilot-staging` exists and contains the DevPilot app files.
+- Compose config maps `5011:5000`.
 - `python -m py_compile app.py` passes.
 - Staging `.env` exists on NAS and contains only staging-safe values.
 - `data/`, `uploads/`, and `logs/` staging directories exist.
-- Staging port is selected and not conflicting with production.
-- Reverse proxy and SSL are explicitly deferred or separately approved.
+- Staging port `5011` is not conflicting with production.
+- Reverse proxy and SSL are explicitly deferred.
 - Provider live call flags remain disabled.
 - DNS / Cloudflare / Nginx / SSL / R2 / deploy execution remains blocked.
 - Backup/rollback plan is documented.
@@ -427,8 +525,8 @@ Current readiness is conditional go for planning and preflight only.
 
 Primary blockers before actual staging deployment:
 
-- Choose Docker versus venv topology.
-- Choose staging port and app path.
+- Verify `/volume1/docker/devpilot-staging` exists and contains the intended commit.
+- Verify Docker Compose config maps `5011:5000`.
 - Prepare staging-only `.env` without exposing values.
 - Confirm persistent storage and backup/rollback plan.
-- Decide whether reverse proxy and SSL are deferred or handled in a separate approved phase.
+- Confirm reverse proxy and SSL remain deferred for the first staging/test instance.
