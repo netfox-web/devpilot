@@ -535,6 +535,8 @@ Result summary:
   - compose project `devpilot-staging`
   - working directory `/volume1/docker-staging/devpilot`
   - port `5012->5000`
+- Human confirmation established `/volume1/docker-staging/devpilot` and port `5012` as the corrected DevPilot staging target.
+- Corrected NAS-side read-only preflight passed for that target.
 - Human confirmation later identified `https://devpilot.aicenter.com.tw/` as the production URL, not a staging URL.
 - No deployment, restart, Docker start/build command, reverse proxy change, SSL change, DNS/Cloudflare change, `.env` output, or secret output was performed.
 
@@ -543,8 +545,10 @@ Result summary:
 Current gate status:
 
 ```text
-blocked: candidate runtime path identified, pending human confirmation
+NAS-side read-only preflight passed for corrected target
 ```
+
+This is not deployment approval. Deployment remains not approved and not executed.
 
 Completed:
 
@@ -561,15 +565,17 @@ Completed:
 - Docker is available via `/usr/local/bin/docker`.
 - Docker Compose is available via `/usr/local/bin/docker compose`.
 - Human confirmed production URL: `https://devpilot.aicenter.com.tw/`.
+- Human confirmed corrected staging target: `/volume1/docker-staging/devpilot`.
+- Human confirmed corrected staging port: `5012`.
+- Corrected NAS-side read-only preflight passed for the confirmed target.
 
 Not completed:
 
-- The expected staging path `/volume1/docker/devpilot-staging` was not found.
-- No candidate path confirmed the latest synced commit `d8a65d8`.
-- No candidate path confirmed the previous docs commit `61a0e74`.
-- The actual runtime path has not been confirmed by a human as the intended staging target.
+- The old expected staging path `/volume1/docker/devpilot-staging` was not found and is outdated or incorrect.
+- The old planned staging port `5011:5000` is outdated or incorrect.
+- Current repo commit confirmation is not applicable inside the corrected runtime path because it is not a git repo.
 - The runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
-- NAS staging readiness was not marked passed.
+- Deployment approval has not been granted.
 
 Failure reasons:
 
@@ -619,7 +625,7 @@ Important mismatch:
 
 - Production URL: `https://devpilot.aicenter.com.tw/`
 - Likely production runtime: `/volume1/docker/devpilot` on `5010->5000`
-- Likely staging runtime: `/volume1/docker-staging/devpilot` on `5012->5000`
+- Confirmed staging runtime: `/volume1/docker-staging/devpilot` on `5012->5000`
 - Staging public URL / domain: unconfirmed
 - Documented expected path: `/volume1/docker/devpilot-staging`
 - Actual staging working directory from Docker labels: `/volume1/docker-staging/devpilot`
@@ -627,25 +633,53 @@ Important mismatch:
 - Actual staging port from Docker: `5012->5000`
 - Port `5011` is occupied by `gkh-dispatch`.
 
+Corrected NAS-side preflight result:
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| hostname | pass | `disney` |
+| user | pass | `chaokun` |
+| pwd | pass | `/volume1/docker-staging/devpilot` |
+| corrected staging target exists | pass | confirmed target exists |
+| git repo | not applicable | runtime path is not a git repo |
+| latest log includes `e201f2b` | not applicable | runtime path is not a git repo |
+| latest log includes `cd96416` | not applicable | runtime path is not a git repo |
+| Docker version | pass | Docker version 24.0.2, build 610b8d0 |
+| Compose version | pass | Docker Compose version v2.20.1-6047-g6817716 |
+| staging container found | pass | `devpilot-project-manager-staging` |
+| staging container status | pass | Up 11 days |
+| staging image | pass | `devpilot-staging-devpilot-staging` |
+| staging ports | pass | `0.0.0.0:5012->5000/tcp`, `:::5012->5000/tcp` |
+| compose project | pass | `devpilot-staging` |
+| compose service | pass | `devpilot-staging` |
+| compose working dir | pass | `/volume1/docker-staging/devpilot` |
+| compose config file | pass | `/volume1/docker-staging/devpilot/docker-compose.yml` |
+| compose services | pass | `devpilot-staging` |
+| compose config | pass | OK |
+| `/volume1` disk space | pass | 3.3T available, 54% used |
+| `/volume2` disk space | note | 95% used, but staging target is on `/volume1` |
+| `docker-compose.yml` | pass | exists |
+| `.env` | pass | exists; content not printed |
+| `data/uploads/backups/scripts` | pass | exist |
+| port `5012` evidence | pass | `devpilot-project-manager-staging` maps `5012->5000` |
+
 Remaining blockers:
 
-- Expected path does not exist.
-- No candidate confirms latest synced commit `d8a65d8`.
-- No candidate confirms previous commit `61a0e74`.
+- Old documented expected path does not exist.
+- Old documented planned port is not the staging port.
 - Production and staging evidence must remain separated.
 - Production URL must not be treated as staging evidence.
 - Staging public URL/domain is still unconfirmed.
-- Documentation expected path and port do not match the actual Docker staging runtime.
+- Documentation expected path and port must be updated in any later approved docs phase if `/volume1/docker-staging/devpilot:5012` remains the chosen target.
 - Runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
-- Correct staging target still requires human confirmation.
+- Deployment still requires separate explicit human approval.
 
 Required unblock:
 
 - Human must decide one of:
-  - confirm `/volume1/docker-staging/devpilot` and port `5012` as the real NAS staging target, then rerun read-only preflight using this corrected target,
-  - update deployment docs from `/volume1/docker/devpilot-staging:5011` to `/volume1/docker-staging/devpilot:5012` if this is the intended staging environment,
-  - provision the originally documented path `/volume1/docker/devpilot-staging` through an approved setup process,
-  - stop deployment readiness until path/port ownership is resolved.
+  - proceed to a separate explicit deployment approval phase, or
+  - update deployment docs from `/volume1/docker/devpilot-staging:5011` to `/volume1/docker-staging/devpilot:5012` in a docs-only correction phase, or
+  - stop deployment readiness if staging URL/domain ownership remains unresolved.
 
 Staging public URL / domain must be explicitly confirmed before readiness can pass. The production URL `https://devpilot.aicenter.com.tw/` is not staging evidence.
 
@@ -653,7 +687,8 @@ Deployment decision:
 
 - Deployment is not approved.
 - Deployment was not executed.
-- Readiness must not be marked passed.
+- Corrected NAS-side read-only preflight passed.
+- Passing corrected NAS-side preflight does not equal deployment approval.
 - Deployment must not proceed.
 
 Safety confirmation:
