@@ -22,6 +22,8 @@ It is a planning document only. It does not execute DNS, redirects, SSL, Nginx, 
   - `/api/product-domains/lookup?domain=...`
   - `/api/product-domains/redirect-plan`
   - `/api/product-domains/redirect-plan/export`
+  - `/admin/domain-execution-dry-run`
+  - `/api/admin/domain-execution-dry-run`
 
 ## Current Catalog Summary
 
@@ -89,6 +91,33 @@ launch_readiness: catalog_ready
 canonical_action: official_domain_canonical
 execution_allowed: false
 ```
+
+## Domain Execution Dry-run Center
+
+The Domain Execution Dry-run Center turns the catalog, launch plan, redirect plan, and canonical strategy into a read-only execution preview:
+
+```text
+GET /admin/domain-execution-dry-run
+GET /api/admin/domain-execution-dry-run
+```
+
+It previews future candidate work only:
+
+- DNS record previews for official Brand Hub and product domains.
+- Redirect rule previews for redirect and campaign domains.
+- SSL check previews for official Brand Hub and product domains.
+- Nginx server-block previews for redirect and campaign sources.
+
+All preview rows keep:
+
+```text
+dry_run: true
+execution_allowed: false
+write_executed: false
+approval_required: true
+```
+
+The dry-run center does not decide launch order, execution provider, redirect HTTP status, path preservation, query preservation, DNS record type, hosting target, SSL mode, or rollback policy. Those remain analyst/operator decisions for a later explicit execution phase.
 
 ## Brand Hub Matrix
 

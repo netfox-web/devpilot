@@ -18244,6 +18244,230 @@ def product_domain_launch_plan_context():
     }
 
 
+DOMAIN_EXECUTION_DRY_RUN_APPROVAL_CHECKLIST = [
+    ("domain_owner_approval", "Domain owner approval"),
+    ("product_owner_approval", "Product owner approval"),
+    ("operations_owner_approval", "Operations owner approval"),
+    ("dns_cloudflare_owner_approval", "DNS / Cloudflare owner approval"),
+    ("security_reviewer_approval", "Security reviewer approval"),
+    ("rollback_plan_review", "Rollback plan reviewed"),
+]
+
+
+DOMAIN_EXECUTION_DRY_RUN_BLOCKED_ACTIONS = [
+    ("dns_write", "DNS record write", "DNS writes require a later explicit execution phase."),
+    ("cloudflare_write", "Cloudflare settings or redirect write", "Cloudflare mutations are blocked in dry-run mode."),
+    ("nginx_write", "Nginx config write", "Nginx config generation or reload is blocked in dry-run mode."),
+    ("ssl_write", "SSL mode or certificate write", "SSL changes require a separate approved operations phase."),
+    ("registrar_nameserver_change", "Registrar or nameserver change", "Registrar and nameserver changes are never implicit."),
+    ("r2_mutation", "R2 mutation", "R2 writes are outside this domain dry-run phase."),
+    ("deploy", "Deploy", "Deployment requires a separate approved phase."),
+    ("provider_live_call", "Provider live call", "AI provider live calls are outside domain execution planning."),
+    ("worker_execution", "Worker execution", "No background worker or remediation job is started."),
+    ("production_mutation", "Production mutation", "Production-impacting changes remain blocked."),
+]
+
+
+def domain_execution_dry_run_action_id(action_type, domain):
+    normalized = re.sub(r"[^a-z0-9]+", "-", str(domain or "").lower()).strip("-")
+    return f"{action_type}-{normalized}" if normalized else action_type
+
+
+def domain_execution_dry_run_context():
+    launch_plan = product_domain_launch_plan_context()
+    redirect_plan = product_domain_services.product_domain_redirect_plan()
+    plans = []
+    official_domains = []
+
+    brand = launch_plan.get("brand", {})
+    if brand.get("official_domain"):
+        official_domains.append({
+            "domain": brand.get("official_domain"),
+            "scope": "brand_hub",
+            "suite": "",
+            "product": brand.get("name", "AI Office"),
+            "source": "brand_hub",
+        })
+
+    for product in launch_plan.get("products", []):
+        official_domain = product.get("official_domain")
+        if official_domain:
+            official_domains.append({
+                "domain": official_domain,
+                "scope": "product",
+                "suite": product.get("suite", ""),
+                "product": product.get("product", ""),
+                "source": "product_domain_catalog",
+            })
+
+    for item in redirect_plan.get("items", []):
+        source_domain = item.get("source_domain", "")
+        target_domain = item.get("target_domain", "")
+        role = item.get("role", "redirect")
+        action_type = "campaign_redirect_preview" if role == "campaign" else "redirect_rule_preview"
+        plans.append({
+            "id": domain_execution_dry_run_action_id(action_type, source_domain),
+            "domain": source_domain,
+            "action_type": action_type,
+            "provider": "cloudflare_or_nginx_pending_decision",
+            "source": "product_domain_catalog",
+            "target": target_domain,
+            "http_status": "pending_decision",
+            "path_preservation": "pending_decision",
+            "query_preservation": "pending_decision",
+            "risk_level": "medium" if role == "campaign" else "low",
+            "approval_required": True,
+            "execution_allowed": False,
+            "write_executed": False,
+            "notes": [
+                f"Catalog role: {role}.",
+                "Preview only; no Cloudflare Redirect Rule, Bulk Redirect, app redirect, or Nginx config was written.",
+                "HTTP status, path preservation, query preservation, analytics, and provider choice require approval.",
+            ],
+        })
+
+    for item in official_domains:
+        domain = item.get("domain", "")
+        plans.append({
+            "id": domain_execution_dry_run_action_id("dns-record-preview", domain),
+            "domain": domain,
+            "action_type": "dns_record_preview",
+            "provider": "cloudflare_dns_pending_decision",
+            "source": item.get("source", "product_domain_catalog"),
+            "target": "hosting_target_pending_decision",
+            "http_status": "not_applicable",
+            "path_preservation": "not_applicable",
+            "query_preservation": "not_applicable",
+            "risk_level": "high",
+            "approval_required": True,
+            "execution_allowed": False,
+            "write_executed": False,
+            "notes": [
+                f"Scope: {item.get('scope', 'product')}.",
+                "Official domain hosting target, DNS record type, TTL, proxy mode, and rollback plan are pending.",
+                "Preview only; no DNS record was created or changed.",
+            ],
+        })
+        plans.append({
+            "id": domain_execution_dry_run_action_id("ssl-check-preview", domain),
+            "domain": domain,
+            "action_type": "ssl_check_preview",
+            "provider": "cloudflare_or_origin_ssl_pending_decision",
+            "source": item.get("source", "product_domain_catalog"),
+            "target": "ssl_policy_pending_decision",
+            "http_status": "not_applicable",
+            "path_preservation": "not_applicable",
+            "query_preservation": "not_applicable",
+            "risk_level": "medium",
+            "approval_required": True,
+            "execution_allowed": False,
+            "write_executed": False,
+            "notes": [
+                f"Scope: {item.get('scope', 'product')}.",
+                "SSL mode, certificate source, HSTS policy, and origin certificate plan are pending.",
+                "Preview only; no SSL setting or certificate was changed.",
+            ],
+        })
+
+    for item in redirect_plan.get("items", []):
+        source_domain = item.get("source_domain", "")
+        plans.append({
+            "id": domain_execution_dry_run_action_id("nginx-server-block-preview", source_domain),
+            "domain": source_domain,
+            "action_type": "nginx_server_block_preview",
+            "provider": "nginx_pending_decision",
+            "source": "product_domain_redirect_plan",
+            "target": item.get("target_domain", ""),
+            "http_status": "pending_decision",
+            "path_preservation": "pending_decision",
+            "query_preservation": "pending_decision",
+            "risk_level": "high",
+            "approval_required": True,
+            "execution_allowed": False,
+            "write_executed": False,
+            "notes": [
+                "Nginx server block preview only.",
+                "No Nginx config file was generated, written, tested, symlinked, or reloaded.",
+            ],
+        })
+
+    blocked_actions = [
+        {
+            "id": action_id,
+            "label": label,
+            "status": "blocked",
+            "execution_allowed": False,
+            "write_executed": False,
+            "reason": reason,
+        }
+        for action_id, label, reason in DOMAIN_EXECUTION_DRY_RUN_BLOCKED_ACTIONS
+    ]
+
+    approval_checklist = [
+        {
+            "id": approval_id,
+            "label": label,
+            "status": "missing",
+            "required": True,
+        }
+        for approval_id, label in DOMAIN_EXECUTION_DRY_RUN_APPROVAL_CHECKLIST
+    ]
+
+    planned_redirect_rules = redirect_plan.get("summary", {}).get("total_redirect_rules", len(redirect_plan.get("items", [])))
+    planned_dns_records = len(official_domains)
+    planned_ssl_checks = len(official_domains)
+    planned_nginx_blocks = len(redirect_plan.get("items", []))
+
+    return {
+        "ok": True,
+        "read_only": True,
+        "dry_run": True,
+        "execution_allowed": False,
+        "write_operations_executed": False,
+        "dns_write_enabled": False,
+        "cloudflare_write_enabled": False,
+        "nginx_write_enabled": False,
+        "ssl_write_enabled": False,
+        "registrar_write_enabled": False,
+        "r2_write_enabled": False,
+        "deploy_enabled": False,
+        "summary": {
+            "planned_dns_records": planned_dns_records,
+            "planned_redirect_rules": planned_redirect_rules,
+            "planned_ssl_checks": planned_ssl_checks,
+            "planned_nginx_blocks": planned_nginx_blocks,
+            "blocked_actions": len(blocked_actions),
+            "approval_required_actions": sum(1 for item in plans if item.get("approval_required")),
+            "total_preview_actions": len(plans),
+        },
+        "plans": plans,
+        "blocked_actions": blocked_actions,
+        "approval_checklist": approval_checklist,
+        "source_context": {
+            "launch_summary": launch_plan.get("summary", {}),
+            "brand": launch_plan.get("brand", {}),
+            "canonical_strategy": launch_plan.get("canonical_strategy", {}),
+            "redirect_plan_summary": redirect_plan.get("summary", {}),
+            "catalog_validation": launch_plan.get("validation", {}),
+            "redirect_plan_validation": redirect_plan.get("validation", {}),
+        },
+        "safety": {
+            "no_dns_write": True,
+            "no_cloudflare_write": True,
+            "no_nginx_write": True,
+            "no_ssl_write": True,
+            "no_registrar_write": True,
+            "no_r2_write": True,
+            "no_deploy": True,
+            "no_secret_output": True,
+            "no_production_mutation": True,
+            "no_provider_live_call": True,
+            "no_worker_execution": True,
+            "no_catalog_mutation": True,
+        },
+    }
+
+
 @app.route("/admin/product-domain-launch-plan")
 @require_roles("owner", "admin")
 def product_domain_launch_plan_page():
@@ -18251,6 +18475,16 @@ def product_domain_launch_plan_page():
         "product_domain_launch_plan.html",
         app_name=APP_NAME,
         plan=product_domain_launch_plan_context(),
+    )
+
+
+@app.route("/admin/domain-execution-dry-run")
+@require_roles("owner", "admin")
+def domain_execution_dry_run_page():
+    return render_template(
+        "domain_execution_dry_run.html",
+        app_name=APP_NAME,
+        dry_run=domain_execution_dry_run_context(),
     )
 
 
@@ -18434,6 +18668,12 @@ def api_product_domain_lookup():
 @require_api_roles("owner", "admin")
 def api_admin_product_domain_launch_plan():
     return jsonify(product_domain_launch_plan_context())
+
+
+@app.route("/api/admin/domain-execution-dry-run", methods=["GET"])
+@require_api_roles("owner", "admin")
+def api_admin_domain_execution_dry_run():
+    return jsonify(domain_execution_dry_run_context())
 
 
 @app.route("/api/cloudflare/zones", methods=["GET"])

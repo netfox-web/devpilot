@@ -129,6 +129,8 @@ Implemented admin surfaces:
 /domains
 /domain-readiness
 /domain-action-plan
+/admin/domain-execution-dry-run
+/api/admin/domain-execution-dry-run
 /api/cloudflare/dns-write-flag
 /api/cloudflare/zones
 /api/cloudflare/zones/<zone_id>/dns-records
@@ -142,6 +144,7 @@ Implemented capabilities:
 - Domain action plan board.
 - Product-domain redirect plan export.
 - DNS approval/preflight/dry-run structures.
+- Domain Execution Dry-run Center for read-only DNS, redirect, SSL, Nginx, and Cloudflare action previews.
 
 Current safety boundary:
 
@@ -150,6 +153,14 @@ Current safety boundary:
 - No redirect rule writes.
 - No Nginx config writes.
 - No registrar nameserver changes.
+- No R2 mutations.
+- No deploys.
+
+Current dry-run status:
+
+- Product Domain catalog, launch plan, redirect plan, and canonical strategy can be combined into preview actions.
+- Preview actions require approval and keep `execution_allowed=false`.
+- The dry-run center does not call Cloudflare, write DNS records, generate Nginx files, change SSL, mutate registrar/nameservers, deploy, call providers, run workers, or modify production settings.
 
 Pending planning decisions:
 

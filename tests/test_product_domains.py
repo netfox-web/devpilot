@@ -249,8 +249,10 @@ class ProductDomainApiTest(unittest.TestCase):
         routes = [
             "/product-domains",
             "/admin/product-domain-launch-plan",
+            "/admin/domain-execution-dry-run",
             "/api/product-domains",
             "/api/admin/product-domain-launch-plan",
+            "/api/admin/domain-execution-dry-run",
             "/api/product-domains/validate",
             "/api/product-domains/redirect-plan",
             "/api/product-domains/redirect-plan/export?format=json",
@@ -333,6 +335,84 @@ class ProductDomainApiTest(unittest.TestCase):
         self.assertIn("AICRM", body)
         self.assertIn("AIAD", body)
         self.assertIn("aiad.fun", body)
+        self.assertNotIn("Authorization", body)
+        self.assertNotIn("Bearer", body)
+        self.assertNotIn("key_hash", body)
+
+    def test_domain_execution_dry_run_api_is_read_only(self):
+        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+            with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                    response = self.client().get("/api/admin/domain-execution-dry-run")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["read_only"])
+        self.assertTrue(payload["dry_run"])
+        self.assertFalse(payload["execution_allowed"])
+        self.assertFalse(payload["write_operations_executed"])
+        self.assertFalse(payload["dns_write_enabled"])
+        self.assertFalse(payload["cloudflare_write_enabled"])
+        self.assertFalse(payload["nginx_write_enabled"])
+        self.assertFalse(payload["ssl_write_enabled"])
+        self.assertFalse(payload["registrar_write_enabled"])
+        self.assertFalse(payload["r2_write_enabled"])
+        self.assertFalse(payload["deploy_enabled"])
+        self.assertEqual(payload["summary"]["planned_dns_records"], 27)
+        self.assertEqual(payload["summary"]["planned_redirect_rules"], 33)
+        self.assertEqual(payload["summary"]["planned_ssl_checks"], 27)
+        self.assertEqual(payload["summary"]["planned_nginx_blocks"], 33)
+        self.assertEqual(payload["summary"]["blocked_actions"], 10)
+        self.assertGreater(payload["summary"]["approval_required_actions"], 0)
+        self.assertEqual(payload["summary"]["total_preview_actions"], 120)
+        self.assertTrue(payload["source_context"]["catalog_validation"]["ok"])
+        self.assertTrue(payload["source_context"]["redirect_plan_validation"]["ok"])
+        self.assertTrue(payload["safety"]["no_dns_write"])
+        self.assertTrue(payload["safety"]["no_cloudflare_write"])
+        self.assertTrue(payload["safety"]["no_nginx_write"])
+        self.assertTrue(payload["safety"]["no_ssl_write"])
+        self.assertTrue(payload["safety"]["no_registrar_write"])
+        self.assertTrue(payload["safety"]["no_r2_write"])
+        self.assertTrue(payload["safety"]["no_deploy"])
+        self.assertTrue(payload["safety"]["no_provider_live_call"])
+        self.assertTrue(payload["safety"]["no_worker_execution"])
+        self.assertTrue(payload["safety"]["no_catalog_mutation"])
+        self.assertTrue(all(item["execution_allowed"] is False for item in payload["plans"]))
+        self.assertTrue(all(item["write_executed"] is False for item in payload["plans"]))
+        self.assertTrue(all(item["approval_required"] is True for item in payload["plans"]))
+        campaign = next(item for item in payload["plans"] if item["domain"] == "aiad.fun" and item["action_type"] == "campaign_redirect_preview")
+        self.assertEqual(campaign["target"], "aiad.com.tw")
+        self.assertEqual(campaign["provider"], "cloudflare_or_nginx_pending_decision")
+        self.assertEqual(campaign["http_status"], "pending_decision")
+        self.assertEqual(campaign["path_preservation"], "pending_decision")
+        self.assertEqual(campaign["query_preservation"], "pending_decision")
+        official_dns = next(item for item in payload["plans"] if item["domain"] == "aioffice.com.tw" and item["action_type"] == "dns_record_preview")
+        self.assertEqual(official_dns["target"], "hosting_target_pending_decision")
+        combined = str(payload)
+        self.assertNotIn("Authorization", combined)
+        self.assertNotIn("Bearer", combined)
+        self.assertNotIn("key_hash", combined)
+        cloudflare_request.assert_not_called()
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
+
+    def test_domain_execution_dry_run_page_owner_admin_and_anonymous_boundary(self):
+        anonymous = self.app.test_client().get("/admin/domain-execution-dry-run")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login", anonymous.headers.get("Location", ""))
+
+        response = self.client().get("/admin/domain-execution-dry-run")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        body = response.get_data(as_text=True)
+        self.assertIn("Domain Execution Dry-run Center", body)
+        self.assertIn("DRY-RUN ONLY", body)
+        self.assertIn("NO DNS WRITE", body)
+        self.assertIn("NO CLOUDFLARE WRITE", body)
+        self.assertIn("execution_allowed=false", body)
+        self.assertIn("write_operations_executed=false", body)
+        self.assertIn("aiad.fun", body)
+        self.assertIn("aiad.com.tw", body)
+        self.assertIn("campaign_redirect_preview", body)
         self.assertNotIn("Authorization", body)
         self.assertNotIn("Bearer", body)
         self.assertNotIn("key_hash", body)

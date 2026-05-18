@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1">Domain Execution Dry-run Center</h1>
+    <div class="text-muted small">Read-only preview of future DNS, redirect, SSL, Nginx, and Cloudflare execution candidates.</div>
+    <div class="safety-badge-strip">
+      <span class="badge text-bg-info">DRY-RUN ONLY</span>
+      <span class="badge text-bg-secondary">NO DNS WRITE</span>
+      <span class="badge text-bg-secondary">NO CLOUDFLARE WRITE</span>
+      <span class="badge text-bg-secondary">NO NGINX WRITE</span>
+      <span class="badge text-bg-secondary">NO SSL WRITE</span>
+      <span class="badge text-bg-warning">APPROVAL REQUIRED</span>
+    </div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="/admin/product-domain-launch-plan">Launch Plan</a>
+    <a class="btn btn-outline-secondary btn-sm" href="/product-domains">Product Domains</a>
+    <a class="btn btn-outline-secondary btn-sm" href="/api/admin/domain-execution-dry-run">JSON</a>
+  </div>
+</div>
+
+<div class="alert alert-warning page-note py-2">
+  <div class="fw-semibold">Execution boundary</div>
+  <div class="small">
+    This center only previews possible future actions. It does not execute DNS, Cloudflare, Nginx, SSL, registrar,
+    nameserver, R2, deployment, provider, worker, catalog, approval, project, task, phase, or handoff mutations.
+    <code>execution_allowed=false</code>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">DNS previews</div>
+        <div class="display-6">{{ dry_run.summary.planned_dns_records }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Redirect previews</div>
+        <div class="display-6">{{ dry_run.summary.planned_redirect_rules }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">SSL checks</div>
+        <div class="display-6">{{ dry_run.summary.planned_ssl_checks }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Nginx previews</div>
+        <div class="display-6">{{ dry_run.summary.planned_nginx_blocks }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Approval required</div>
+        <div class="display-6">{{ dry_run.summary.approval_required_actions }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Blocked categories</div>
+        <div class="display-6">{{ dry_run.summary.blocked_actions }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Approval Checklist</div>
+      <div class="card-body small">
+        <div class="row g-2">
+          {% for item in dry_run.approval_checklist %}
+          <div class="col-md-6">
+            <div class="border rounded p-2 h-100">
+              <div class="fw-semibold">{{ item.label }}</div>
+              <span class="badge text-bg-warning">{{ item.status }}</span>
+              <span class="badge text-bg-secondary">required={{ 'true' if item.required else 'false' }}</span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">Safety</div>
+      <div class="card-body small">
+        <div class="row g-2">
+          {% for key, value in dry_run.safety.items() %}
+          <div class="col-md-6">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted">{{ key }}</div>
+              <div class="fw-semibold">{{ 'true' if value else 'false' }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <div class="fw-bold">Preview Actions</div>
+      <div class="small text-muted">All actions are read-only previews and require a later approval-gated execution phase.</div>
+    </div>
+    <span class="badge text-bg-secondary">write_operations_executed=false</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Domain</th>
+          <th>Action</th>
+          <th>Provider</th>
+          <th>Target</th>
+          <th>HTTP</th>
+          <th>Path / Query</th>
+          <th>Risk</th>
+          <th>Execution</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in dry_run.plans %}
+        <tr>
+          <td><code>{{ item.domain }}</code></td>
+          <td>
+            <div class="fw-semibold">{{ item.action_type }}</div>
+            <code class="small">{{ item.id }}</code>
+          </td>
+          <td class="small">{{ item.provider }}</td>
+          <td><code>{{ item.target }}</code></td>
+          <td><span class="badge text-bg-light">{{ item.http_status }}</span></td>
+          <td class="small">
+            <div>path={{ item.path_preservation }}</div>
+            <div>query={{ item.query_preservation }}</div>
+          </td>
+          <td><span class="badge text-bg-warning">{{ item.risk_level }}</span></td>
+          <td class="small">
+            <div>approval_required={{ 'true' if item.approval_required else 'false' }}</div>
+            <div>execution_allowed={{ 'true' if item.execution_allowed else 'false' }}</div>
+            <div>write_executed={{ 'true' if item.write_executed else 'false' }}</div>
+          </td>
+          <td class="small">
+            {% for note in item.notes %}
+              <div>{{ note }}</div>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-bold">Blocked Action Categories</div>
+  <div class="card-body small">
+    <div class="row g-2">
+      {% for item in dry_run.blocked_actions %}
+      <div class="col-md-6 col-xl-4">
+        <div class="border rounded p-2 h-100">
+          <div class="fw-semibold">{{ item.label }}</div>
+          <div><span class="badge text-bg-danger">{{ item.status }}</span></div>
+          <div class="text-muted mt-1">{{ item.reason }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

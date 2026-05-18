@@ -19,6 +19,8 @@ Related read-only planning surfaces:
 ```text
 GET /admin/product-domain-launch-plan
 GET /api/admin/product-domain-launch-plan
+GET /admin/domain-execution-dry-run
+GET /api/admin/domain-execution-dry-run
 ```
 
 These surfaces display canonical strategy metadata for analyst review only. They do not execute DNS, redirect, SSL, Nginx, Cloudflare, R2, registrar, deploy, or production changes.
@@ -113,6 +115,17 @@ Open redirect details for later execution planning:
 - UTM and analytics policy: pending.
 - `www` handling: pending.
 - Cloudflare Redirect Rules versus Bulk Redirects versus Nginx: pending.
+
+The Domain Execution Dry-run Center may preview redirect, DNS, SSL, and Nginx candidate actions from this strategy, but every candidate remains blocked from execution:
+
+```text
+dry_run: true
+execution_allowed: false
+write_executed: false
+approval_required: true
+```
+
+The dry-run output is a review artifact, not a generated operations script.
 
 ## Campaign Domain Strategy Draft
 
