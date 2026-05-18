@@ -10,7 +10,7 @@ CODEX_SCHEDULED_TASK_RUNNER_RUNBOOK_READY
 
 ## Objective
 
-Allow a local Windows machine to wake Codex on a schedule, check for explicit tasks, update the GitHub handoff status, and push results back to GitHub for ChatGPT to continue from.
+Allow a local Windows machine to wake Codex on a schedule, check a local explicit task queue, and only invoke Codex when a pending task exists.
 
 Target flow:
 
@@ -18,10 +18,10 @@ Target flow:
 Windows Task Scheduler
   -> PowerShell runner
   -> local repo sync/status check
-  -> Codex task check
-  -> docs/ai_coding_agent_handoff_status.md update
-  -> commit + push, when safe and explicitly allowed by runner rules
-  -> ChatGPT reads GitHub and continues
+  -> docs/ai_coding_agent_task_queue.md check
+  -> no pending task: log only and stop
+  -> pending task: Codex task check
+  -> optional file changes only when the task explicitly allows them
 ```
 
 ## Current Automation Level
@@ -45,9 +45,9 @@ Allowed automation boundary:
 
 ```text
 Local scheduled runner
-  -> local Codex CLI
-  -> GitHub repo
-  -> ChatGPT GitHub connector
+  -> local task queue file
+  -> local Codex CLI only when a pending task exists
+  -> local git worktree
 ```
 
 Disallowed by default:
@@ -65,23 +65,25 @@ Disallowed by default:
 
 Use a narrow task source. Do not let scheduled Codex infer broad work from the whole repository.
 
-Preferred source:
+Required source:
+
+```text
+docs/ai_coding_agent_task_queue.md
+```
+
+Supporting context:
 
 ```text
 docs/ai_coding_agent_handoff_status.md
 ```
 
-Optional future source:
-
-```text
-GitHub issues labeled codex-task
-```
-
 Recommended rule:
 
 ```text
-No explicit pending task -> update handoff status with no pending task -> stop.
+No unchecked task in docs/ai_coding_agent_task_queue.md -> write log only -> stop.
 ```
+
+The scheduled runner must not query GitHub Issues directly and must not require `gh`.
 
 ## Safe Runner Policy
 
@@ -94,13 +96,16 @@ The scheduled runner should operate under these default rules:
 - Do not commit unexpected files.
 - Do not push if secrets, `.env`, runtime code, production settings, or infrastructure files changed unexpectedly.
 - Do not deploy.
-- If blocked or uncertain, update the handoff status and stop.
+- If no pending task exists, do not modify files.
+- If blocked or uncertain while a pending task exists, update the handoff status only if the task allows it, then stop.
 
 ## Suggested Directory Layout
 
 ```text
 scripts/
   codex_check_tasks.ps1
+docs/
+  ai_coding_agent_task_queue.md
 logs/
   codex_check_tasks.log
 ```
@@ -128,6 +133,9 @@ Use explicit logging helper functions instead:
 ```powershell
 $Repo = "E:\Ai-project\devpilot_project_manager_v1\devpilot_project_manager"
 $Log = "$Repo\logs\codex_check_tasks.log"
+$Npx = "C:\Program Files\nodejs\npx.cmd"
+$TaskQueue = "$Repo\docs\ai_coding_agent_task_queue.md"
+$Handoff = "$Repo\docs\ai_coding_agent_handoff_status.md"
 
 New-Item -ItemType Directory -Force -Path "$Repo\logs" | Out-Null
 Set-Location $Repo
@@ -164,43 +172,79 @@ Invoke-Logged { git status -sb } "git status -sb"
 Invoke-Logged { git log --oneline -5 } "git log --oneline -5"
 Invoke-Logged { git rev-parse HEAD } "git rev-parse HEAD"
 Invoke-Logged { git rev-parse origin/main } "git rev-parse origin/main"
-Invoke-Logged { git ls-remote origin refs/heads/main } "git ls-remote origin refs/heads/main"
+
+function Get-PendingQueueTasks {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return @()
+    }
+
+    $lines = Get-Content -LiteralPath $Path -Encoding utf8
+    $inPendingSection = $false
+    $pending = @()
+
+    foreach ($line in $lines) {
+        if ($line -match '^##\s+Pending Tasks\s*$') {
+            $inPendingSection = $true
+            continue
+        }
+        if ($inPendingSection -and $line -match '^##\s+') {
+            break
+        }
+        if ($inPendingSection -and $line -match '^\s*-\s*\[\s*\]\s+\S+') {
+            $pending += $line
+        }
+    }
+
+    return $pending
+}
+
+$PendingTasks = Get-PendingQueueTasks -Path $TaskQueue
+if ($PendingTasks.Count -eq 0) {
+    Write-Log "NO_PENDING_TASK: docs/ai_coding_agent_task_queue.md has no unchecked task items."
+    Write-Log "No files were modified."
+    Write-Log "===== $(Get-Date -Format s) Codex task check end ====="
+    exit 0
+}
 
 $Prompt = @"
 You are the scheduled DevPilot Codex runner.
 
 Task source:
+- docs/ai_coding_agent_task_queue.md
 - docs/ai_coding_agent_handoff_status.md
 
 Rules:
 - First inspect current repo status.
+- Do not query GitHub Issues directly.
+- Do not require gh.
 - Do not deploy.
 - Do not touch secrets or .env.
 - Do not modify production settings.
-- Do not modify runtime code unless the handoff file contains an explicit pending task requiring it.
+- Do not run runtime provider live calls.
+- Do not modify runtime code unless the task queue contains an explicit pending task requiring it.
 - Prefer docs-only updates.
-- If no explicit pending task exists, update docs/ai_coding_agent_handoff_status.md with a no-pending-task summary only.
-- If blocked or uncertain, update the handoff status with blocked status and stop.
+- If no explicit pending task exists, do not modify files; report no pending task in logs and stop.
+- If blocked or uncertain, update the handoff status with blocked status and stop only when a pending task exists.
 - If files changed, report git status, diff stat, and safety confirmation.
-- Only commit and push when the changed files are expected and safe.
+- Do not commit or push unless the task explicitly says commit and push.
 "@
 
-# Confirm your installed Codex CLI supports exec mode before using this line.
-Invoke-Logged { $Prompt | codex exec --cd $Repo - } "codex exec scheduled task check"
+Invoke-Logged { $Prompt | & $Npx -y @openai/codex@latest exec --cd $Repo - } "codex exec scheduled task check"
 
 Write-Log "===== $(Get-Date -Format s) Codex task check end ====="
 ```
 
 ## Codex CLI Compatibility Check
 
-Before scheduling, verify the local CLI supports non-interactive execution:
+The current script uses `npx.cmd` so it does not depend on `codex` being available in PATH:
 
 ```powershell
-codex --help
-codex exec --help
+C:\Program Files\nodejs\npx.cmd -y @openai/codex@latest exec --help
 ```
 
-If `codex exec` is unavailable, do not enable this runner as written. Use one of these alternatives:
+If `npx.cmd` is unavailable or non-interactive execution fails, do not enable pending-task execution. The no-pending-task path can still log and stop without invoking Codex.
 
 - keep Codex interactive and manually start it
 - use a GitHub issue / PR workflow only
@@ -233,45 +277,40 @@ Disable or remove it:
 schtasks /Delete /TN "DevPilot Codex Task Check" /F
 ```
 
+## Task Queue Behavior
+
+The runner reads:
+
+```text
+docs/ai_coding_agent_task_queue.md
+```
+
+Pending tasks are unchecked Markdown tasks under `Pending Tasks`, for example:
+
+```markdown
+- [ ] TASK-ID: Short task title
+  - Scope: What Codex should do.
+  - Allowed files: Paths Codex may modify.
+  - Verification: Commands Codex should run.
+  - Commit/push: yes/no, with exact rules.
+  - Safety: Extra boundaries for this task.
+```
+
+When no unchecked task exists:
+
+```text
+The runner writes NO_PENDING_TASK to logs and does not modify any file.
+```
+
 ## Recommended Handoff Status Update
 
-Each scheduled run should update:
+The runner should update `docs/ai_coding_agent_handoff_status.md` only when a pending task exists and the task requires or allows a handoff update.
 
-```text
-docs/ai_coding_agent_handoff_status.md
-```
-
-Required fields:
-
-```text
-Latest Run
-Summary
-Files Reviewed
-Files Changed
-Diff Summary
-Verification
-Safety Confirmation
-Recommended Next Step
-```
-
-If no task exists, write a concise no-op entry:
-
-```text
-Status: completed
-Summary: No explicit pending Codex task was found.
-Files Changed: docs/ai_coding_agent_handoff_status.md only
-Recommended Next Step: ChatGPT may inspect GitHub or wait for the next task.
-```
+No-pending-task runs must not update the handoff file.
 
 ## Commit and Push Rules
 
-Allowed default commit message for no-op handoff status updates:
-
-```text
-docs: update AI coding agent handoff status
-```
-
-For task-specific updates, use a specific docs or code message:
+For task-specific updates, use a specific docs or code message only when the task explicitly says commit and push:
 
 ```text
 docs: record scheduled Codex task check
