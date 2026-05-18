@@ -530,6 +530,11 @@ Result summary:
 - NAS shell access later reached `chaokun@211.75.219.184`; hostname reported `disney`.
 - NAS-side preflight failed because the expected staging path `/volume1/docker/devpilot-staging` does not exist.
 - Candidate path discovery and fingerprint checks were read-only. None of the candidates passed the readiness gate.
+- Docker / Compose read-only inspection later identified a running staging runtime:
+  - container `devpilot-project-manager-staging`
+  - compose project `devpilot-staging`
+  - working directory `/volume1/docker-staging/devpilot`
+  - port `5012->5000`
 - No deployment, restart, Docker start/build command, reverse proxy change, SSL change, DNS/Cloudflare change, `.env` output, or secret output was performed.
 
 ## Deployment Readiness Gate Status
@@ -537,7 +542,7 @@ Result summary:
 Current gate status:
 
 ```text
-blocked: NAS-side preflight failed
+blocked: candidate runtime path identified, pending human confirmation
 ```
 
 Completed:
@@ -551,13 +556,17 @@ Completed:
 - SSH reached the NAS host as `chaokun@211.75.219.184`.
 - NAS hostname was reported as `disney`.
 - Read-only path discovery and candidate fingerprint checks were executed.
+- Docker / Compose read-only inspection was executed.
+- Docker is available via `/usr/local/bin/docker`.
+- Docker Compose is available via `/usr/local/bin/docker compose`.
 
 Not completed:
 
 - The expected staging path `/volume1/docker/devpilot-staging` was not found.
 - No candidate path confirmed the latest synced commit `d8a65d8`.
 - No candidate path confirmed the previous docs commit `61a0e74`.
-- Candidate `docker compose config` checks failed.
+- The actual runtime path has not been confirmed by a human as the intended staging target.
+- The runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
 - NAS staging readiness was not marked passed.
 
 Failure reasons:
@@ -578,22 +587,48 @@ Failure reasons:
 | `/volume1/docker/devpilot` | yes | no | cannot confirm `d8a65d8` or `61a0e74` | yes | yes, content not printed | FAILED | low |
 | `/volume1/worktrees/devpilot-build-321df5d` | yes | yes, detached `HEAD` | does not include `d8a65d8` or `61a0e74` in latest log | yes | no | FAILED | low |
 
+Docker / Compose runtime evidence:
+
+| Container | Image | Status | Port | Compose project | Service | Working dir | Config file |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `devpilot-project-manager` | `devpilot-devpilot` | Up 4 days | `5010->5000` | `devpilot` | `devpilot` | `/volume1/docker/devpilot` | `/volume1/docker/devpilot/docker-compose.yml` |
+| `devpilot-project-manager-staging` | `devpilot-staging-devpilot-staging` | Up 11 days | `5012->5000` | `devpilot-staging` | `devpilot-staging` | `/volume1/docker-staging/devpilot` | `/volume1/docker-staging/devpilot/docker-compose.yml` |
+| `devpilot-project18-staging-preview` | `nginx:alpine` | Up 12 days | `5999->80` | `template-dispatch-nas-test-20260506-013007` | `project18-staging-preview` | `/volume1/docker-staging/template-dispatch-nas-test-20260506-013007` | `/volume1/docker-staging/template-dispatch-nas-test-20260506-013007/docker-compose.yml` |
+| `devpilot-project-manager-backup-20260505-133349` | `devpilot_project_manager-devpilot` | Created | none visible | `devpilot_project_manager` | `devpilot` | `/volume1/docker/devpilot_project_manager` | `/volume1/docker/devpilot_project_manager/docker-compose.yml` |
+
+Candidate compose checks using the full Docker binary path:
+
+| Candidate path | Services | Compose config |
+| --- | --- | --- |
+| `/volume1/docker/devpilot` | `devpilot` | OK |
+| `/volume1/docker/devpilot_project_manager` | `devpilot` | OK |
+| `/volume1/docker-staging/devpilot` | `devpilot-staging` | OK |
+| `/volume1/worktrees/devpilot-build-321df5d` | unavailable | FAILED |
+
+Important mismatch:
+
+- Documented expected path: `/volume1/docker/devpilot-staging`
+- Actual staging working directory from Docker labels: `/volume1/docker-staging/devpilot`
+- Documented planned port: `5011:5000`
+- Actual staging port from Docker: `5012->5000`
+- Port `5011` is occupied by `gkh-dispatch`.
+
 Remaining blockers:
 
 - Expected path does not exist.
 - No candidate confirms latest synced commit `d8a65d8`.
 - No candidate confirms previous commit `61a0e74`.
-- All candidate compose config checks failed.
-- Several candidate runtime dirs appear to be copied deployments rather than git worktrees.
-- Correct staging path still requires human confirmation or setup.
+- Documentation expected path and port do not match the actual Docker staging runtime.
+- Runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
+- Correct staging target still requires human confirmation.
 
 Required unblock:
 
 - Human must decide one of:
-  - confirm the real NAS staging path,
-  - create or provision the expected staging path through an approved setup process,
-  - update documentation if the expected path is wrong,
-  - abandon deployment readiness until the NAS staging environment is corrected.
+  - confirm `/volume1/docker-staging/devpilot` and port `5012` as the real NAS staging target, then rerun read-only preflight using this corrected target,
+  - update deployment docs from `/volume1/docker/devpilot-staging:5011` to `/volume1/docker-staging/devpilot:5012` if this is the intended staging environment,
+  - provision the originally documented path `/volume1/docker/devpilot-staging` through an approved setup process,
+  - stop deployment readiness until path/port ownership is resolved.
 
 Deployment decision:
 

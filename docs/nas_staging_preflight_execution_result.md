@@ -6,10 +6,10 @@ Status: preflight result, no deployment
 ## Current Gate Status
 
 ```text
-blocked: NAS-side preflight failed
+blocked: candidate runtime path identified, pending human confirmation
 ```
 
-The deployment readiness gate must remain blocked. NAS-side read-only checks reached the NAS host, but the expected staging path was missing and no candidate path passed the readiness gate.
+The deployment readiness gate must remain blocked. NAS-side read-only checks reached the NAS host and Docker labels identified an actual staging runtime at `/volume1/docker-staging/devpilot`, but the documented path and port do not match that runtime and the latest synced repo commit is not confirmed inside the runtime path.
 
 ## Summary
 
@@ -18,9 +18,12 @@ The deployment readiness gate must remain blocked. NAS-side read-only checks rea
 - NAS hostname: `disney`.
 - App path exists: fail. `/volume1/docker/devpilot-staging` does not exist.
 - Candidate path discovery: completed, read-only.
-- Candidate fingerprint result: failed. No candidate path passed the readiness gate.
+- Candidate fingerprint result: candidate runtime identified, pending human confirmation.
+- Docker / Compose inspection: completed, read-only.
+- Actual staging runtime indicated by Docker labels: `/volume1/docker-staging/devpilot`.
+- Actual staging port indicated by Docker: `5012->5000`.
 - `.env` content: not printed.
-- Compose config result summary: failed for checked candidates.
+- Compose config result summary: OK for `/volume1/docker/devpilot`, `/volume1/docker/devpilot_project_manager`, and `/volume1/docker-staging/devpilot`; failed for `/volume1/worktrees/devpilot-build-321df5d`.
 - `py_compile` result: pass. `app.py` compiled successfully from the local repo.
 
 ## Completed
@@ -33,13 +36,18 @@ The deployment readiness gate must remain blocked. NAS-side read-only checks rea
 - NAS hostname was reported as `disney`.
 - Expected path check was executed and failed.
 - Read-only path discovery and candidate fingerprint checks were executed.
+- Docker / Compose read-only inspection was executed.
+- Docker is available via `/usr/local/bin/docker`.
+- Docker Compose is available via `/usr/local/bin/docker compose`.
+- Docker labels identified `devpilot-project-manager-staging` as the running staging container.
 
 ## Not Completed
 
 - The expected staging path `/volume1/docker/devpilot-staging` was not found.
 - No candidate path confirmed the latest synced commit `d8a65d8`.
 - No candidate path confirmed the previous commit `61a0e74`.
-- Candidate `docker compose config` checks failed.
+- Documentation expected path and port do not match actual Docker staging runtime.
+- Actual runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
 - NAS-side readiness was not marked passed.
 
 ## NAS-side Preflight Failure
@@ -47,7 +55,7 @@ The deployment readiness gate must remain blocked. NAS-side read-only checks rea
 Classification:
 
 ```text
-NAS-side preflight failed
+candidate runtime path identified, pending human confirmation
 ```
 
 Gate:
@@ -81,13 +89,67 @@ Failure reasons:
 | `/volume1/docker/devpilot` | yes | no | cannot confirm `d8a65d8` or `61a0e74` | yes | yes, content not printed | FAILED | low |
 | `/volume1/worktrees/devpilot-build-321df5d` | yes | yes | `## HEAD (no branch)`; latest log does not include `d8a65d8` or `61a0e74` | yes | no | FAILED | low |
 
+## Docker / Compose Runtime Evidence
+
+Docker / Compose:
+
+- Docker available: yes, via `/usr/local/bin/docker`
+- Compose available: yes, via `/usr/local/bin/docker compose`
+- `docker` is not in the SSH user's default PATH, but the binary exists at `/usr/local/bin/docker`.
+
+Actual staging runtime identified:
+
+| Field | Value |
+| --- | --- |
+| container | `devpilot-project-manager-staging` |
+| image | `devpilot-staging-devpilot-staging` |
+| status | Up 11 days |
+| port | `5012->5000` |
+| compose project | `devpilot-staging` |
+| service | `devpilot-staging` |
+| working_dir | `/volume1/docker-staging/devpilot` |
+| config_files | `/volume1/docker-staging/devpilot/docker-compose.yml` |
+
+Mounts:
+
+- `/volume1/docker-staging/devpilot/data -> /app/data`
+- `/volume1/docker-staging/devpilot/uploads -> /app/uploads`
+- `/volume1/docker-staging/devpilot/backups -> /app/backups`
+- `/volume1/docker-staging/devpilot/scripts -> /app/scripts`
+
+Related DevPilot containers:
+
+| Container | Image | Status | Port | Compose project | Working dir |
+| --- | --- | --- | --- | --- | --- |
+| `devpilot-project-manager` | `devpilot-devpilot` | Up 4 days | `5010->5000` | `devpilot` | `/volume1/docker/devpilot` |
+| `devpilot-project-manager-staging` | `devpilot-staging-devpilot-staging` | Up 11 days | `5012->5000` | `devpilot-staging` | `/volume1/docker-staging/devpilot` |
+| `devpilot-project18-staging-preview` | `nginx:alpine` | Up 12 days | `5999->80` | `template-dispatch-nas-test-20260506-013007` | `/volume1/docker-staging/template-dispatch-nas-test-20260506-013007` |
+| `devpilot-project-manager-backup-20260505-133349` | `devpilot_project_manager-devpilot` | Created | none visible | `devpilot_project_manager` | `/volume1/docker/devpilot_project_manager` |
+
+Candidate compose checks using the full Docker binary path:
+
+| Candidate path | Services | Compose config |
+| --- | --- | --- |
+| `/volume1/docker/devpilot` | `devpilot` | OK |
+| `/volume1/docker/devpilot_project_manager` | `devpilot` | OK |
+| `/volume1/docker-staging/devpilot` | `devpilot-staging` | OK |
+| `/volume1/worktrees/devpilot-build-321df5d` | unavailable | FAILED |
+
+Important mismatch:
+
+- Documented expected path: `/volume1/docker/devpilot-staging`
+- Actual staging working directory: `/volume1/docker-staging/devpilot`
+- Documented planned port: `5011:5000`
+- Actual staging port: `5012->5000`
+- Port `5011` is occupied by `gkh-dispatch`.
+
 ## Required Unblock
 
 - Human must decide one of:
-  - confirm the real NAS staging path,
-  - create or provision the expected staging path through an approved setup process,
-  - update documentation if the expected path is wrong,
-  - abandon deployment readiness until the NAS staging environment is corrected.
+  - confirm `/volume1/docker-staging/devpilot` and port `5012` as the real NAS staging target, then rerun read-only preflight using this corrected target,
+  - update deployment docs from `/volume1/docker/devpilot-staging:5011` to `/volume1/docker-staging/devpilot:5012` if this is the intended staging environment,
+  - provision the originally documented path `/volume1/docker/devpilot-staging` through an approved setup process,
+  - stop deployment readiness until path/port ownership is resolved.
 
 ## Deployment Decision
 
@@ -113,10 +175,10 @@ Failure reasons:
 | NAS shell access | pass | SSH reached `chaokun@211.75.219.184`; hostname `disney`. |
 | expected staging path exists | fail | `/volume1/docker/devpilot-staging` does not exist. |
 | candidate path discovery | pass | Read-only discovery completed. |
-| candidate fingerprints | fail | No candidate passed readiness requirements. |
+| candidate runtime path identified | pass | Docker labels identify `/volume1/docker-staging/devpilot` as the running `devpilot-staging` compose working directory. |
 | latest synced commit present | fail | No candidate confirmed `d8a65d8`. |
 | previous docs commit present | fail | No candidate confirmed `61a0e74`. |
-| compose config valid | fail | Candidate compose config checks failed. |
+| compose config valid for runtime candidate | pass | `/volume1/docker-staging/devpilot` service `devpilot-staging`; compose config OK. |
 | .env contents protected | pass | `.env` presence only was checked; contents were not printed. |
 | no NAS mutation | pass | No deploy, restart, build, pull, Docker run, git mutation, mkdir/rm/mv/cp, or file edit was executed. |
 
@@ -125,9 +187,9 @@ Failure reasons:
 - Expected path does not exist.
 - No candidate confirms latest synced commit `d8a65d8`.
 - No candidate confirms previous commit `61a0e74`.
-- All candidate compose config checks failed.
-- Several candidate runtime dirs appear to be copied deployments rather than git worktrees.
-- Correct staging path still requires human confirmation or setup.
+- Documentation expected path and port do not match the actual Docker staging runtime.
+- Runtime path appears to be a copied deployment rather than a confirmed synced git worktree.
+- Correct staging target still requires human confirmation.
 
 ## Safety Confirmation
 
@@ -152,11 +214,11 @@ Failure reasons:
 
 ## Recommended Next Step
 
-Preflight is blocked by a failed NAS-side result. Human review must decide one of:
+Preflight is blocked because a candidate runtime path was identified but not yet confirmed as the intended staging target. Human review must decide one of:
 
-- confirm the real NAS staging path,
-- create or provision the expected staging path through an approved setup process,
-- update documentation if the expected path is wrong,
-- abandon deployment readiness until the NAS staging environment is corrected.
+- confirm `/volume1/docker-staging/devpilot` and port `5012` as the real NAS staging target, then rerun read-only preflight using this corrected target,
+- update deployment docs from `/volume1/docker/devpilot-staging:5011` to `/volume1/docker-staging/devpilot:5012` if this is the intended staging environment,
+- provision the originally documented path `/volume1/docker/devpilot-staging` through an approved setup process,
+- stop deployment readiness until path/port ownership is resolved.
 
-Do not mark readiness as passed and do not proceed to deployment approval until a confirmed staging path passes read-only preflight.
+Do not mark readiness as passed and do not proceed to deployment approval until a human-confirmed staging path passes read-only preflight.
