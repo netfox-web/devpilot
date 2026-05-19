@@ -337,3 +337,135 @@ Final clarification:
 - Any future action against `5010` is production deployment and requires separate explicit production approval.
 
 Do not proceed to any further deployment action until explicit production approval is given.
+
+## Production 5010 Full Source Sync Recovery
+
+Status:
+
+```text
+success
+```
+
+Current status:
+
+```text
+production 5010 recovered and responding
+```
+
+Important note: these are staging-named legacy docs, but this section records the subsequent production `5010` incident and recovery.
+
+Incident background:
+
+- Production deployment was executed after separate explicit production approval.
+- The deployment produced a regression where UI features and routes appeared to be missing.
+- Root cause: `/volume1/docker/devpilot` was an old or incomplete production source tree.
+- The container rebuild reflected that incomplete source tree.
+- The earlier single-file hotfix copied `services/product_domains.py` and resolved the `ImportError`, but did not restore the complete UI and route surface.
+- Damage assessment confirmed the production clean targeted count was about `81` files and the local trusted repo clean count was `162` to `183` files depending on filter scope.
+
+Approved recovery:
+
+- Full source sync recovery was explicitly approved.
+- Trusted local repo:
+  - `E:\Ai-project\devpilot_project_manager_v1\devpilot_project_manager`
+- Production target:
+  - `/volume1/docker/devpilot`
+- Production container:
+  - `devpilot-project-manager`
+- Production port:
+  - `5010->5000`
+
+Backup:
+
+- Backup created and confirmed:
+  - `/volume1/docker/devpilot/backups/source-sync-20260519-072742/source-before-sync.tar.gz`
+- Backup size:
+  - `50M`
+
+Archive and sync:
+
+- Local git status:
+  - `## main...origin/main`
+- Protected paths tracked:
+  - no
+- Key files tracked:
+  - yes
+- Archive created:
+  - yes
+- Archive uploaded:
+  - yes, by SSH base64 stream because the NAS `scp` subsystem failed.
+- Sync method:
+  - `git archive` plus SSH upload plus `tar` extract.
+- `.env` preserved:
+  - yes
+- `data/`, `uploads/`, `backups/`, and `logs/` preserved:
+  - yes
+- Staging `/volume1/docker-staging/devpilot` and port `5012` touched:
+  - no
+
+Post-sync file checks:
+
+| File or directory | Result |
+| --- | --- |
+| `services/automation_plans.py` | exists |
+| `services/product_domains.py` | exists |
+| `templates/ai_provider_readiness.html` | exists |
+| `templates/approval_objects.html` | exists |
+| `templates/approval_object_detail.html` | exists |
+| `templates/automation_planner_external_project_health.html` | exists |
+| `scripts/codex_check_tasks.ps1` | exists |
+| `docs/` | exists |
+| `.env` | exists; content not printed |
+| `data/` | preserved |
+| `uploads/` | preserved |
+| `backups/` | preserved |
+
+Build and up:
+
+- Compose config:
+  - OK
+- Build result:
+  - success
+- `docker compose up -d --remove-orphans` result:
+  - success
+
+Container:
+
+- Status:
+  - Up
+- Restart loop resolved:
+  - yes
+- Ports:
+  - `0.0.0.0:5010->5000/tcp`
+  - `:::5010->5000/tcp`
+- `5010->5000` confirmed:
+  - yes
+
+HTTP and route checks:
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| `/` | pass | `HTTP/1.1 302 FOUND`, redirects to login |
+| body sample | pass | DevPilot login page returned |
+| `/release-dashboard` | pass | `302 FOUND`, redirects to login |
+| `/admin/ai-provider-readiness` | pass | `302 FOUND`, redirects to login |
+| `/admin/approval-objects` | pass | `302 FOUND`, redirects to login |
+| filtered log tail | pass | no visible errors |
+| app runtime | pass | running on `0.0.0.0` and `127.0.0.1:5000` |
+
+Safety confirmation:
+
+- `.env` content printed:
+  - no
+- Secrets touched:
+  - no
+- Staging `/volume1/docker-staging/devpilot` or port `5012` touched:
+  - no
+- Nginx, DNS, Cloudflare, or SSL touched:
+  - no
+- NAS settings changed:
+  - no
+- Provider live call:
+  - no
+- Rollback performed:
+  - no

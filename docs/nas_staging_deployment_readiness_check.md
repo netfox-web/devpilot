@@ -761,3 +761,121 @@ Primary blockers before any future action:
 - `5012` is old / superseded and should not be used as the deployment target.
 - Any future action against `5010` requires separate explicit production approval.
 - No deploy, restart, build, pull, Docker run, compose action, NAS edit, `.env` access, secret access, runtime change, Nginx/DNS/Cloudflare/SSL change, or provider live call is approved by this document.
+
+## Production 5010 Full Source Sync Recovery
+
+Status: production `5010` recovered and responding.
+
+Important note: this is a follow-up production incident record inside the legacy staging-named readiness document. It does not reopen the superseded staging readiness flow.
+
+Background:
+
+- Production deployment after the staging-readiness flow caused a regression.
+- Root cause: `/volume1/docker/devpilot` was an old or incomplete production source tree.
+- Rebuilding the container from that directory reflected the incomplete source tree.
+- A narrow hotfix copy of `services/product_domains.py` resolved the `ImportError`, but did not restore the newer UI and route surface.
+- Damage assessment confirmed the production clean targeted count was about `81` files, while the local trusted repo clean count was `162` to `183` files depending on filter scope.
+
+Approved recovery:
+
+- Full source sync recovery was explicitly approved for production `5010`.
+- Trusted source repo was `E:\Ai-project\devpilot_project_manager_v1\devpilot_project_manager`.
+- Production target was `/volume1/docker/devpilot`.
+- Production container was `devpilot-project-manager`.
+- Production port remained `5010->5000`.
+
+Backup:
+
+- Existing backup confirmed:
+  - `/volume1/docker/devpilot/backups/source-sync-20260519-072742/source-before-sync.tar.gz`
+- Backup size:
+  - `50M`
+
+Archive and sync:
+
+- Local git status before archive:
+  - `## main...origin/main`
+- Protected paths tracked:
+  - no
+- Key files tracked:
+  - yes
+- Archive created:
+  - yes
+- Archive upload method:
+  - SSH base64 stream, because the NAS `scp` subsystem failed.
+- Sync method:
+  - `git archive` plus SSH upload plus `tar` extract.
+- `.env` preserved:
+  - yes
+- `data/`, `uploads/`, `backups/`, and `logs/` preserved:
+  - yes
+- Staging `/volume1/docker-staging/devpilot` and port `5012` touched:
+  - no
+
+Post-sync file verification:
+
+- `services/automation_plans.py` exists.
+- `services/product_domains.py` exists.
+- `templates/ai_provider_readiness.html` exists.
+- `templates/approval_objects.html` exists.
+- `templates/approval_object_detail.html` exists.
+- `templates/automation_planner_external_project_health.html` exists.
+- `scripts/codex_check_tasks.ps1` exists.
+- `docs/` exists.
+- `.env` exists; content was not printed.
+- `data/`, `uploads/`, and `backups/` were preserved.
+
+Build and up:
+
+- Compose config:
+  - OK
+- Build result:
+  - success
+- `docker compose up -d --remove-orphans` result:
+  - success
+
+Container verification:
+
+- Status:
+  - Up
+- Restart loop resolved:
+  - yes
+- Ports:
+  - `0.0.0.0:5010->5000/tcp`
+  - `:::5010->5000/tcp`
+- `5010->5000` confirmed:
+  - yes
+
+HTTP and route verification:
+
+- `/`:
+  - `HTTP/1.1 302 FOUND`, redirects to login.
+- Body sample:
+  - DevPilot login page returned.
+- `/release-dashboard`:
+  - `302 FOUND`, redirects to login.
+- `/admin/ai-provider-readiness`:
+  - `302 FOUND`, redirects to login.
+- `/admin/approval-objects`:
+  - `302 FOUND`, redirects to login.
+- Filtered log tail:
+  - no visible errors.
+- App runtime:
+  - running on `0.0.0.0` and `127.0.0.1:5000`.
+
+Production recovery safety confirmation:
+
+- `.env` content printed:
+  - no
+- Secrets touched:
+  - no
+- Staging `/volume1/docker-staging/devpilot` or port `5012` touched:
+  - no
+- Nginx, DNS, Cloudflare, or SSL touched:
+  - no
+- NAS settings changed:
+  - no
+- Provider live call:
+  - no
+- Rollback performed:
+  - no
