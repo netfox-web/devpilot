@@ -162,6 +162,76 @@ Task classes are defined in `docs/automation_decision_gates.md`.
 - Notes / blockers:
   - The commit hash is intentionally pending in this entry; use the final task report and git history as the canonical commit reference.
 
+### External AI Gateway NAS Production Deployment
+
+- Date/time: 2026-05-20 21:45-21:55 CST.
+- Task class: Class D - Deploy / restart / Docker / NAS / staging operation, plus approved External AI source/policy provisioning.
+- Operator intent: deploy `fbf058b feat: enable external AI gateway providers` to the confirmed DevPilot production target so external projects can call DevPilot as the AI gateway using DevPilot-issued credentials.
+- Commit deployed: `fbf058b feat: enable external AI gateway providers`.
+- Deployment record commit: pending until docs commit.
+- Files changed:
+  - `app.py`
+  - `tests/test_ai_manual_handoff.py`
+  - `docs/external_ai_generate_api.md`
+  - `docs/integration_toolbox/external_ai_gateway_future_api_guide.md`
+  - `docs/integration_toolbox/README.md`
+  - `docs/integration_toolbox/external_project_admin_integration_instructions.md`
+  - `docs/gemini_claude_provider_readiness_check.md`
+  - `docs/devpilot_architecture_progress_inventory_2026-05-18.md`
+  - `docs/devpilot_integration_settings_spec.md`
+  - `docs/integration_toolbox/devpilot_external_client.js`
+  - `docs/integration_toolbox/devpilot_external_client.py`
+- Commands run:
+  - `git status -sb`
+  - `git log --oneline -5`
+  - `git rev-parse --short HEAD`
+  - `python -m py_compile app.py`
+  - `.\.venv\Scripts\python.exe -m pytest -q tests/test_ai_manual_handoff.py`
+  - `.\.venv\Scripts\python.exe -m pytest -q tests/test_product_domains.py tests/test_automation_plans.py`
+  - `git diff --check`
+  - `git archive --format=tar --output production-source-sync-fbf058b.tar HEAD`
+  - `Get-FileHash .\production-source-sync-fbf058b.tar -Algorithm SHA256`
+  - `ssh ... tar ... backups/source-sync-20260520-214549/source-before-sync.tar.gz`
+  - SSH binary stdin pipe to `/tmp/production-source-sync-fbf058b.tar`
+  - NAS `sha256sum /tmp/production-source-sync-fbf058b.tar`
+  - NAS `tar -xf /tmp/production-source-sync-fbf058b.tar -C /volume1/docker/devpilot`
+  - NAS `/usr/local/bin/docker compose config`
+  - NAS `/usr/local/bin/docker compose build --pull=false`
+  - NAS `/usr/local/bin/docker compose up -d --remove-orphans`
+  - unauthenticated `curl` smoke checks for `/ai-handoffs` and `/api/external/ai/generate`
+- Verification:
+  - Local archive SHA-256: `4d059c351a72a62ce465685026184a5937137272cf3e2ee6de46a7f785fcd43c`.
+  - NAS archive SHA-256 matched.
+  - Production backup created at `/volume1/docker/devpilot/backups/source-sync-20260520-214549/source-before-sync.tar.gz` with size `50M`.
+  - DevPilot production container `devpilot-project-manager` rebuilt and recreated.
+  - Production port remained `5010->5000`.
+  - `/ai-handoffs` returned `302` to login while unauthenticated.
+  - `/api/external/ai/generate` returned `405 Method Not Allowed` for HEAD, confirming the route is present and POST-only.
+  - Unauthenticated POST to `/api/external/ai/generate` returned `403`, confirming the route rejects missing DevPilot external auth without a provider live call.
+  - Safe log checks found no visible `error`, `traceback`, or `importerror` lines after deploy.
+- Source/policy provisioning:
+  - Source system created: `external_project_default`.
+  - DevPilot-issued external API key created for the source system; key value is not stored in docs.
+  - External AI Policy created and enabled for `openai`, `gemini`, and `claude`.
+  - Allowed models: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-1.5-flash`, `claude-3-5-haiku`.
+  - Limits: `max_tokens_per_request=1000`, `daily_request_limit=100`, `daily_token_limit=50000`, `monthly_budget_usd=10.0`.
+- Safety confirmation:
+  - no raw OpenAI, Gemini, Claude, Anthropic, or Google provider keys exposed.
+  - no `.env` contents printed.
+  - no generated DevPilot API key committed or written to docs.
+  - no staging / `5012` mutation.
+  - no Nginx / DNS / Cloudflare / SSL changes.
+  - no provider live call.
+  - no rollback.
+- Push status: pending until docs deployment record is committed and pushed.
+- Final git status: pending until push.
+- Follow-up candidates:
+  - Run a separately approved one-provider-at-a-time live smoke for Gemini, OpenAI, and Claude if token spend is approved.
+  - Provide the external project integration package and the DevPilot-issued key through a secure operator handoff.
+- Notes / blockers:
+  - `scp` is unavailable on the NAS target, so the deployment used an SSH binary stdin pipe for the archive transfer.
+  - The gateway has no dry-run provider validation mode; valid-key generation calls must not be used as smoke tests without separate live-provider approval.
+
 ## New Entry Template
 
 ```markdown

@@ -17,6 +17,29 @@ DevPilot keeps provider credentials internal. External systems receive only a De
 
 External projects must not receive or store raw OpenAI, Gemini, or Claude provider keys. DevPilot owns provider credentials, source policy, usage logging, and budget limits.
 
+## Production Deployment Record
+
+Status: deployed to NAS production on 2026-05-20.
+
+- Deployed commit: `fbf058b feat: enable external AI gateway providers`.
+- Production base URL: `https://devpilot.aicenter.com.tw`.
+- Route status: `/api/external/ai/generate` is present and POST-only.
+- Source system provisioned: `external_project_default`.
+- DevPilot-issued external API key: created; value is not stored in docs or git.
+- External AI Policy: enabled for `openai`, `gemini`, and `claude`.
+- Provider live calls during deployment: no.
+- Smoke results:
+  - `/ai-handoffs`: unauthenticated `302` to login.
+  - `/api/external/ai/generate`: unauthenticated HEAD `405 Method Not Allowed`.
+  - unauthenticated POST `/api/external/ai/generate`: `403 Forbidden`.
+
+Deployment safety:
+
+- Raw provider keys were not exposed to external projects.
+- `.env` contents and secrets were not printed.
+- Staging / `5012` was not touched.
+- Nginx, DNS, Cloudflare, and SSL were not changed.
+
 ## Endpoint
 
 ```text

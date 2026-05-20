@@ -13,6 +13,33 @@ Implementation status: the AI Provider Readiness Dashboard was implemented as re
 
 Approval workflow boundary: Phase 8 defines future `external_ai_live_verification` approval objects in `docs/approval_object_workflow_design.md`. This readiness checklist does not create approvals, approve live verification, call Gemini, call Claude, or enable provider traffic.
 
+## External AI Gateway Production Deployment
+
+Status: gateway deployed; provider live verification still not performed.
+
+- Date: 2026-05-20.
+- Deployed commit: `fbf058b feat: enable external AI gateway providers`.
+- Production route: `POST /api/external/ai/generate`.
+- Source system: `external_project_default`.
+- DevPilot-issued external API key: created and not recorded in docs.
+- External AI Policy: enabled for `openai`, `gemini`, and `claude`.
+- Allowed models:
+  - `gpt-4.1-mini`
+  - `gpt-4o-mini`
+  - `gemini-1.5-flash`
+  - `claude-3-5-haiku`
+- Conservative MVP limits:
+  - `max_tokens_per_request=1000`
+  - `daily_request_limit=100`
+  - `daily_token_limit=50000`
+  - `monthly_budget_usd=10.0`
+- Post-deploy route smoke:
+  - `/api/external/ai/generate` returned `405` for HEAD, confirming the route is present and POST-only.
+  - unauthenticated POST returned `403`, confirming missing external auth is rejected.
+- Provider live calls performed: no.
+
+Live Gemini, OpenAI, and Claude generation checks remain Class F provider live call tasks. Each provider live smoke requires separate explicit approval before token spend.
+
 ## Scope
 
 Providers covered:

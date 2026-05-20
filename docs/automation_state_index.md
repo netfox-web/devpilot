@@ -12,11 +12,31 @@ This file records the current operational state of DevPilot automation governanc
 - Automation governance baseline: established.
 - Latest automation governance commit: `206ca75 docs: add automation decision gates`.
 - Latest route verification commit: `3d814d0 docs: record AI Handoffs production route verification`.
+- Latest External AI Gateway deployment: `fbf058b feat: enable external AI gateway providers` deployed to NAS production on 2026-05-20.
 - Current automation maturity estimate: 80-85%.
 - Target next maturity band: 85-90%.
 - Production route verification: passed.
 - Deployment action required: no.
 - Rollback required: no.
+
+## External AI Gateway Production State
+
+- Route: `POST /api/external/ai/generate`.
+- Deployment target: NAS production `/volume1/docker/devpilot`.
+- Production URL: `https://devpilot.aicenter.com.tw`.
+- Deployed commit: `fbf058b feat: enable external AI gateway providers`.
+- Deployment status: completed.
+- Source system: `external_project_default`.
+- DevPilot-issued external API key: created and handed off separately; value is not stored in this repository.
+- External AI Policy: enabled.
+- Allowed providers: `openai`, `gemini`, `claude`.
+- Allowed models: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-1.5-flash`, `claude-3-5-haiku`.
+- Conservative MVP limits: `max_tokens_per_request=1000`, `daily_request_limit=100`, `daily_token_limit=50000`, `monthly_budget_usd=10.0`.
+- Provider live calls performed during deployment: no.
+- Post-deploy smoke:
+  - `/ai-handoffs`: `302` to login while unauthenticated.
+  - `/api/external/ai/generate`: `405` for HEAD, route present and POST-only.
+  - unauthenticated POST to `/api/external/ai/generate`: `403`, route rejects missing DevPilot external auth.
 
 ## Active Route Decisions
 
@@ -64,6 +84,8 @@ Candidate future phases only; none are approved by this document:
 - Add an optional runtime redirect task plan for `/admin/devpilot-handoffs` -> `/ai-handoffs`.
 - Add a release readiness scorecard.
 - Add an incident classification checklist.
+- Add a no-provider-call gateway validation mode, such as `dry_run` or `validate_only`, so future auth/policy smoke tests can validate configured policies without token spend.
+- Run separately approved live smoke tests, one provider at a time, for Gemini, OpenAI, and Claude.
 
 ## State Update Rules
 
