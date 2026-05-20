@@ -4,7 +4,7 @@
 
 Every external project should provide a DevPilot Integration settings page so it can register itself with DevPilot, report project status, create handoff requests, and later use the External AI Gateway through one DevPilot-issued key.
 
-DevPilot is the central place for project registry, local/NAS paths, repo and container metadata, app URLs, domains, deployment status, events/status callbacks, handoff requests, and future AI Gateway policy/audit controls.
+DevPilot is the central place for project registry, local/NAS paths, repo and container metadata, app URLs, domains, deployment status, events/status callbacks, handoff requests, and External AI Gateway policy/audit controls.
 
 ## Required Admin Page In Each Project
 

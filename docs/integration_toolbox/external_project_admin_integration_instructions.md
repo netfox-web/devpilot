@@ -182,6 +182,57 @@ Example body:
 
 Supported event types include build, deploy, domain, healthcheck, AI job, usage, and `custom` events.
 
+### Generate Text Through DevPilot AI Gateway
+
+```text
+POST /api/external/ai/generate
+```
+
+Required headers are the same DevPilot external integration headers:
+
+```text
+Content-Type: application/json
+X-DevPilot-Source-System: <source-system>
+X-DevPilot-Api-Key: <paste-the-key-shown-once>
+X-DevPilot-Request-Id: <stable-request-id>
+X-DevPilot-Idempotency-Key: ai-generate:<stable-job-id>
+```
+
+Example body:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4.1-mini",
+  "capability": "generate",
+  "prompt": "Write a short product summary.",
+  "external_ref": "external-job-123",
+  "metadata": {
+    "project": "External Project"
+  }
+}
+```
+
+Supported text gateway providers:
+
+- `openai` with `gpt-4.1-mini` or `gpt-4o-mini`
+- `gemini` with `gemini-1.5-flash`
+- `claude` with `claude-3-5-haiku`
+
+DevPilot must first enable an External AI Policy for the source system with the requested provider, model, and capability. If no enabled policy exists, the gateway returns `external_ai_policy_not_enabled`.
+
+Do not put raw provider keys in the external project. The external project should never request, store, log, or display `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, or `CLAUDE_API_KEY`.
+
+Required safety:
+
+- Use a stable `X-DevPilot-Idempotency-Key` for retries.
+- Never expose `DEVPILOT_API_KEY` to frontend JavaScript.
+- Never log provider keys.
+- Never log DevPilot API keys.
+- Never log prompts that contain secrets.
+- Never log full `Authorization` or `X-DevPilot-*` auth headers.
+- Do not call raw OpenAI/Gemini/Claude APIs directly from external projects.
+
 ## Safe Environment Template
 
 ```dotenv

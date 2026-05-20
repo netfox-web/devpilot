@@ -83,4 +83,23 @@ export async function createDevPilotHandoff(settings, taskId, handoff) {
   });
 }
 
+export async function generateDevPilotAiText(settings, request) {
+  const baseUrl = cleanBaseUrl(settings.baseUrl);
+  const sourceSystem = requireValue("DEVPILOT_SOURCE_SYSTEM", settings.sourceSystem);
+  const externalRef = request.external_ref || request.externalRef || crypto.randomUUID();
+  const body = {
+    provider: request.provider || "openai",
+    model: request.model || "gpt-4.1-mini",
+    capability: request.capability || "generate",
+    prompt: requireValue("prompt", request.prompt),
+    external_ref: externalRef,
+    metadata: request.metadata || {}
+  };
+  return requestJson(`${baseUrl}/api/external/ai/generate`, {
+    method: "POST",
+    headers: jsonHeaders(settings, `ai-generate:${sourceSystem}:${externalRef}`),
+    body: JSON.stringify(body)
+  });
+}
+
 // Never log settings.apiKey or full request headers.

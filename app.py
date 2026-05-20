@@ -2348,12 +2348,12 @@ Do not log `api_key`.
 
 - Can create/read handoffs.
 - Cannot accept, complete, or reject handoffs.
-- Cannot call providers yet unless External AI Gateway is later enabled.
+- Can call GPT/Gemini/Claude only through the policy-gated External AI Gateway when DevPilot enables an External AI Policy for this source system.
 - Cannot run workers.
 - Cannot mutate task/project state.
 - Cannot deploy or change infrastructure.
 
-## Future External AI Gateway
+## External AI Gateway
 
 Provider/model/capability permissions are controlled by DevPilot Source AI Policy. External systems never receive raw OpenAI, Gemini, Claude, Replicate, fal, Runway, Kling, or other provider keys.
 """
@@ -2554,8 +2554,8 @@ AI_PROVIDER_READINESS_CONFIGS = [
         "live_verified": False,
         "live_call_enabled": False,
         "notes": [
-            "Claude is available as a mocked External AI Generate gateway path.",
-            "The Claude gateway function remains non-live in this phase.",
+            "Claude is available through the policy-gated External AI Generate gateway path.",
+            "Mock readiness remains separate from live verification; no live call is made by this dashboard.",
             "Live verification requires a separate approval gate.",
         ],
     },
@@ -3363,6 +3363,7 @@ EXTERNAL_AI_CAPABILITY_OPTIONS = [capability for capabilities in EXTERNAL_AI_CAP
 EXTERNAL_AI_GENERATE_MVP_PROVIDER = "gemini"
 EXTERNAL_AI_GENERATE_MVP_MODEL = "gemini-1.5-flash"
 EXTERNAL_AI_GENERATE_PROVIDER_MODELS = {
+    "openai": ["gpt-4.1-mini", "gpt-4o-mini"],
     "gemini": ["gemini-1.5-flash"],
     "claude": ["claude-3-5-haiku"],
 }
@@ -4300,6 +4301,10 @@ def external_ai_gemini_api_key():
     return os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
 
 
+def external_ai_openai_api_key():
+    return os.getenv("OPENAI_API_KEY", "").strip()
+
+
 def external_ai_claude_api_key():
     return os.getenv("ANTHROPIC_API_KEY", "").strip() or os.getenv("CLAUDE_API_KEY", "").strip()
 
@@ -4349,12 +4354,98 @@ def call_gemini_generate(prompt, model, api_key, timeout=60):
     }
 
 
+def call_openai_external_ai_generate(prompt, model, api_key, timeout=60):
+    payload = {
+        "model": str(model or external_ai_generate_default_model("openai")).strip(),
+        "messages": [
+            {"role": "system", "content": "You are a concise assistant. Do not reveal secrets, credentials, or API keys."},
+            {"role": "user", "content": str(prompt or "")},
+        ],
+        "temperature": 0.2,
+    }
+    req = urllib.request.Request(
+        OPENAI_API_URL,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "error": "openai_http_error", "status_code": exc.code}
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+        return {"ok": False, "error": "openai_network_error"}
+    except Exception:
+        return {"ok": False, "error": "openai_call_failed"}
+    text = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    usage = data.get("usage") or {}
+    return {
+        "ok": True,
+        "text": text,
+        "usage": {
+            "input_tokens": coerce_int(usage.get("prompt_tokens"), approx_ai_tokens(prompt)),
+            "output_tokens": coerce_int(usage.get("completion_tokens"), approx_ai_tokens(text)),
+            "total_tokens": coerce_int(usage.get("total_tokens"), approx_ai_tokens(prompt) + approx_ai_tokens(text)),
+        },
+        "raw": {"usage": usage},
+    }
+
+
 def call_claude_external_ai_generate(prompt, model, api_key, timeout=60):
-    return {"ok": False, "error": "claude_external_ai_gateway_not_live_enabled"}
+    payload = {
+        "model": str(model or external_ai_generate_default_model("claude")).strip(),
+        "max_tokens": 512,
+        "temperature": 0.2,
+        "messages": [{"role": "user", "content": str(prompt or "")}],
+    }
+    req = urllib.request.Request(
+        os.getenv("ANTHROPIC_API_URL", "").strip() or os.getenv("CLAUDE_API_URL", "").strip() or "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "x-api-key": str(api_key or ""),
+            "anthropic-version": os.getenv("ANTHROPIC_VERSION", "2023-06-01"),
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "error": "claude_http_error", "status_code": exc.code}
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+        return {"ok": False, "error": "claude_network_error"}
+    except Exception:
+        return {"ok": False, "error": "claude_call_failed"}
+    content = data.get("content") or []
+    text_parts = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "text" and part.get("text"):
+            text_parts.append(str(part.get("text") or ""))
+    text = "\n".join(text_parts).strip()
+    usage = data.get("usage") or {}
+    input_tokens = coerce_int(usage.get("input_tokens"), approx_ai_tokens(prompt))
+    output_tokens = coerce_int(usage.get("output_tokens"), approx_ai_tokens(text))
+    return {
+        "ok": True,
+        "text": text,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+        "raw": {"usage": usage},
+    }
 
 
 def external_ai_generate_provider_api_key(provider):
     provider = str(provider or "").strip().lower()
+    if provider == "openai":
+        return external_ai_openai_api_key()
     if provider == "claude":
         return external_ai_claude_api_key()
     return external_ai_gemini_api_key()
@@ -4362,6 +4453,8 @@ def external_ai_generate_provider_api_key(provider):
 
 def call_external_ai_generate_provider(provider, prompt, model, api_key):
     provider = str(provider or "").strip().lower()
+    if provider == "openai":
+        return call_openai_external_ai_generate(prompt, model, api_key)
     if provider == "claude":
         return call_claude_external_ai_generate(prompt, model, api_key)
     return call_gemini_generate(prompt, model, api_key)
@@ -4430,7 +4523,7 @@ def external_ai_generate_validate_request(identity, payload):
         return policy, normalized, external_ai_generate_error_payload(
             identity,
             "external_ai_provider_not_supported_for_mvp",
-            "External AI Generate MVP supports gemini and claude only.",
+            "External AI Generate supports openai, gemini, and claude only.",
             403,
             provider=provider,
             model=model,
@@ -16827,8 +16920,8 @@ INTEGRATION_TOOLBOX_FILE_RESOURCES = {
         "mimetype": "text/markdown",
     },
     "external-ai-gateway-future-api-guide": {
-        "title": "External AI Gateway Future API Guide",
-        "description": "Future generate/chat integration guidance for policy-gated AI usage.",
+        "title": "External AI Gateway API Guide",
+        "description": "Policy-gated GPT, Gemini, and Claude text generation through DevPilot.",
         "path": BASE_DIR / "docs" / "integration_toolbox" / "external_ai_gateway_future_api_guide.md",
         "filename": "external_ai_gateway_future_api_guide.md",
         "mimetype": "text/markdown",
@@ -16908,6 +17001,21 @@ export async function createHandoff(taskId, handoff) {
     method: "POST",
     idempotencyKey: `handoff:${taskId}:${handoff.external_ref || crypto.randomUUID()}`,
     body: handoff
+  });
+}
+
+export async function generateAiText({ provider = "openai", model = "gpt-4.1-mini", capability = "generate", prompt, externalRef, metadata = {} }) {
+  return devpilotFetch("/api/external/ai/generate", {
+    method: "POST",
+    idempotencyKey: `ai-generate:${externalRef || crypto.randomUUID()}`,
+    body: {
+      provider,
+      model,
+      capability,
+      prompt,
+      external_ref: externalRef,
+      metadata
+    }
   });
 }
 """
@@ -16994,6 +17102,23 @@ def create_handoff(task_id, handoff):
         handoff,
         idempotency_key=f"handoff:{task_id}:{stable}",
     )
+
+
+def generate_ai_text(prompt, provider="openai", model="gpt-4.1-mini", capability="generate", external_ref=None, metadata=None):
+    stable = external_ref or str(uuid.uuid4())
+    return devpilot_request(
+        "POST",
+        "/api/external/ai/generate",
+        {
+            "provider": provider,
+            "model": model,
+            "capability": capability,
+            "prompt": prompt,
+            "external_ref": external_ref,
+            "metadata": metadata or {},
+        },
+        idempotency_key=f"ai-generate:{stable}",
+    )
 '''
 
 
@@ -17014,14 +17139,14 @@ PRIMARY_DOMAIN=
 INTEGRATION_TOOLBOX_GENERATED_RESOURCES = {
     "devpilot-js-client-example": {
         "title": "JS client example",
-        "description": "Server-side JavaScript example for test connection, register project, events, and handoffs.",
+        "description": "Server-side JavaScript example for registry, events, handoffs, and External AI Gateway calls.",
         "filename": "devpilot_external_client.js",
         "mimetype": "application/javascript",
         "generator": devpilot_js_client_example,
     },
     "devpilot-python-client-example": {
         "title": "Python client example",
-        "description": "Python requests example for test connection, register project, events, and handoffs.",
+        "description": "Python requests example for registry, events, handoffs, and External AI Gateway calls.",
         "filename": "devpilot_external_client.py",
         "mimetype": "text/x-python",
         "generator": devpilot_python_client_example,

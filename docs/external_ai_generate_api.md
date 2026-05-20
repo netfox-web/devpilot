@@ -4,9 +4,10 @@
 
 `POST /api/external/ai/generate` lets an approved external source system request a narrow text-only AI generation through DevPilot.
 
-This MVP is intentionally small:
+The production gateway is intentionally narrow and policy-gated:
 
-- Providers: Gemini by default, plus a Claude mocked/tested gateway path.
+- Providers: OpenAI/GPT, Gemini, and Claude.
+- OpenAI models: `gpt-4.1-mini`, `gpt-4o-mini`.
 - Gemini model: `gemini-1.5-flash`.
 - Claude model: `claude-3-5-haiku`.
 - Mode: non-streaming text only.
@@ -14,7 +15,7 @@ This MVP is intentionally small:
 
 DevPilot keeps provider credentials internal. External systems receive only a DevPilot external API key.
 
-Claude support is not live-provider-enabled in this phase. The Claude gateway function is intentionally non-live unless patched in tests, so readiness can be verified without calling Anthropic.
+External projects must not receive or store raw OpenAI, Gemini, or Claude provider keys. DevPilot owns provider credentials, source policy, usage logging, and budget limits.
 
 ## Endpoint
 
@@ -36,9 +37,9 @@ X-DevPilot-Idempotency-Key: {stable-idempotency-key}
 
 ```json
 {
-  "provider": "gemini",
+  "provider": "openai",
   "capability": "generate",
-  "model": "gemini-1.5-flash",
+  "model": "gpt-4.1-mini",
   "prompt": "Write a short product description...",
   "external_ref": "ad-studio-job-123",
   "metadata": {
@@ -56,8 +57,8 @@ X-DevPilot-Idempotency-Key: {stable-idempotency-key}
   "request_id": "req-123",
   "idempotency_key": "generate:ad-studio-job-123",
   "idempotent_replay": false,
-  "provider": "gemini",
-  "model": "gemini-1.5-flash",
+  "provider": "openai",
+  "model": "gpt-4.1-mini",
   "capability": "generate",
   "text": "Generated text...",
   "usage": {
@@ -76,8 +77,8 @@ X-DevPilot-Idempotency-Key: {stable-idempotency-key}
 
 The authenticated `source_system` must have an enabled External AI Policy allowing:
 
-- requested provider: `gemini` or `claude`
-- requested model: `gemini-1.5-flash` or `claude-3-5-haiku`
+- requested provider: `openai`, `gemini`, or `claude`
+- requested model: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-1.5-flash`, or `claude-3-5-haiku`
 - requested text capability
 - no streaming
 - no tool calling
@@ -101,12 +102,14 @@ DevPilot reads the Gemini provider key from:
 - `GEMINI_API_KEY`
 - `GOOGLE_API_KEY`
 
+DevPilot reads the OpenAI provider key from:
+
+- `OPENAI_API_KEY`
+
 DevPilot recognizes Claude provider keys from:
 
 - `ANTHROPIC_API_KEY`
 - `CLAUDE_API_KEY`
-
-Claude keys are only checked for configured/missing state in this phase. The External AI Generate Claude implementation does not call Claude live unless a later phase explicitly enables that behavior.
 
 If the requested provider key is not configured, DevPilot returns:
 
@@ -118,6 +121,34 @@ If the requested provider key is not configured, DevPilot returns:
 ```
 
 The provider key is never returned, logged, or exposed to external systems.
+
+## External Project Integration Package
+
+For another project that wants to use GPT/Gemini/Claude through DevPilot, give that project these three files from the integration toolbox:
+
+1. `docs/integration_toolbox/external_project_admin_integration_instructions.md`
+2. `docs/integration_toolbox/external_ai_gateway_future_api_guide.md`
+3. One server-side client helper for that project's stack:
+   - `docs/integration_toolbox/devpilot_external_client.js`
+   - or `docs/integration_toolbox/devpilot_external_client.py`
+
+Also give the project a DevPilot-issued `DEVPILOT_SOURCE_SYSTEM` and `DEVPILOT_API_KEY`. Do not give the project `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, or `CLAUDE_API_KEY`.
+
+Operator instruction for the external project:
+
+```text
+Use DevPilot as the AI Gateway. Store only DEVPILOT_API_BASE_URL, DEVPILOT_SOURCE_SYSTEM, and DEVPILOT_API_KEY server-side. Call POST /api/external/ai/generate with provider openai, gemini, or claude only after DevPilot has enabled an External AI Policy for your source_system. Never store or request raw provider keys.
+```
+
+Required safety:
+
+- Use a stable `X-DevPilot-Idempotency-Key` for retries.
+- Never expose `DEVPILOT_API_KEY` to frontend JavaScript.
+- Never log provider keys.
+- Never log DevPilot API keys.
+- Never log prompts that contain secrets.
+- Never log full `Authorization` or `X-DevPilot-*` auth headers.
+- Do not call raw OpenAI/Gemini/Claude APIs directly from external projects.
 
 ## Idempotency
 

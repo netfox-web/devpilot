@@ -89,5 +89,25 @@ class DevPilotClient:
             json=handoff,
         )
 
+    def generate_ai_text(self, prompt, provider="openai", model="gpt-4.1-mini", capability="generate", external_ref=None, metadata=None):
+        prompt = str(prompt or "")
+        if not prompt.strip():
+            raise ValueError("prompt is required")
+        stable_ref = external_ref or str(uuid.uuid4())
+        idempotency_key = f"ai-generate:{self.source_system}:{stable_ref}"
+        return self._request(
+            "POST",
+            "/api/external/ai/generate",
+            headers=self._headers(idempotency_key=idempotency_key, json_body=True),
+            json={
+                "provider": provider,
+                "model": model,
+                "capability": capability,
+                "prompt": prompt,
+                "external_ref": stable_ref,
+                "metadata": metadata or {},
+            },
+        )
+
 
 # Never log client.api_key or full request headers.

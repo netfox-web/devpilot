@@ -353,8 +353,8 @@ Supported text capabilities:
 
 Important current boundary:
 
-- Claude support is not live-provider-enabled in this phase.
-- The Claude gateway function is mock/test oriented unless a later phase explicitly enables live calls.
+- External AI Generate supports policy-gated text generation through OpenAI/GPT, Gemini, and Claude.
+- External projects receive DevPilot-issued keys only; raw provider keys stay inside DevPilot.
 - Gemini and Claude live verification gates are implemented, but `live_verification_allowed=false`.
 - Usage logging stores hashes and short summaries by default, not full prompt/response.
 - Idempotent replay avoids duplicate provider calls for completed results.

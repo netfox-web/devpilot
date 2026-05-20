@@ -2,7 +2,7 @@
 
 This toolbox is the standard package for every external project that needs to connect back to DevPilot.
 
-DevPilot should be the shared registry, event hub, handoff center, and future AI Gateway policy point. External projects receive DevPilot-issued external API keys only. They must not receive raw OpenAI, Gemini, Claude, Replicate, or fal provider keys.
+DevPilot should be the shared registry, event hub, handoff center, and AI Gateway policy point. External projects receive DevPilot-issued external API keys only. They must not receive raw OpenAI, Gemini, Claude, Replicate, or fal provider keys.
 
 ## Toolbox Contents
 
@@ -22,9 +22,9 @@ DevPilot should be the shared registry, event hub, handoff center, and future AI
    - File: `external_project_events_guide.md`
    - Purpose: report build/deploy/domain/healthcheck/AI job status callbacks.
 
-5. External AI Gateway Plan / Future API Guide
+5. External AI Gateway API Guide
    - File: `external_ai_gateway_future_api_guide.md`
-   - Purpose: explain future AI generate/chat integration through DevPilot policy.
+   - Purpose: explain policy-gated GPT, Gemini, and Claude text generation through DevPilot.
 
 6. JavaScript Client Example
    - File: `devpilot_external_client.js`
@@ -37,6 +37,34 @@ DevPilot should be the shared registry, event hub, handoff center, and future AI
 8. Environment Template
    - File: `devpilot.env.example`
    - Purpose: standard environment names for external project integration.
+
+## AI Gateway Quick Handoff
+
+When another project needs to use GPT/Gemini/Claude through DevPilot, give it these three files:
+
+1. `external_project_admin_integration_instructions.md`
+2. `external_ai_gateway_future_api_guide.md`
+3. One server-side client helper:
+   - `devpilot_external_client.js` for Node.js
+   - or `devpilot_external_client.py` for Python
+
+Also issue that project a DevPilot external API key and source system. Do not give it raw `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, or `CLAUDE_API_KEY`.
+
+Operator instruction:
+
+```text
+Use DevPilot as the AI Gateway. Store DEVPILOT_API_BASE_URL, DEVPILOT_SOURCE_SYSTEM, and DEVPILOT_API_KEY server-side only. Call POST /api/external/ai/generate with provider openai, gemini, or claude after DevPilot has enabled an External AI Policy for your source_system. Never request or store raw provider keys.
+```
+
+Required safety:
+
+- Use a stable `X-DevPilot-Idempotency-Key` for retries.
+- Never expose `DEVPILOT_API_KEY` to frontend JavaScript.
+- Never log provider keys.
+- Never log DevPilot API keys.
+- Never log prompts that contain secrets.
+- Never log full `Authorization` or `X-DevPilot-*` auth headers.
+- Do not call raw OpenAI/Gemini/Claude APIs directly from external projects.
 
 ## Standard External Project Setup
 

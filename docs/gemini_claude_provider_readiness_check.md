@@ -98,14 +98,15 @@ Provider behavior:
 - Mocked Claude failure path records a safe structured error.
 - Idempotent replay does not duplicate a completed provider call.
 - Usage logging records provider, model, status, source system, and request metadata without secrets.
-- External AI Generate supports `provider: "claude"` with `model: "claude-3-5-haiku"` as a mocked/tested gateway path only.
-- The Claude External AI Generate function must remain non-live until a later explicit live-provider phase.
+- External AI Generate supports `provider: "claude"` with `model: "claude-3-5-haiku"` through the policy-gated external gateway.
+- The Claude gateway adapter exists, but live verification is still not recorded here unless a separate explicit live-provider approval runs a real provider call.
 
 Enablement gate:
 
 - Live Claude checks require a separate explicit approval.
 - Live checks must use a low-risk prompt and a low-cost model.
 - Live checks must confirm no task, project, approval, deploy, DNS, SSL, Nginx, Cloudflare, R2, or infrastructure mutation occurred.
+- This checklist update does not itself perform a live Claude call.
 
 ## Shared Verification Commands
 

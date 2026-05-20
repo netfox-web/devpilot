@@ -1,8 +1,8 @@
-# External AI Gateway Future API Guide
+# External AI Gateway API Guide
 
-The External AI Gateway will let approved external projects call AI capabilities through DevPilot without receiving raw provider keys.
+The External AI Gateway lets approved external projects call GPT, Gemini, and Claude text capabilities through DevPilot without receiving raw provider keys.
 
-Current status: future/provider-call behavior is policy-gated and should be treated as disabled unless DevPilot explicitly enables it for the source system.
+Current status: active for policy-gated text generation through `POST /api/external/ai/generate`. A source system must have an enabled External AI Policy before provider calls are allowed.
 
 ## Why Use DevPilot As The AI Gateway
 
@@ -13,7 +13,7 @@ Current status: future/provider-call behavior is policy-gated and should be trea
 - Budgets and token limits can be enforced.
 - Provider/model changes do not require external project code changes.
 
-## Future Generate Endpoint
+## Generate Endpoint
 
 ```text
 POST {DEVPILOT_API_BASE_URL}/api/external/ai/generate
@@ -33,8 +33,9 @@ Example request:
 
 ```json
 {
+  "provider": "openai",
   "capability": "summary",
-  "model": "gemini-1.5-flash",
+  "model": "gpt-4.1-mini",
   "prompt": "Summarize this product update for a marketing dashboard.",
   "external_ref": "ad-job-123",
   "metadata": {
@@ -51,8 +52,8 @@ Example response:
   "source_system": "ad-studio-ai",
   "request_id": "req-123",
   "idempotency_key": "ai-generate-ad-job-123",
-  "provider": "gemini",
-  "model": "gemini-1.5-flash",
+  "provider": "openai",
+  "model": "gpt-4.1-mini",
   "capability": "summary",
   "text": "Short generated response...",
   "usage": {
@@ -82,6 +83,49 @@ The policy controls:
 - Streaming allowed or disabled.
 - Tool calling allowed or disabled.
 - Prompt/response retention behavior.
+
+Supported text gateway providers and models:
+
+- OpenAI/GPT: `gpt-4.1-mini`, `gpt-4o-mini`
+- Gemini: `gemini-1.5-flash`
+- Claude: `claude-3-5-haiku`
+
+If `provider` is omitted, DevPilot defaults to Gemini for compatibility with the original MVP. New integrations should send the provider explicitly.
+
+## Three Files To Give An External Project
+
+For a project that needs GPT/Gemini/Claude through DevPilot, give the project these files:
+
+1. `external_project_admin_integration_instructions.md`
+2. `external_ai_gateway_future_api_guide.md`
+3. One server-side client helper:
+   - `devpilot_external_client.js` for Node.js projects
+   - or `devpilot_external_client.py` for Python projects
+
+The project also needs:
+
+```text
+DEVPILOT_API_BASE_URL
+DEVPILOT_SOURCE_SYSTEM
+DEVPILOT_API_KEY
+```
+
+It must not receive raw provider keys.
+
+## Minimal AI Generate Instruction For External Projects
+
+```text
+Use DevPilot as the AI Gateway. Do not call OpenAI, Gemini, or Claude directly with raw provider keys. Store DEVPILOT_API_BASE_URL, DEVPILOT_SOURCE_SYSTEM, and DEVPILOT_API_KEY server-side only. Call POST /api/external/ai/generate with provider openai, gemini, or claude. Use a stable X-DevPilot-Idempotency-Key for retries. Never log DEVPILOT_API_KEY or prompt/response secrets.
+```
+
+Required safety:
+
+- Never expose `DEVPILOT_API_KEY` to frontend JavaScript.
+- Never log provider keys.
+- Never log DevPilot API keys.
+- Never log prompts that contain secrets.
+- Never log full `Authorization` or `X-DevPilot-*` auth headers.
+- Do not call raw OpenAI/Gemini/Claude APIs directly from external projects.
 
 ## Safety Defaults
 

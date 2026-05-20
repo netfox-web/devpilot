@@ -1947,6 +1947,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("<paste-the-key-shown-once>", js_body)
         self.assertIn("AbortController", js_body)
         self.assertIn("crypto.randomUUID", js_body)
+        self.assertIn("generateAiText", js_body)
+        self.assertIn("/api/external/ai/generate", js_body)
         self.assertIn("Never expose DEVPILOT_API_KEY", js_body)
 
         py_body = py_download.get_data(as_text=True)
@@ -1954,6 +1956,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("<paste-the-key-shown-once>", py_body)
         self.assertIn("requests.request", py_body)
         self.assertIn("timeout=TIMEOUT_SECONDS", py_body)
+        self.assertIn("generate_ai_text", py_body)
+        self.assertIn("/api/external/ai/generate", py_body)
         self.assertIn("Never print or log DEVPILOT_API_KEY", py_body)
 
         env_body = env_download.get_data(as_text=True)
@@ -3296,47 +3300,95 @@ class AiManualHandoffTest(unittest.TestCase):
         result_records = self.app_module.load_external_ai_generation_results()
         self.assertEqual([record["status"] for record in result_records], ["failed", "completed"])
 
-    def test_external_ai_generate_legacy_openai_policy_still_rejects_without_provider_call(self):
+    def test_external_ai_generate_calls_mocked_openai_logs_usage_and_replays_idempotency(self):
         before = self.state_snapshot()
         with self.app.app_context():
             approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
+        long_prompt = "Summarize this external OpenAI gateway update. " * 12
+        long_response = "This is a concise mocked OpenAI summary. " * 8
         body = {
-            "capability": "summary",
-            "model": "gemini-1.5-flash",
-            "prompt": "Summarize this safely.",
-            "external_ref": "legacy-policy-ticket",
+            "provider": "openai",
+            "capability": "generate",
+            "model": "gpt-4.1-mini",
+            "prompt": long_prompt,
+            "external_ref": "openai-gateway-ticket",
+            "metadata": {"project": "AD-Studio_AI"},
         }
-        headers = self.external_headers(source="external-a", key="key-a", request_id="gateway-req", idempotency_key="legacy-policy-ticket")
-        policy = self.app_module.create_external_ai_policy({
+        headers = self.external_headers(source="external-a", key="key-a", request_id="openai-req-ok", idempotency_key="openai-idem-ok")
+        self.app_module.create_external_ai_policy({
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["openai"],
             "allowed_models": ["gpt-4.1-mini"],
-            "allowed_capabilities": ["summary"],
+            "allowed_capabilities": ["generate", "summary", "rewrite", "classification", "extraction", "planning", "chat"],
+            "max_tokens_per_request": 1000,
         })
-        self.assertTrue(policy["enabled"])
-        with patch.dict(self.app_module.os.environ, self.external_api_env(), clear=False):
-            with patch.object(self.app_module, "call_task_provider") as provider_call:
-                with patch.object(self.app_module, "run_ai_task") as run_task:
-                    with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
-                        with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
-                            with patch.object(self.app_module, "save_handoff") as legacy_save:
-                                response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+        provider_result = {
+            "ok": True,
+            "text": long_response,
+            "usage": {"input_tokens": 16, "output_tokens": 12, "total_tokens": 28},
+        }
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "OPENAI_API_KEY": "test-openai-provider-key"}, clear=False):
+            with patch.object(self.app_module, "call_openai_external_ai_generate", return_value=provider_result) as openai_call:
+                with patch.object(self.app_module, "call_gemini_generate") as gemini_call:
+                    with patch.object(self.app_module, "call_claude_external_ai_generate") as claude_call:
+                        with patch.object(self.app_module, "call_task_provider") as provider_call:
+                            with patch.object(self.app_module, "run_ai_task") as run_task:
+                                with patch.object(self.app_module, "dispatch_ai_console_task") as console_dispatch:
+                                    with patch.object(self.app_module, "cloudflare_request") as cloudflare_request:
+                                        with patch.object(self.app_module, "save_handoff") as legacy_save:
+                                            response = self.client().post("/api/external/ai/generate", json=body, headers=headers)
+                                            replay = self.client().post("/api/external/ai/generate", json=body, headers=headers)
 
-        self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         payload = response.get_json()
-        self.assertFalse(payload["ok"])
-        self.assertEqual(payload["error"], "external_ai_provider_not_allowed")
-        self.assertEqual(payload["source_system"], "external-a")
-        self.assertEqual(payload["request_id"], "gateway-req")
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["idempotent_replay"])
+        self.assertEqual(payload["provider"], "openai")
+        self.assertEqual(payload["model"], "gpt-4.1-mini")
+        self.assertEqual(payload["capability"], "generate")
+        self.assertEqual(payload["text"], long_response)
+        self.assertEqual(payload["usage"]["total_tokens"], 28)
+        self.assertTrue(payload["provider_calls_executed"])
         self.assertFalse(payload["execution_allowed"])
         self.assertFalse(payload["side_effects"])
-        self.assertFalse(payload["provider_calls_executed"])
+        self.assertNotIn("test-openai-provider-key", response.get_data(as_text=True))
+
+        self.assertEqual(replay.status_code, 200, replay.get_data(as_text=True))
+        replay_payload = replay.get_json()
+        self.assertTrue(replay_payload["idempotent_replay"])
+        self.assertFalse(replay_payload["provider_calls_executed"])
+        self.assertEqual(replay_payload["provider"], "openai")
+        self.assertEqual(replay_payload["model"], "gpt-4.1-mini")
+        self.assertEqual(replay_payload["text"], long_response)
+        openai_call.assert_called_once_with(long_prompt, "gpt-4.1-mini", "test-openai-provider-key")
+        gemini_call.assert_not_called()
+        claude_call.assert_not_called()
         provider_call.assert_not_called()
         run_task.assert_not_called()
         console_dispatch.assert_not_called()
         cloudflare_request.assert_not_called()
         legacy_save.assert_not_called()
+
+        usage_records = self.app_module.load_external_ai_usage_log_records()
+        result_records = self.app_module.load_external_ai_generation_results()
+        self.assertEqual(len(usage_records), 1)
+        self.assertEqual(len(result_records), 1)
+        usage = usage_records[0]
+        self.assertEqual(usage["status"], "completed")
+        self.assertEqual(usage["source_system"], "external-a")
+        self.assertEqual(usage["provider"], "openai")
+        self.assertEqual(usage["model"], "gpt-4.1-mini")
+        self.assertEqual(usage["capability"], "generate")
+        self.assertTrue(usage["prompt_hash"])
+        self.assertTrue(usage["response_hash"])
+        self.assertNotIn(long_prompt, self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn(long_response, self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn("test-openai-provider-key", self.usage_log_path.read_text(encoding="utf-8"))
+        self.assertNotIn(long_prompt, self.generation_results_path.read_text(encoding="utf-8"))
+        self.assertNotIn("test-openai-provider-key", self.generation_results_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_records[0]["status"], "completed")
+        self.assertEqual(result_records[0]["provider"], "openai")
 
         with self.app.app_context():
             approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
