@@ -31,7 +31,7 @@ This file records the current operational state of DevPilot automation governanc
 - DevPilot-issued external API key: created and handed off separately; value is not stored in this repository.
 - External AI Policy: enabled.
 - Allowed providers: `openai`, `gemini`, `claude`.
-- Allowed models: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, `claude-3-5-haiku-20241022`.
+- Allowed models: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, `claude-haiku-4-5-20251001`.
 - Conservative MVP limits: `max_tokens_per_request=1000`, `daily_request_limit=100`, `daily_token_limit=50000`, `monthly_budget_usd=10.0`.
 - Provider live calls performed during deployment: no.
 - Post-deploy smoke:

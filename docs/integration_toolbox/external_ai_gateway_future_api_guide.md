@@ -88,12 +88,12 @@ Supported text gateway providers and models:
 
 - OpenAI/GPT: `gpt-4.1-mini`, `gpt-4o-mini`
 - Gemini: `gemini-2.5-flash`
-- Claude: `claude-3-5-haiku-20241022`
+- Claude: `claude-haiku-4-5-20251001`
 
 Compatibility aliases:
 
 - `gemini-1.5-flash` is accepted as a legacy request value and resolved inside DevPilot to `gemini-2.5-flash`.
-- `claude-3-5-haiku` is accepted as a legacy request value and resolved inside DevPilot to `claude-3-5-haiku-20241022`.
+- `claude-3-5-haiku` and retired dated value `claude-3-5-haiku-20241022` are accepted as legacy request values and resolved inside DevPilot to `claude-haiku-4-5-20251001`.
 
 Prefer the current model IDs above for new integrations.
 

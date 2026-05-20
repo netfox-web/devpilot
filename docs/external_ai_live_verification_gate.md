@@ -86,7 +86,7 @@ Current boundary:
 Draft request constraints for a future live phase:
 
 - Provider: `claude`
-- Model: lowest-cost approved Claude text model, currently expected `claude-3-5-haiku-20241022` or a later approved replacement
+- Model: lowest-cost approved Claude text model, currently expected `claude-haiku-4-5-20251001` or a later approved replacement
 - Prompt: a harmless fixed prompt such as `Return exactly OK.`
 - Max output: minimal
 - Temperature: low

@@ -9,7 +9,7 @@ The production gateway is intentionally narrow and policy-gated:
 - Providers: OpenAI/GPT, Gemini, and Claude.
 - OpenAI models: `gpt-4.1-mini`, `gpt-4o-mini`.
 - Gemini model: `gemini-2.5-flash`.
-- Claude model: `claude-3-5-haiku-20241022`.
+- Claude model: `claude-haiku-4-5-20251001`.
 - Mode: non-streaming text only.
 - Capabilities: `generate`, `summary`, `rewrite`, `classification`, `extraction`, `planning`, `chat`.
 
@@ -101,7 +101,7 @@ X-DevPilot-Idempotency-Key: {stable-idempotency-key}
 The authenticated `source_system` must have an enabled External AI Policy allowing:
 
 - requested provider: `openai`, `gemini`, or `claude`
-- requested model: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, or `claude-3-5-haiku-20241022`
+- requested model: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, or `claude-haiku-4-5-20251001`
 - requested text capability
 - no streaming
 - no tool calling
@@ -110,7 +110,7 @@ The authenticated `source_system` must have an enabled External AI Policy allowi
 Legacy request aliases are kept for compatibility with existing source policies and external clients:
 
 - `gemini-1.5-flash` resolves to upstream model `gemini-2.5-flash`.
-- `claude-3-5-haiku` resolves to upstream model `claude-3-5-haiku-20241022`.
+- `claude-3-5-haiku` and retired dated value `claude-3-5-haiku-20241022` resolve to upstream model `claude-haiku-4-5-20251001`.
 
 Source policy matching accepts either the legacy request value or the resolved current model ID. This avoids changing external project keys, `source_system`, or the policy structure when only the provider upstream model ID changes.
 

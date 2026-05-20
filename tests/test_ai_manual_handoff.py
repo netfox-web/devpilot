@@ -152,7 +152,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertFalse(providers["gemini"]["live_call_enabled"])
         self.assertFalse(providers["claude"]["live_call_enabled"])
         self.assertEqual(providers["gemini"]["allowed_models"], ["gemini-2.5-flash"])
-        self.assertEqual(providers["claude"]["allowed_models"], ["claude-3-5-haiku-20241022"])
+        self.assertEqual(providers["claude"]["allowed_models"], ["claude-haiku-4-5-20251001"])
         combined = json.dumps(payload, sort_keys=True)
         self.assertNotIn("gemini-test-raw-secret-1234", combined)
         self.assertNotIn("claude-test-raw-secret-5678", combined)
@@ -186,7 +186,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("Claude", page)
         self.assertIn("verified_with_mock", page)
         self.assertIn("gemini-2.5-flash", page)
-        self.assertIn("claude-3-5-haiku-20241022", page)
+        self.assertIn("claude-haiku-4-5-20251001", page)
         self.assertNotIn("gemini-page-raw-secret-1234", page)
         self.assertNotIn("claude-page-raw-secret-5678", page)
         self.assertNotIn("Authorization", page)
@@ -244,7 +244,7 @@ class AiManualHandoffTest(unittest.TestCase):
         providers = {item["id"]: item for item in payload["providers"]}
         self.assertEqual(set(providers), {"gemini", "claude"})
         self.assertEqual(providers["gemini"]["default_model"], "gemini-2.5-flash")
-        self.assertEqual(providers["claude"]["default_model"], "claude-3-5-haiku-20241022")
+        self.assertEqual(providers["claude"]["default_model"], "claude-haiku-4-5-20251001")
         self.assertTrue(providers["gemini"]["mock_verified"])
         self.assertTrue(providers["claude"]["mock_verified"])
         self.assertFalse(providers["gemini"]["live_verified"])
@@ -293,7 +293,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("Gemini", page)
         self.assertIn("Claude", page)
         self.assertIn("gemini-2.5-flash", page)
-        self.assertIn("claude-3-5-haiku-20241022", page)
+        self.assertIn("claude-haiku-4-5-20251001", page)
         self.assertIn("Product owner approval", page)
         self.assertIn("Return exactly OK.", page)
         self.assertNotIn("gemini-live-page-raw-secret-1234", page)
@@ -1565,7 +1565,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("video-review-only", profiles)
         self.assertEqual(profiles["basic-text"]["daily_request_limit"], 1000)
         self.assertEqual(profiles["text-multi-provider"]["allowed_providers"], ["openai", "gemini", "claude"])
-        self.assertEqual(profiles["text-multi-provider"]["allowed_models"], ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022"])
+        self.assertEqual(profiles["text-multi-provider"]["allowed_models"], ["gpt-4.1-mini", "gemini-2.5-flash", "claude-haiku-4-5-20251001"])
         self.assertEqual(profiles["image-basic"]["daily_request_limit"], 300)
         self.assertEqual(profiles["image-pro"]["daily_request_limit"], 1000)
         self.assertEqual(profiles["video-review-only"]["daily_request_limit"], 20)
@@ -1619,7 +1619,7 @@ class AiManualHandoffTest(unittest.TestCase):
         policies = {item["source_system"]: item for item in response.get_json()["policies"]}
         self.assertEqual(policies["profile-b"]["profile_id"], "text-multi-provider")
         self.assertEqual(policies["profile-b"]["allowed_providers"], ["openai", "gemini", "claude"])
-        self.assertEqual(policies["profile-b"]["allowed_models"], ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022"])
+        self.assertEqual(policies["profile-b"]["allowed_models"], ["gpt-4.1-mini", "gemini-2.5-flash", "claude-haiku-4-5-20251001"])
 
         response = self.client().post(
             "/api/admin/external-ai-policies/apply-profile",
@@ -1714,7 +1714,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "enabled": True,
             "enabled_by_default": True,
             "allowed_providers": ["openai", "gemini", "claude", "replicate", "fal"],
-            "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022", "flux-schnell", "fal-flux-pro"],
+            "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-haiku-4-5-20251001", "flux-schnell", "fal-flux-pro"],
             "allowed_capabilities": [
                 "summary",
                 "classification",
@@ -2723,16 +2723,19 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('value="fal"', page_body)
         self.assertIn('value="runway"', page_body)
         self.assertIn('value="kling"', page_body)
-        self.assertIn("Models are selected per provider. Check a provider first to enable its model boxes.", page_body)
+        self.assertIn("Select a provider card, then choose only the models that external projects may call through DevPilot.", page_body)
+        self.assertIn("Active Gateway Models", page_body)
+        self.assertIn("Candidate models, not enabled", page_body)
         self.assertIn('data-model-provider="openai"', page_body)
         self.assertIn('data-model-provider="gemini"', page_body)
         self.assertIn('data-model-provider="claude"', page_body)
         self.assertIn('data-provider-model="openai"', page_body)
         self.assertIn('data-provider-model="gemini"', page_body)
         self.assertIn('value="gpt-4.1-mini"', page_body)
-        self.assertIn('value="gpt-image-1"', page_body)
         self.assertIn('value="gemini-2.5-flash"', page_body)
-        self.assertIn('value="claude-3-5-sonnet"', page_body)
+        self.assertIn('value="claude-haiku-4-5-20251001"', page_body)
+        self.assertIn("OpenAI image candidate: gpt-image-1", page_body)
+        self.assertIn("Claude candidate: claude-sonnet-4-6", page_body)
         self.assertIn('value="flux-schnell"', page_body)
         self.assertIn('value="fal-flux-pro"', page_body)
         self.assertIn("<span class=\"text-muted\">openai:</span> gpt-4.1-mini", page_body)
@@ -2764,7 +2767,7 @@ class AiManualHandoffTest(unittest.TestCase):
             json={
                 "source_system": "multi-policy-source",
                 "allowed_providers": ["openai", "gemini", "claude", "replicate", "fal", "runway", "kling"],
-                "allowed_models": ["gpt-4.1-mini", "gpt-image-1", "gemini-2.5-flash", "claude-3-5-haiku-20241022", "flux-schnell", "fal-flux-pro"],
+                "allowed_models": ["gpt-4.1-mini", "gpt-image-1", "gemini-2.5-flash", "claude-haiku-4-5-20251001", "flux-schnell", "fal-flux-pro"],
                 "allowed_capabilities": [
                     "summary",
                     "classification",
@@ -2789,7 +2792,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(valid.status_code, 201, valid.get_data(as_text=True))
         policy = valid.get_json()["policy"]
         self.assertEqual(policy["allowed_providers"], ["openai", "gemini", "claude", "replicate", "fal", "runway", "kling"])
-        self.assertEqual(policy["allowed_models"], ["gpt-4.1-mini", "gpt-image-1", "gemini-2.5-flash", "claude-3-5-haiku-20241022", "flux-schnell", "fal-flux-pro"])
+        self.assertEqual(policy["allowed_models"], ["gpt-4.1-mini", "gpt-image-1", "gemini-2.5-flash", "claude-haiku-4-5-20251001", "flux-schnell", "fal-flux-pro"])
         self.assertIn("image_generation", policy["allowed_capabilities"])
         self.assertIn("video_generation", policy["allowed_capabilities"])
         self.assertIn("product_image", policy["allowed_capabilities"])
@@ -3142,9 +3145,9 @@ class AiManualHandoffTest(unittest.TestCase):
                 )
         self.assertEqual(claude_response.status_code, 200, claude_response.get_data(as_text=True))
         claude_payload = claude_response.get_json()
-        self.assertEqual(claude_payload["model"], "claude-3-5-haiku-20241022")
+        self.assertEqual(claude_payload["model"], "claude-haiku-4-5-20251001")
         self.assertEqual(claude_payload["requested_model"], "claude-3-5-haiku")
-        claude_call.assert_called_once_with("Confirm legacy Claude alias.", "claude-3-5-haiku-20241022", "test-claude-provider-key")
+        claude_call.assert_called_once_with("Confirm legacy Claude alias.", "claude-haiku-4-5-20251001", "test-claude-provider-key")
 
         self.assertNotIn("test-provider-key", gemini_response.get_data(as_text=True))
         self.assertNotIn("test-claude-provider-key", claude_response.get_data(as_text=True))
@@ -3196,7 +3199,7 @@ class AiManualHandoffTest(unittest.TestCase):
         body = {
             "provider": "claude",
             "capability": "summary",
-            "model": "claude-3-5-haiku-20241022",
+            "model": "claude-haiku-4-5-20251001",
             "prompt": "Summarize this safely.",
             "external_ref": "claude-policy-ticket",
         }
@@ -3221,7 +3224,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     "source_system": "external-a",
                     "enabled": True,
                     "allowed_providers": ["claude"],
-                    "allowed_models": ["claude-3-5-sonnet"],
+                    "allowed_models": ["claude-sonnet-4-6"],
                     "allowed_capabilities": ["summary"],
                 },
                 403,
@@ -3243,7 +3246,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     self.assertEqual(response.status_code, expected_status, response.get_data(as_text=True))
                     payload = response.get_json()
                     self.assertEqual(payload["provider"], "claude")
-                    self.assertEqual(payload["model"], "claude-3-5-haiku-20241022")
+                    self.assertEqual(payload["model"], "claude-haiku-4-5-20251001")
                     self.assertEqual(payload["error"], expected_error)
                     self.assertFalse(payload["provider_calls_executed"])
                     self.assertNotIn("test-claude-key", response.get_data(as_text=True))
@@ -3255,7 +3258,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["claude"],
-            "allowed_models": ["claude-3-5-haiku-20241022"],
+            "allowed_models": ["claude-haiku-4-5-20251001"],
             "allowed_capabilities": ["summary"],
         })
         with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "ANTHROPIC_API_KEY": "", "CLAUDE_API_KEY": ""}, clear=False):
@@ -3278,7 +3281,7 @@ class AiManualHandoffTest(unittest.TestCase):
         body = {
             "provider": "claude",
             "capability": "generate",
-            "model": "claude-3-5-haiku-20241022",
+            "model": "claude-haiku-4-5-20251001",
             "prompt": long_prompt,
             "external_ref": "claude-gateway-ticket",
             "metadata": {"project": "AD-Studio_AI"},
@@ -3288,7 +3291,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["claude"],
-            "allowed_models": ["claude-3-5-haiku-20241022"],
+            "allowed_models": ["claude-haiku-4-5-20251001"],
             "allowed_capabilities": ["generate", "summary", "rewrite", "classification", "extraction", "planning", "chat"],
             "max_tokens_per_request": 1000,
         })
@@ -3313,7 +3316,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["idempotent_replay"])
         self.assertEqual(payload["provider"], "claude")
-        self.assertEqual(payload["model"], "claude-3-5-haiku-20241022")
+        self.assertEqual(payload["model"], "claude-haiku-4-5-20251001")
         self.assertEqual(payload["capability"], "generate")
         self.assertEqual(payload["text"], long_response)
         self.assertEqual(payload["usage"]["total_tokens"], 25)
@@ -3327,9 +3330,9 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(replay_payload["idempotent_replay"])
         self.assertFalse(replay_payload["provider_calls_executed"])
         self.assertEqual(replay_payload["provider"], "claude")
-        self.assertEqual(replay_payload["model"], "claude-3-5-haiku-20241022")
+        self.assertEqual(replay_payload["model"], "claude-haiku-4-5-20251001")
         self.assertEqual(replay_payload["text"], long_response)
-        claude_call.assert_called_once_with(long_prompt, "claude-3-5-haiku-20241022", "test-claude-provider-key")
+        claude_call.assert_called_once_with(long_prompt, "claude-haiku-4-5-20251001", "test-claude-provider-key")
         gemini_call.assert_not_called()
         provider_call.assert_not_called()
         run_task.assert_not_called()
@@ -3345,7 +3348,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(usage["status"], "completed")
         self.assertEqual(usage["source_system"], "external-a")
         self.assertEqual(usage["provider"], "claude")
-        self.assertEqual(usage["model"], "claude-3-5-haiku-20241022")
+        self.assertEqual(usage["model"], "claude-haiku-4-5-20251001")
         self.assertEqual(usage["capability"], "generate")
         self.assertTrue(usage["prompt_hash"])
         self.assertTrue(usage["response_hash"])
@@ -3541,7 +3544,7 @@ class AiManualHandoffTest(unittest.TestCase):
             {
                 "provider": "claude",
                 "db_provider": "anthropic",
-                "model": "claude-3-5-haiku-20241022",
+                "model": "claude-haiku-4-5-20251001",
                 "key": "managed-claude-provider-key",
                 "call_name": "call_claude_external_ai_generate",
             },

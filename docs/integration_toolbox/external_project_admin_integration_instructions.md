@@ -217,7 +217,7 @@ Supported text gateway providers:
 
 - `openai` with `gpt-4.1-mini` or `gpt-4o-mini`
 - `gemini` with `gemini-2.5-flash`
-- `claude` with `claude-3-5-haiku-20241022`
+- `claude` with `claude-haiku-4-5-20251001`
 
 Legacy request values `gemini-1.5-flash` and `claude-3-5-haiku` are accepted for compatibility and resolved inside DevPilot to the current Gemini and Claude upstream model IDs. New integrations should use the current IDs listed above.
 

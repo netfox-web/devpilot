@@ -2548,7 +2548,7 @@ AI_PROVIDER_READINESS_CONFIGS = [
         "name": "Claude",
         "env_vars": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
         "gateway_route": "external_ai_generate_mock_path",
-        "default_model": "claude-3-5-haiku-20241022",
+        "default_model": "claude-haiku-4-5-20251001",
         "readiness": "verified_with_mock",
         "mock_verified": True,
         "live_verified": False,
@@ -2772,7 +2772,7 @@ def external_ai_live_verification_gate_context():
         {
             "id": "claude",
             "name": "Claude",
-            "default_model": "claude-3-5-haiku-20241022",
+            "default_model": "claude-haiku-4-5-20251001",
             "one_call_plan_ready": False,
             "route": "external_ai_generate_mock_path",
             "notes": [
@@ -3356,7 +3356,7 @@ EXTERNAL_AI_PROVIDER_OPTIONS = ["openai", "gemini", "claude", "replicate", "fal"
 EXTERNAL_AI_MODEL_OPTIONS = {
     "openai": ["gpt-4.1-mini", "gpt-4o-mini", "o4-mini", "gpt-image-1"],
     "gemini": ["gemini-2.5-flash", "gemini-1.5-pro"],
-    "claude": ["claude-3-5-haiku-20241022", "claude-3-5-sonnet"],
+    "claude": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
     "replicate": ["flux-schnell", "flux-pro"],
     "fal": ["fal-flux-schnell", "fal-flux-pro"],
     "runway": [],
@@ -3374,14 +3374,15 @@ EXTERNAL_AI_GENERATE_MVP_MODEL = "gemini-2.5-flash"
 EXTERNAL_AI_GENERATE_PROVIDER_MODELS = {
     "openai": ["gpt-4.1-mini", "gpt-4o-mini"],
     "gemini": ["gemini-2.5-flash"],
-    "claude": ["claude-3-5-haiku-20241022"],
+    "claude": ["claude-haiku-4-5-20251001"],
 }
 EXTERNAL_AI_GENERATE_MODEL_ALIASES = {
     "gemini": {
         "gemini-1.5-flash": "gemini-2.5-flash",
     },
     "claude": {
-        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+        "claude-3-5-haiku": "claude-haiku-4-5-20251001",
+        "claude-3-5-haiku-20241022": "claude-haiku-4-5-20251001",
     },
 }
 EXTERNAL_AI_GENERATE_MVP_CAPABILITIES = set(EXTERNAL_AI_CAPABILITY_GROUPS["Text"])
@@ -3413,7 +3414,7 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
         "description": "Text work across approved small models from OpenAI, Gemini, and Claude.",
         "enabled": True,
         "allowed_providers": ["openai", "gemini", "claude"],
-        "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022"],
+        "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-haiku-4-5-20251001"],
         "allowed_capabilities": ["summary", "classification", "rewrite", "extraction", "planning"],
         "max_tokens_per_request": 2000,
         "daily_request_limit": 1000,
@@ -3489,7 +3490,7 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
         "description": "Disabled-by-default internal/testing draft profile.",
         "enabled": False,
         "allowed_providers": ["openai", "gemini", "claude"],
-        "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022"],
+        "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-haiku-4-5-20251001"],
         "allowed_capabilities": ["summary", "rewrite", "planning", "chat", "generate"],
         "max_tokens_per_request": 2000,
         "daily_request_limit": 100,
@@ -15363,7 +15364,7 @@ def call_claude_generate_product_script(product_name, features, target, style):
     )
     body = json.dumps(
         {
-            "model": os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest"),
+            "model": os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
             "max_tokens": 300,
             "messages": [{"role": "user", "content": prompt}],
         },
@@ -15426,7 +15427,7 @@ def call_claude_generate_product_post(product_name, features, target, style, scr
     )
     body = json.dumps(
         {
-            "model": os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest"),
+            "model": os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
             "max_tokens": 500,
             "messages": [{"role": "user", "content": prompt}],
         },

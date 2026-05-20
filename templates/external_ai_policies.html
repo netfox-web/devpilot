@@ -28,16 +28,30 @@
   {% if not rendered.any %}-{% endif %}
 {%- endmacro %}
 
+{% macro provider_label(provider) -%}
+  {%- if provider == "openai" -%}OpenAI
+  {%- elif provider == "gemini" -%}Gemini
+  {%- elif provider == "claude" -%}Claude
+  {%- else -%}{{ provider }}
+  {%- endif -%}
+{%- endmacro %}
+
 {% macro render_model_group(provider, models, selected_providers=[], selected_models=[]) -%}
-  <div class="border rounded p-2 mb-2 external-ai-model-group {% if provider not in selected_providers %}opacity-50{% endif %}" data-model-provider="{{ provider }}">
-    <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
-      <div class="fw-semibold small">{{ provider }}</div>
-      <span class="badge text-bg-light border" data-provider-count="{{ provider }}">0/{{ models|length }}</span>
+  <div class="border rounded p-3 mb-2 external-ai-model-group {% if provider not in selected_providers %}opacity-50{% endif %}" data-model-provider="{{ provider }}">
+    <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+      <label class="form-check d-flex gap-2 align-items-start m-0">
+        <input class="form-check-input mt-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}" {% if provider in selected_providers %}checked{% endif %}>
+        <span>
+          <span class="fw-semibold">{{ provider_label(provider) }}</span>
+          <span class="d-block small text-muted">{{ provider }}</span>
+        </span>
+      </label>
+      <span class="badge text-bg-light border text-nowrap" data-provider-count="{{ provider }}">0/{{ models|length }}</span>
     </div>
     {% if models %}
-      <div class="d-flex flex-wrap gap-2">
+      <div class="d-grid gap-2">
         {% for model in models %}
-          <label class="form-check border rounded px-2 py-1">
+          <label class="form-check border rounded px-2 py-2 mb-0">
             <input class="form-check-input me-1" type="checkbox" name="allowed_models" value="{{ model }}" data-provider-model="{{ provider }}" {% if model in selected_models %}checked{% endif %} {% if provider not in selected_providers %}disabled{% endif %}>
             <span class="form-check-label">{{ model }}</span>
           </label>
@@ -51,13 +65,32 @@
 
 {% macro render_model_selector(model_choices, selected_providers=[], selected_models=[]) -%}
   {% set gateway_mvp_providers = ["openai", "gemini", "claude"] %}
-  <div class="text-muted small mb-2">Models are selected per provider. Check a provider first to enable its model boxes. The External AI Generate MVP currently uses OpenAI, Gemini, and Claude text models.</div>
-  <div class="fw-semibold small mb-2">Gateway MVP Providers</div>
-  {% for provider, models in model_choices.items() %}
-    {% if provider in gateway_mvp_providers %}
-      {{ render_model_group(provider, models, selected_providers, selected_models) }}
-    {% endif %}
+  {% set gateway_mvp_models = {
+    "openai": ["gpt-4.1-mini", "gpt-4o-mini"],
+    "gemini": ["gemini-2.5-flash"],
+    "claude": ["claude-haiku-4-5-20251001"],
+  } %}
+  <div class="alert alert-primary small mb-2">
+    Select a provider card, then choose only the models that external projects may call through DevPilot.
+    The active External AI Generate Gateway uses the OpenAI, Gemini, and Claude text models below.
+  </div>
+  <div class="fw-semibold small mb-2">Active Gateway Models</div>
+  {% for provider, models in gateway_mvp_models.items() %}
+    {{ render_model_group(provider, models, selected_providers, selected_models) }}
   {% endfor %}
+
+  <div class="border rounded bg-light p-2 my-2">
+    <div class="fw-semibold small mb-1">Candidate models, not enabled</div>
+    <div class="small text-muted mb-2">Planning only. These require separate approval, adapter verification, policy update, deployment, and one-provider-at-a-time live smoke before becoming selectable.</div>
+    <div class="d-flex flex-wrap gap-2">
+      <span class="badge text-bg-secondary">OpenAI candidate: gpt-5.2</span>
+      <span class="badge text-bg-secondary">OpenAI candidate: gpt-5.1</span>
+      <span class="badge text-bg-secondary">OpenAI candidate: gpt-5</span>
+      <span class="badge text-bg-secondary">OpenAI candidate: o4-mini</span>
+      <span class="badge text-bg-secondary">OpenAI image candidate: gpt-image-1</span>
+      <span class="badge text-bg-secondary">Claude candidate: claude-sonnet-4-6</span>
+    </div>
+  </div>
 
   <details class="mt-2">
     <summary class="small fw-semibold text-muted">Advanced / Future Providers</summary>
@@ -180,10 +213,10 @@
           <div class="border rounded bg-light p-2 mb-3">
             <div class="fw-semibold small mb-2">Gateway MVP quick presets</div>
             <div class="d-flex flex-wrap gap-2">
-              <button class="btn btn-sm btn-outline-primary" type="button" data-policy-preset data-providers="openai,gemini,claude" data-models="gpt-4.1-mini,gpt-4o-mini,gemini-2.5-flash,claude-3-5-haiku-20241022" data-capabilities="summary,generate">GPT/Gemini/Claude all</button>
+              <button class="btn btn-sm btn-outline-primary" type="button" data-policy-preset data-providers="openai,gemini,claude" data-models="gpt-4.1-mini,gpt-4o-mini,gemini-2.5-flash,claude-haiku-4-5-20251001" data-capabilities="summary,generate">GPT/Gemini/Claude all</button>
               <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="openai" data-models="gpt-4.1-mini,gpt-4o-mini" data-capabilities="summary,generate">OpenAI only</button>
               <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="gemini" data-models="gemini-2.5-flash" data-capabilities="summary,generate">Gemini only</button>
-              <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="claude" data-models="claude-3-5-haiku-20241022" data-capabilities="summary,generate">Claude only</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="claude" data-models="claude-haiku-4-5-20251001" data-capabilities="summary,generate">Claude only</button>
               <button class="btn btn-sm btn-outline-danger" type="button" data-policy-clear>Clear selection</button>
             </div>
             <div class="form-text">Presets select current gateway text models and keep streaming/tool calling off for MVP compatibility.</div>
@@ -213,33 +246,7 @@
           <label class="form-label">Label</label>
           <input class="form-control mb-2" name="label" placeholder="CRM summary policy" autocomplete="off">
 
-          <div class="form-label">Gateway MVP Providers</div>
-          <div class="d-flex flex-wrap gap-2 mb-2">
-            {% for provider in provider_choices %}
-              {% if provider in ["openai", "gemini", "claude"] %}
-                <label class="form-check border rounded px-2 py-1">
-                  <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}">
-                  <span class="form-check-label">{{ provider }}</span>
-                </label>
-              {% endif %}
-            {% endfor %}
-          </div>
-          <details class="mb-3">
-            <summary class="small fw-semibold text-muted">Advanced / Future Providers</summary>
-            <div class="alert alert-warning small my-2">These providers are separated because they are not part of the current External AI Generate MVP.</div>
-            <div class="d-flex flex-wrap gap-2">
-              {% for provider in provider_choices %}
-                {% if provider not in ["openai", "gemini", "claude"] %}
-                  <label class="form-check border rounded px-2 py-1">
-                    <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}">
-                    <span class="form-check-label">{{ provider }}</span>
-                  </label>
-                {% endif %}
-              {% endfor %}
-            </div>
-          </details>
-
-          <label class="form-label">Allowed models</label>
+          <label class="form-label">Providers and models</label>
           {{ render_model_selector(model_choices) }}
 
           <div class="form-label">Allowed capabilities</div>
