@@ -3,6 +3,13 @@
 Date: 2026-05-20
 Status: active governance guidance, docs-only
 
+## Related Automation Docs
+
+- `docs/automation_task_ledger.md` records completed automation tasks and final states.
+- `docs/automation_state_index.md` records the current automation operating state.
+- `docs/automation_operating_runbook.md` describes the operator/Codex workflow.
+- `docs/automation_maturity_scorecard.md` tracks progress toward safe 90%+ automation.
+
 ## Purpose
 
 This document defines safe automation rules for DevPilot tasks so docs-only updates, read-only verification, runtime changes, deploys, rollback, and production recovery are handled consistently.

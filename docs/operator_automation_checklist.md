@@ -5,6 +5,13 @@ Status: operator checklist, docs-only
 
 Use this checklist before sending a DevPilot task to Codex. Classify the task with `docs/automation_decision_gates.md` first.
 
+## Related Automation Docs
+
+- `docs/automation_task_ledger.md` records completed automation tasks and final states.
+- `docs/automation_state_index.md` records the current automation operating state.
+- `docs/automation_operating_runbook.md` describes the operator/Codex workflow.
+- `docs/automation_maturity_scorecard.md` tracks progress toward safe 90%+ automation.
+
 ## Pre-task Questions
 
 - Is this docs-only?
