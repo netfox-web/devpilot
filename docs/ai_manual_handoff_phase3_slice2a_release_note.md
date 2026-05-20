@@ -19,6 +19,37 @@ This note records production deployment and verification for AI-to-AI Manual Han
 - Logs had no verification tracebacks.
 - Non-blocking observation: log tail contained one existing/non-test line, `[ai-fleet-console] sync failed: database is locked`; track separately.
 
+## AI Handoffs Production Route Verification
+
+Status: passed
+
+Active production route:
+
+- `/ai-handoffs`
+
+Legacy / non-active route:
+
+- `/admin/devpilot-handoffs`
+
+Verification result:
+
+- `/ai-handoffs` is the active AI Handoffs production route.
+- Unauthenticated access redirects to login.
+- Authenticated access should show the AI Handoffs page.
+- `/admin/devpilot-handoffs` is not an active production route.
+- A `404` from `/admin/devpilot-handoffs` is acceptable and is not considered a production recovery failure.
+- Production smoke tests must use `/ai-handoffs` as the active route.
+
+Deployment action required: no
+
+Rollback required: no
+
+Follow-up candidate task:
+
+- Add a compatibility redirect from `/admin/devpilot-handoffs` to `/ai-handoffs`.
+
+Note: the redirect is a runtime code change and requires separate approval, testing, and deployment.
+
 ## Verified Filters
 
 | Route | Check | Result |

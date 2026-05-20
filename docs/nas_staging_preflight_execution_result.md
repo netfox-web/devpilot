@@ -453,6 +453,46 @@ HTTP and route checks:
 | filtered log tail | pass | no visible errors |
 | app runtime | pass | running on `0.0.0.0` and `127.0.0.1:5000` |
 
+## AI Handoffs Production Route Verification
+
+Status: passed
+
+Active production route:
+
+- `/ai-handoffs`
+
+Legacy / non-active route:
+
+- `/admin/devpilot-handoffs`
+
+Verification result:
+
+- `/ai-handoffs` is the active AI Handoffs production route.
+- Unauthenticated access redirects to login.
+- Authenticated access should show the AI Handoffs page.
+- `/admin/devpilot-handoffs` is not an active production route.
+- A `404` from `/admin/devpilot-handoffs` is acceptable and is not considered a production recovery failure.
+- Production smoke tests must use `/ai-handoffs` as the active route.
+
+Deployment action required: no
+
+Rollback required: no
+
+Suggested smoke test commands:
+
+```powershell
+$base = 'https://devpilot.aicenter.com.tw'
+
+curl.exe -k -I --max-time 15 "$base/ai-handoffs"
+curl.exe -k -I --max-time 15 "$base/admin/devpilot-handoffs"
+```
+
+Follow-up candidate task:
+
+- Add a compatibility redirect from `/admin/devpilot-handoffs` to `/ai-handoffs`.
+
+Note: the redirect is a runtime code change and requires separate approval, testing, and deployment.
+
 Safety confirmation:
 
 - `.env` content printed:
