@@ -2484,19 +2484,19 @@ AI_PROVIDER_CONFIGS = [
         "id": "openai",
         "name": "OpenAI",
         "env_vars": ["OPENAI_API_KEY"],
-        "notes": "Env-based OpenAI key inspection only; no provider call is made.",
+        "notes": "OpenAI env fallback inspection only; no provider call is made.",
     },
     {
         "id": "gemini",
         "name": "Gemini",
         "env_vars": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-        "notes": "Env-based Gemini/Google key inspection only; no provider call is made.",
+        "notes": "Gemini/Google env fallback inspection only; no provider call is made.",
     },
     {
         "id": "claude",
         "name": "Claude",
         "env_vars": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
-        "notes": "Env-based Claude/Anthropic key inspection only; no provider call is made.",
+        "notes": "Claude/Anthropic env fallback inspection only; no provider call is made.",
     },
 ]
 
@@ -2591,17 +2591,26 @@ def ai_provider_config_status():
                 matched_var = env_var
                 matched_value = value
                 break
-        configured = bool(matched_value)
+        managed_key = get_active_ai_console_key(config["id"])
+        managed_configured = bool(managed_key.get("ok"))
+        configured = managed_configured or bool(matched_value)
+        source = "managed" if managed_configured else ("env" if matched_value else "")
+        key_prefix = managed_key.get("masked") if managed_configured else safe_secret_prefix(matched_value)
+        notes = (
+            "Managed encrypted AI key is configured; no provider call is made."
+            if managed_configured
+            else (config["notes"] if matched_value else "No recognized managed key or environment variable is configured.")
+        )
         providers.append({
             "id": config["id"],
             "name": config["name"],
             "configured": configured,
             "enabled": configured,
-            "key_prefix": safe_secret_prefix(matched_value),
-            "source": "env" if configured else "",
+            "key_prefix": key_prefix,
+            "source": source,
             "env_var": matched_var,
             "checked_env_vars": list(config["env_vars"]),
-            "notes": config["notes"] if configured else "No recognized environment variable is configured.",
+            "notes": notes,
         })
     return providers
 
@@ -4298,15 +4307,22 @@ def external_ai_text_summary(value, limit=120):
 
 
 def external_ai_gemini_api_key():
-    return os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
+    return managed_ai_provider_key("gemini") or os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
 
 
 def external_ai_openai_api_key():
-    return os.getenv("OPENAI_API_KEY", "").strip()
+    return managed_ai_provider_key("openai") or os.getenv("OPENAI_API_KEY", "").strip()
 
 
 def external_ai_claude_api_key():
-    return os.getenv("ANTHROPIC_API_KEY", "").strip() or os.getenv("CLAUDE_API_KEY", "").strip()
+    return managed_ai_provider_key("claude") or os.getenv("ANTHROPIC_API_KEY", "").strip() or os.getenv("CLAUDE_API_KEY", "").strip()
+
+
+def managed_ai_provider_key(provider):
+    managed_key = get_active_ai_console_key(provider)
+    if managed_key.get("ok"):
+        return str(managed_key.get("key") or "").strip()
+    return ""
 
 
 def external_ai_generate_default_model(provider):

@@ -78,7 +78,7 @@ Default state should be `not_configured` or `configured_not_verified`.
 
 Credential visibility:
 
-- Runtime inspection recognizes `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
+- Gateway credential lookup recognizes the DevPilot managed `google` AI key first, then `GEMINI_API_KEY` or `GOOGLE_API_KEY` as runtime env fallbacks.
 - Admin UI shows only masked key metadata.
 - Raw key value is not printed in UI, logs, API responses, exports, or test output.
 - Missing key state is handled without app errors.
@@ -107,7 +107,7 @@ Enablement gate:
 
 Credential visibility:
 
-- Runtime inspection recognizes `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`.
+- Gateway credential lookup recognizes the DevPilot managed `anthropic` AI key first, then `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY` as runtime env fallbacks.
 - Admin UI shows only masked key metadata.
 - Raw key value is not printed in UI, logs, API responses, exports, or test output.
 - Missing key state is handled without app errors.

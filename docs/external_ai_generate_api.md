@@ -120,16 +120,18 @@ If no policy is enabled, DevPilot returns:
 
 If `provider` is omitted, DevPilot defaults to Gemini for compatibility with the original MVP.
 
-DevPilot reads the Gemini provider key from:
+DevPilot resolves provider keys server-side. It first checks DevPilot managed encrypted AI keys from the admin key store, then falls back to runtime environment variables for deployment compatibility.
+
+DevPilot reads the Gemini provider key from the managed `google` AI key, or from:
 
 - `GEMINI_API_KEY`
 - `GOOGLE_API_KEY`
 
-DevPilot reads the OpenAI provider key from:
+DevPilot reads the OpenAI provider key from the managed `openai` AI key, or from:
 
 - `OPENAI_API_KEY`
 
-DevPilot recognizes Claude provider keys from:
+DevPilot recognizes Claude provider keys from the managed `anthropic` AI key, or from:
 
 - `ANTHROPIC_API_KEY`
 - `CLAUDE_API_KEY`

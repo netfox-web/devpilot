@@ -53,12 +53,12 @@ Path:
 Purpose:
 
 - Shows whether provider credentials appear configured.
-- Checks common env vars only.
+- Checks DevPilot managed encrypted AI keys first, then common env vars.
 - Shows safe prefix only.
 - Does not print full keys.
 - Does not call OpenAI, Gemini, Claude, or any provider.
 - Does not validate provider keys over the network.
-- Does not store provider keys.
+- Does not create, reveal, or modify provider keys.
 
 Checked env vars:
 
@@ -67,6 +67,14 @@ Checked env vars:
 | OpenAI | `OPENAI_API_KEY` |
 | Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
 | Claude | `ANTHROPIC_API_KEY`, `CLAUDE_API_KEY` |
+
+Managed key mapping:
+
+| Provider | Managed AI key provider |
+| --- | --- |
+| OpenAI | `openai` |
+| Gemini | `google` |
+| Claude | `anthropic` |
 
 ### Source AI Policy Manager
 

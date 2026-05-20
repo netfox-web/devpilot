@@ -97,6 +97,7 @@ class AiManualHandoffTest(unittest.TestCase):
 
     def tearDown(self):
         with self.app.app_context():
+            self.cleanup_managed_ai_provider_keys()
             self.app_module.execute("DELETE FROM handoff_logs WHERE project_id=?", (self.project_id,))
             self.app_module.execute("DELETE FROM tasks WHERE project_id=?", (self.project_id,))
             self.app_module.execute("DELETE FROM project_phases WHERE project_id=?", (self.project_id,))
@@ -569,6 +570,29 @@ class AiManualHandoffTest(unittest.TestCase):
         if idempotency_key:
             headers["X-DevPilot-Idempotency-Key"] = idempotency_key
         return headers
+
+    def create_managed_ai_provider_key(self, provider, key_value):
+        with self.app.app_context():
+            return self.app_module.create_api_key_record({
+                "name": f"{self.marker}-{provider}",
+                "category": "ai",
+                "provider": provider,
+                "environment": "staging",
+                "status": "active",
+                "key_value": key_value,
+                "source": "test",
+                "notes": self.marker,
+                "ai_allowed": True,
+            })
+
+    def cleanup_managed_ai_provider_keys(self):
+        with self.app.app_context():
+            rows = self.app_module.query_all("SELECT id FROM api_keys WHERE notes=?", (self.marker,))
+            for row in rows:
+                key_id = row["id"]
+                self.app_module.execute("DELETE FROM api_key_audit_logs WHERE api_key_id=?", (key_id,))
+                self.app_module.execute("DELETE FROM api_key_versions WHERE api_key_id=?", (key_id,))
+                self.app_module.execute("DELETE FROM api_keys WHERE id=?", (key_id,))
 
     def handoff_payload(self, risk_level="low", **overrides):
         payload = {
@@ -3393,6 +3417,93 @@ class AiManualHandoffTest(unittest.TestCase):
         with self.app.app_context():
             approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
         self.assertEqual(approval_count_after, approval_count_before)
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_generate_uses_managed_provider_keys_without_runtime_env(self):
+        before = self.state_snapshot()
+        cases = [
+            {
+                "provider": "openai",
+                "db_provider": "openai",
+                "model": "gpt-4.1-mini",
+                "key": "managed-openai-provider-key",
+                "call_name": "call_openai_external_ai_generate",
+            },
+            {
+                "provider": "gemini",
+                "db_provider": "google",
+                "model": "gemini-1.5-flash",
+                "key": "managed-gemini-provider-key",
+                "call_name": "call_gemini_generate",
+            },
+            {
+                "provider": "claude",
+                "db_provider": "anthropic",
+                "model": "claude-3-5-haiku",
+                "key": "managed-claude-provider-key",
+                "call_name": "call_claude_external_ai_generate",
+            },
+        ]
+        empty_provider_env = {
+            "OPENAI_API_KEY": "",
+            "GEMINI_API_KEY": "",
+            "GOOGLE_API_KEY": "",
+            "ANTHROPIC_API_KEY": "",
+            "CLAUDE_API_KEY": "",
+        }
+
+        try:
+            for item in cases:
+                self.cleanup_managed_ai_provider_keys()
+                self.policy_store_path.write_text('{"policies": []}', encoding="utf-8")
+                self.generation_results_path.write_text('{"results": []}', encoding="utf-8")
+                self.usage_log_path.write_text('{"records": []}', encoding="utf-8")
+                self.create_managed_ai_provider_key(item["db_provider"], item["key"])
+                self.app_module.create_external_ai_policy({
+                    "source_system": "external-a",
+                    "enabled": True,
+                    "allowed_providers": [item["provider"]],
+                    "allowed_models": [item["model"]],
+                    "allowed_capabilities": ["generate"],
+                    "max_tokens_per_request": 1000,
+                })
+                prompt = f"Managed key gateway smoke for {item['provider']}."
+                body = {
+                    "provider": item["provider"],
+                    "capability": "generate",
+                    "model": item["model"],
+                    "prompt": prompt,
+                }
+                provider_result = {
+                    "ok": True,
+                    "text": f"{item['provider']} managed key response",
+                    "usage": {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7},
+                }
+                with patch.dict(self.app_module.os.environ, {**self.external_api_env(), **empty_provider_env}, clear=False):
+                    with patch.object(self.app_module, item["call_name"], return_value=provider_result) as provider_call:
+                        response = self.client().post(
+                            "/api/external/ai/generate",
+                            json=body,
+                            headers=self.external_headers(
+                                request_id=f"managed-{item['provider']}",
+                                idempotency_key=f"managed-{item['provider']}",
+                            ),
+                        )
+
+                self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+                payload = response.get_json()
+                self.assertTrue(payload["ok"])
+                self.assertEqual(payload["provider"], item["provider"])
+                self.assertEqual(payload["model"], item["model"])
+                provider_call.assert_called_once_with(prompt, item["model"], item["key"])
+                combined = response.get_data(as_text=True)
+                self.assertNotIn(item["key"], combined)
+                self.assertNotIn("OPENAI_API_KEY", combined)
+                self.assertNotIn("GEMINI_API_KEY", combined)
+                self.assertNotIn("ANTHROPIC_API_KEY", combined)
+        finally:
+            self.cleanup_managed_ai_provider_keys()
+
         self.assertEqual(self.state_snapshot(), before)
 
     def test_external_ai_usage_api_is_source_isolated_filtered_and_summarized(self):
