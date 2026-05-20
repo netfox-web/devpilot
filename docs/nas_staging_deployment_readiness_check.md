@@ -903,6 +903,10 @@ Follow-up candidate task:
 
 Note: the redirect is a runtime code change and requires separate approval, testing, and deployment.
 
+Automation decision gates:
+
+- For future DevPilot / AI Handoffs / NAS staging tasks, use `docs/automation_decision_gates.md` to classify whether the task is docs-only, read-only verification, runtime code change, deploy/rollback, provider live call, or secrets/.env related before execution.
+
 Production recovery safety confirmation:
 
 - `.env` content printed:
