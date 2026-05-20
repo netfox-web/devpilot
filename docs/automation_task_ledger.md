@@ -232,6 +232,68 @@ Task classes are defined in `docs/automation_decision_gates.md`.
   - `scp` is unavailable on the NAS target, so the deployment used an SSH binary stdin pipe for the archive transfer.
   - The gateway has no dry-run provider validation mode; valid-key generation calls must not be used as smoke tests without separate live-provider approval.
 
+### External AI Policies UI NAS Production Deployment
+
+- Date/time: 2026-05-20 22:35-22:40 CST.
+- Task class: Class D - Deploy / restart / Docker / NAS / staging operation.
+- Operator intent: deploy the UI-only External AI Policies model-selection optimization to the confirmed DevPilot production target.
+- Commit deployed: `d4058a2 feat: improve external AI policy model selection UI`.
+- Deployment record commit: pending until docs commit.
+- Files changed:
+  - `templates/external_ai_policies.html`
+- Commands run:
+  - `git status -sb`
+  - `git log --oneline -8`
+  - `git rev-parse --short HEAD`
+  - `git show --stat --oneline d4058a2`
+  - `git show --name-only --oneline d4058a2`
+  - `python -m py_compile app.py`
+  - `.\.venv\Scripts\python.exe -m pytest -q tests/test_ai_manual_handoff.py`
+  - `.\.venv\Scripts\python.exe -m pytest -q tests/test_product_domains.py tests/test_automation_plans.py`
+  - `git diff --check`
+  - `git archive --format=tar` from HEAD
+  - `Get-FileHash` SHA-256 verification
+  - NAS source backup to `backups/source-sync-20260520-223533/source-before-sync.tar.gz`
+  - SSH binary stdin pipe to `/tmp/production-source-sync-d4058a2.tar`
+  - NAS `sha256sum /tmp/production-source-sync-d4058a2.tar`
+  - NAS `tar -xf /tmp/production-source-sync-d4058a2.tar -C /volume1/docker/devpilot`
+  - NAS `/usr/local/bin/docker compose config`
+  - NAS `/usr/local/bin/docker compose build --pull=false`
+  - NAS `/usr/local/bin/docker compose up -d --remove-orphans`
+  - unauthenticated `curl` smoke checks for `/ai-handoffs`, `/admin/external-ai-policies`, and `/api/external/ai/generate`
+- Verification:
+  - Local archive SHA-256: `96d66af57d790571d5179c9cc5b68b26f2022b265725dbdaab8f85bee70537af`.
+  - NAS archive SHA-256 matched.
+  - Production backup created at `/volume1/docker/devpilot/backups/source-sync-20260520-223533/source-before-sync.tar.gz` with size `50M`.
+  - DevPilot production container `devpilot-project-manager` rebuilt and recreated.
+  - Production port remained `5010->5000`.
+  - `/ai-handoffs` returned `302` to login while unauthenticated.
+  - `/admin/external-ai-policies` returned `302` to login while unauthenticated.
+  - `/api/external/ai/generate` returned `405 Method Not Allowed` for HEAD, confirming the route remains present and POST-only.
+  - Safe log checks found no visible `error`, `traceback`, or `importerror` lines after deploy.
+- UI changes deployed:
+  - Gateway MVP quick presets.
+  - OpenAI/Gemini/Claude main provider grouping.
+  - Advanced / Future Providers section for non-MVP providers.
+  - Provider model counts and disabled/muted model groups.
+  - Live selected policy summary.
+  - Client-side policy table filter.
+- Safety confirmation:
+  - no provider dispatcher logic changed.
+  - no provider allowlist behavior changed.
+  - no DB schema changed.
+  - no External AI Policy data changed.
+  - no `.env` contents printed or changed.
+  - no provider live call.
+  - no staging / `5012` mutation.
+  - no Nginx / DNS / Cloudflare / SSL changes.
+  - no rollback.
+- Push status: pending until docs deployment record is committed and pushed.
+- Final git status: pending until push.
+- Follow-up candidates:
+  - Manual authenticated browser check for the new External AI Policies controls.
+  - Separate approval to fix or replace policies that still have `allow_streaming` or `allow_tool_calling` enabled for the External AI Generate MVP.
+
 ## New Entry Template
 
 ```markdown

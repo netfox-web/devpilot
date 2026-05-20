@@ -13,6 +13,7 @@ This file records the current operational state of DevPilot automation governanc
 - Latest automation governance commit: `206ca75 docs: add automation decision gates`.
 - Latest route verification commit: `3d814d0 docs: record AI Handoffs production route verification`.
 - Latest External AI Gateway deployment: `fbf058b feat: enable external AI gateway providers` deployed to NAS production on 2026-05-20.
+- Latest External AI Policies UI deployment: `d4058a2 feat: improve external AI policy model selection UI` deployed to NAS production on 2026-05-20.
 - Current automation maturity estimate: 80-85%.
 - Target next maturity band: 85-90%.
 - Production route verification: passed.
@@ -37,6 +38,23 @@ This file records the current operational state of DevPilot automation governanc
   - `/ai-handoffs`: `302` to login while unauthenticated.
   - `/api/external/ai/generate`: `405` for HEAD, route present and POST-only.
   - unauthenticated POST to `/api/external/ai/generate`: `403`, route rejects missing DevPilot external auth.
+
+## External AI Policies UI State
+
+- Route: `/admin/external-ai-policies`.
+- Latest deployed UI commit: `d4058a2 feat: improve external AI policy model selection UI`.
+- Deployment status: completed.
+- UI-only changes:
+  - Gateway MVP quick presets.
+  - OpenAI/Gemini/Claude main provider grouping.
+  - Advanced / Future Providers section for non-MVP providers.
+  - Provider model counts and disabled/muted model groups.
+  - Live selected summary.
+  - Client-side policy table filter.
+- Post-deploy smoke:
+  - `/admin/external-ai-policies`: `302` to login while unauthenticated.
+- Provider live calls performed during UI deployment: no.
+- Policy data changed during UI deployment: no.
 
 ## Active Route Decisions
 
