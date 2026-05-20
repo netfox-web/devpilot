@@ -16,25 +16,48 @@
   {% if not rendered.any %}-{% endif %}
 {%- endmacro %}
 
-{% macro render_model_selector(model_choices, selected_providers=[], selected_models=[]) -%}
-  <div class="text-muted small mb-2">Models are selected per provider. Selecting a provider does not automatically allow all models.</div>
-  {% for provider, models in model_choices.items() %}
-    <div class="border rounded p-2 mb-2 external-ai-model-group {% if provider not in selected_providers %}opacity-50{% endif %}" data-model-provider="{{ provider }}">
-      <div class="fw-semibold small mb-1">{{ provider }}</div>
-      {% if models %}
-        <div class="d-flex flex-wrap gap-2">
-          {% for model in models %}
-            <label class="form-check border rounded px-2 py-1">
-              <input class="form-check-input me-1" type="checkbox" name="allowed_models" value="{{ model }}" data-provider-model="{{ provider }}" {% if model in selected_models %}checked{% endif %} {% if provider not in selected_providers %}disabled{% endif %}>
-              <span class="form-check-label">{{ model }}</span>
-            </label>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="text-muted small">No controlled models are available for this provider yet.</div>
-      {% endif %}
+{% macro render_model_group(provider, models, selected_providers=[], selected_models=[]) -%}
+  <div class="border rounded p-2 mb-2 external-ai-model-group {% if provider not in selected_providers %}opacity-50{% endif %}" data-model-provider="{{ provider }}">
+    <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+      <div class="fw-semibold small">{{ provider }}</div>
+      <span class="badge text-bg-light border" data-provider-count="{{ provider }}">0/{{ models|length }}</span>
     </div>
+    {% if models %}
+      <div class="d-flex flex-wrap gap-2">
+        {% for model in models %}
+          <label class="form-check border rounded px-2 py-1">
+            <input class="form-check-input me-1" type="checkbox" name="allowed_models" value="{{ model }}" data-provider-model="{{ provider }}" {% if model in selected_models %}checked{% endif %} {% if provider not in selected_providers %}disabled{% endif %}>
+            <span class="form-check-label">{{ model }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-muted small">No controlled models are available for this provider yet.</div>
+    {% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro render_model_selector(model_choices, selected_providers=[], selected_models=[]) -%}
+  {% set gateway_mvp_providers = ["openai", "gemini", "claude"] %}
+  <div class="text-muted small mb-2">Models are selected per provider. Selecting a provider does not automatically allow all models. The External AI Generate MVP currently uses OpenAI, Gemini, and Claude text models.</div>
+  <div class="fw-semibold small mb-2">Gateway MVP Providers</div>
+  {% for provider, models in model_choices.items() %}
+    {% if provider in gateway_mvp_providers %}
+      {{ render_model_group(provider, models, selected_providers, selected_models) }}
+    {% endif %}
   {% endfor %}
+
+  <details class="mt-2">
+    <summary class="small fw-semibold text-muted">Advanced / Future Providers</summary>
+    <div class="alert alert-warning small my-2">
+      These providers are available for broader governance records, but they are not part of the current External AI Generate MVP.
+    </div>
+    {% for provider, models in model_choices.items() %}
+      {% if provider not in gateway_mvp_providers %}
+        {{ render_model_group(provider, models, selected_providers, selected_models) }}
+      {% endif %}
+    {% endfor %}
+  </details>
 {%- endmacro %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -141,7 +164,28 @@
         <div class="alert alert-secondary small">
           Providers are AI platforms. Models are provider-specific model IDs. Capabilities are the AI use cases this source system may call.
         </div>
-        <form method="post" action="/admin/external-ai-policies">
+        <form method="post" action="/admin/external-ai-policies" data-policy-builder>
+          <div class="border rounded bg-light p-2 mb-3">
+            <div class="fw-semibold small mb-2">Gateway MVP quick presets</div>
+            <div class="d-flex flex-wrap gap-2">
+              <button class="btn btn-sm btn-outline-primary" type="button" data-policy-preset data-providers="openai,gemini,claude" data-models="gpt-4.1-mini,gpt-4o-mini,gemini-1.5-flash,claude-3-5-haiku" data-capabilities="summary,generate">GPT/Gemini/Claude all</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="openai" data-models="gpt-4.1-mini,gpt-4o-mini" data-capabilities="summary,generate">OpenAI only</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="gemini" data-models="gemini-1.5-flash" data-capabilities="summary,generate">Gemini only</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="claude" data-models="claude-3-5-haiku" data-capabilities="summary,generate">Claude only</button>
+              <button class="btn btn-sm btn-outline-danger" type="button" data-policy-clear>Clear selection</button>
+            </div>
+            <div class="form-text">Presets select current gateway text models and keep streaming/tool calling off for MVP compatibility.</div>
+          </div>
+
+          <div class="border rounded p-2 mb-3" data-policy-summary>
+            <div class="fw-semibold small mb-2">Selected summary</div>
+            <div class="small"><span class="text-muted">source_system:</span> <span data-summary-source>-</span></div>
+            <div class="small"><span class="text-muted">providers:</span> <span data-summary-providers>-</span></div>
+            <div class="small"><span class="text-muted">models:</span> <span data-summary-models>-</span></div>
+            <div class="small"><span class="text-muted">capabilities:</span> <span data-summary-capabilities>-</span></div>
+            <div class="small"><span class="text-muted">limits:</span> <span data-summary-limits>-</span></div>
+          </div>
+
           <label class="form-label">Source system from managed key</label>
           <select class="form-select mb-2" name="source_system_select">
             <option value="">Select a managed source system</option>
@@ -157,15 +201,31 @@
           <label class="form-label">Label</label>
           <input class="form-control mb-2" name="label" placeholder="CRM summary policy" autocomplete="off">
 
-          <div class="form-label">Allowed providers</div>
+          <div class="form-label">Gateway MVP Providers</div>
           <div class="d-flex flex-wrap gap-2 mb-2">
             {% for provider in provider_choices %}
-              <label class="form-check border rounded px-2 py-1">
-                <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}">
-                <span class="form-check-label">{{ provider }}</span>
-              </label>
+              {% if provider in ["openai", "gemini", "claude"] %}
+                <label class="form-check border rounded px-2 py-1">
+                  <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}">
+                  <span class="form-check-label">{{ provider }}</span>
+                </label>
+              {% endif %}
             {% endfor %}
           </div>
+          <details class="mb-3">
+            <summary class="small fw-semibold text-muted">Advanced / Future Providers</summary>
+            <div class="alert alert-warning small my-2">These providers are separated because they are not part of the current External AI Generate MVP.</div>
+            <div class="d-flex flex-wrap gap-2">
+              {% for provider in provider_choices %}
+                {% if provider not in ["openai", "gemini", "claude"] %}
+                  <label class="form-check border rounded px-2 py-1">
+                    <input class="form-check-input me-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}">
+                    <span class="form-check-label">{{ provider }}</span>
+                  </label>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </details>
 
           <label class="form-label">Allowed models</label>
           {{ render_model_selector(model_choices) }}
@@ -238,6 +298,10 @@
         <span>Policies</span>
         <span class="badge text-bg-secondary">{{ policies|length }}</span>
       </div>
+      <div class="card-body border-bottom">
+        <label class="form-label small mb-1" for="policyTableFilter">Filter policies</label>
+        <input class="form-control" id="policyTableFilter" placeholder="Search source, provider, model, capability, or label" autocomplete="off">
+      </div>
       <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
           <thead>
@@ -253,7 +317,7 @@
           </thead>
           <tbody>
             {% for policy in policies %}
-            <tr>
+            <tr class="policy-row" data-policy-search="{{ policy.source_system }} {{ policy.label }} {{ policy.profile_id }} {{ policy.allowed_providers|join(' ') }} {{ policy.allowed_models|join(' ') }} {{ policy.allowed_capabilities|join(' ') }} {{ 'enabled' if policy.enabled else 'disabled' }}">
               <td>
                 <div class="fw-semibold">{{ policy.source_system }}</div>
                 <div class="small text-muted">{{ policy.label or '-' }}</div>
@@ -298,7 +362,7 @@
               </td>
             </tr>
             {% if policy.warnings %}
-            <tr class="table-warning">
+            <tr class="table-warning policy-warning-row">
               <td></td>
               <td colspan="6" class="small">
                 <div class="fw-semibold">Policy warnings</div>
@@ -336,10 +400,36 @@
 })();
 
 (() => {
-  for (const form of document.querySelectorAll("form")) {
+  const toList = (value) => (value || "").split(",").map((item) => item.trim()).filter(Boolean);
+  const labelsFor = (inputs) => inputs.map((input) => input.value).filter(Boolean);
+  const textOrDash = (items) => items.length ? items.join(", ") : "-";
+
+  const updateSummary = (form) => {
+    const summary = form.querySelector("[data-policy-summary]");
+    if (!summary) return;
+    const selectedSource = form.querySelector("[name='source_system_select']");
+    const manualSource = form.querySelector("[name='source_system']");
+    const source = (selectedSource?.value || manualSource?.value || "").trim();
+    const providers = labelsFor(Array.from(form.querySelectorAll("[name='allowed_providers']:checked")));
+    const models = labelsFor(Array.from(form.querySelectorAll("[name='allowed_models']:checked:not(:disabled)")));
+    const capabilities = labelsFor(Array.from(form.querySelectorAll("[name='allowed_capabilities']:checked")));
+    const maxTokens = form.querySelector("[name='max_tokens_per_request']")?.value || "-";
+    const dailyRequests = form.querySelector("[name='daily_request_limit']")?.value || "-";
+    const dailyTokens = form.querySelector("[name='daily_token_limit']")?.value || "-";
+    const monthlyBudget = form.querySelector("[name='monthly_budget_usd']")?.value || "-";
+    summary.querySelector("[data-summary-source]").textContent = source || "-";
+    summary.querySelector("[data-summary-providers]").textContent = textOrDash(providers);
+    summary.querySelector("[data-summary-models]").textContent = textOrDash(models);
+    summary.querySelector("[data-summary-capabilities]").textContent = textOrDash(capabilities);
+    summary.querySelector("[data-summary-limits]").textContent =
+      `max/request ${maxTokens}; daily ${dailyRequests} req / ${dailyTokens} tokens; monthly $${monthlyBudget}`;
+  };
+
+  for (const form of document.querySelectorAll("[data-policy-builder]")) {
     const toggles = Array.from(form.querySelectorAll("[data-provider-toggle]"));
     const groups = Array.from(form.querySelectorAll("[data-model-provider]"));
     if (!toggles.length || !groups.length) continue;
+
     const updateModelGroups = () => {
       const enabledProviders = new Set(
         toggles.filter((input) => input.checked).map((input) => input.dataset.providerToggle)
@@ -348,16 +438,97 @@
         const provider = group.dataset.modelProvider;
         const active = enabledProviders.has(provider);
         group.classList.toggle("opacity-50", !active);
-        for (const input of group.querySelectorAll("[data-provider-model]")) {
+        const modelInputs = Array.from(group.querySelectorAll("[data-provider-model]"));
+        for (const input of modelInputs) {
+          if (!active) input.checked = false;
           input.disabled = !active;
         }
+        const selected = modelInputs.filter((input) => input.checked).length;
+        const counter = form.querySelector(`[data-provider-count="${provider}"]`);
+        if (counter) counter.textContent = `${selected}/${modelInputs.length}`;
       }
+      updateSummary(form);
     };
+
     for (const toggle of toggles) {
-      toggle.addEventListener("change", updateModelGroups);
+      toggle.addEventListener("change", () => {
+        if (!toggle.checked) {
+          for (const input of form.querySelectorAll(`[data-provider-model="${toggle.dataset.providerToggle}"]`)) {
+            input.checked = false;
+          }
+        }
+        updateModelGroups();
+      });
+    }
+    for (const input of form.querySelectorAll("[data-provider-model]")) {
+      input.addEventListener("change", () => {
+        if (input.checked) {
+          const providerToggle = form.querySelector(`[data-provider-toggle="${input.dataset.providerModel}"]`);
+          if (providerToggle) providerToggle.checked = true;
+        }
+        updateModelGroups();
+      });
+    }
+    for (const input of form.querySelectorAll("input, select")) {
+      input.addEventListener("input", () => updateSummary(form));
+      input.addEventListener("change", () => updateSummary(form));
+    }
+    for (const button of form.querySelectorAll("[data-policy-preset]")) {
+      button.addEventListener("click", () => {
+        const providers = new Set(toList(button.dataset.providers));
+        const models = new Set(toList(button.dataset.models));
+        const capabilities = new Set(toList(button.dataset.capabilities));
+        for (const input of toggles) {
+          input.checked = providers.has(input.value);
+        }
+        updateModelGroups();
+        for (const input of form.querySelectorAll("[name='allowed_models']")) {
+          input.checked = models.has(input.value) && !input.disabled;
+        }
+        for (const input of form.querySelectorAll("[name='allowed_capabilities']")) {
+          input.checked = capabilities.has(input.value);
+        }
+        const enabled = form.querySelector("[name='enabled']");
+        const streaming = form.querySelector("[name='allow_streaming']");
+        const tools = form.querySelector("[name='allow_tool_calling']");
+        const storePrompt = form.querySelector("[name='store_prompt']");
+        const storeResponse = form.querySelector("[name='store_response']");
+        if (enabled) enabled.checked = true;
+        if (streaming) streaming.checked = false;
+        if (tools) tools.checked = false;
+        if (storePrompt) storePrompt.checked = false;
+        if (storeResponse) storeResponse.checked = false;
+        updateModelGroups();
+      });
+    }
+    const clearButton = form.querySelector("[data-policy-clear]");
+    if (clearButton) {
+      clearButton.addEventListener("click", () => {
+        for (const input of form.querySelectorAll("[name='allowed_providers'], [name='allowed_models'], [name='allowed_capabilities']")) {
+          input.checked = false;
+        }
+        updateModelGroups();
+      });
     }
     updateModelGroups();
   }
+})();
+
+(() => {
+  const filter = document.getElementById("policyTableFilter");
+  if (!filter) return;
+  const rows = Array.from(document.querySelectorAll(".policy-row"));
+  filter.addEventListener("input", () => {
+    const query = filter.value.trim().toLowerCase();
+    for (const row of rows) {
+      const match = !query || (row.dataset.policySearch || "").toLowerCase().includes(query);
+      row.style.display = match ? "" : "none";
+      const warning = row.nextElementSibling;
+      if (warning && warning.classList.contains("policy-warning-row")) {
+        warning.style.display = match ? "" : "none";
+      }
+    }
+  });
 })();
 </script>
 {% endblock %}
