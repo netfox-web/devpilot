@@ -87,8 +87,15 @@ The policy controls:
 Supported text gateway providers and models:
 
 - OpenAI/GPT: `gpt-4.1-mini`, `gpt-4o-mini`
-- Gemini: `gemini-1.5-flash`
-- Claude: `claude-3-5-haiku`
+- Gemini: `gemini-2.5-flash`
+- Claude: `claude-3-5-haiku-20241022`
+
+Compatibility aliases:
+
+- `gemini-1.5-flash` is accepted as a legacy request value and resolved inside DevPilot to `gemini-2.5-flash`.
+- `claude-3-5-haiku` is accepted as a legacy request value and resolved inside DevPilot to `claude-3-5-haiku-20241022`.
+
+Prefer the current model IDs above for new integrations.
 
 If `provider` is omitted, DevPilot defaults to Gemini for compatibility with the original MVP. New integrations should send the provider explicitly.
 

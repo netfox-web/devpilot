@@ -8,8 +8,8 @@ The production gateway is intentionally narrow and policy-gated:
 
 - Providers: OpenAI/GPT, Gemini, and Claude.
 - OpenAI models: `gpt-4.1-mini`, `gpt-4o-mini`.
-- Gemini model: `gemini-1.5-flash`.
-- Claude model: `claude-3-5-haiku`.
+- Gemini model: `gemini-2.5-flash`.
+- Claude model: `claude-3-5-haiku-20241022`.
 - Mode: non-streaming text only.
 - Capabilities: `generate`, `summary`, `rewrite`, `classification`, `extraction`, `planning`, `chat`.
 
@@ -101,11 +101,20 @@ X-DevPilot-Idempotency-Key: {stable-idempotency-key}
 The authenticated `source_system` must have an enabled External AI Policy allowing:
 
 - requested provider: `openai`, `gemini`, or `claude`
-- requested model: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-1.5-flash`, or `claude-3-5-haiku`
+- requested model: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, or `claude-3-5-haiku-20241022`
 - requested text capability
 - no streaming
 - no tool calling
 - prompt size within `max_tokens_per_request`
+
+Legacy request aliases are kept for compatibility with existing source policies and external clients:
+
+- `gemini-1.5-flash` resolves to upstream model `gemini-2.5-flash`.
+- `claude-3-5-haiku` resolves to upstream model `claude-3-5-haiku-20241022`.
+
+Source policy matching accepts either the legacy request value or the resolved current model ID. This avoids changing external project keys, `source_system`, or the policy structure when only the provider upstream model ID changes.
+
+The response `model` field reports the upstream model used. When a legacy alias is requested, `requested_model` records the submitted alias.
 
 If no policy is enabled, DevPilot returns:
 
@@ -146,6 +155,8 @@ If the requested provider key is not configured, DevPilot returns:
 ```
 
 The provider key is never returned, logged, or exposed to external systems.
+
+If a provider upstream returns an HTTP error, DevPilot returns `external_ai_provider_call_failed` with a sanitized `provider_error`, `provider_status_code`, and redacted `provider_error_summary` when available. DevPilot must not return provider keys, prompt contents, auth headers, or raw upstream response bodies.
 
 ## External Project Integration Package
 

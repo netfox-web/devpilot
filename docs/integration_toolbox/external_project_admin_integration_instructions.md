@@ -216,8 +216,10 @@ Example body:
 Supported text gateway providers:
 
 - `openai` with `gpt-4.1-mini` or `gpt-4o-mini`
-- `gemini` with `gemini-1.5-flash`
-- `claude` with `claude-3-5-haiku`
+- `gemini` with `gemini-2.5-flash`
+- `claude` with `claude-3-5-haiku-20241022`
+
+Legacy request values `gemini-1.5-flash` and `claude-3-5-haiku` are accepted for compatibility and resolved inside DevPilot to the current Gemini and Claude upstream model IDs. New integrations should use the current IDs listed above.
 
 DevPilot must first enable an External AI Policy for the source system with the requested provider, model, and capability. If no enabled policy exists, the gateway returns `external_ai_policy_not_enabled`.
 

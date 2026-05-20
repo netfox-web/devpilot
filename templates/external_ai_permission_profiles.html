@@ -17,7 +17,7 @@
 {%- endmacro %}
 
 {% macro render_model_selector(model_choices, selected_providers=[], selected_models=[]) -%}
-  <div class="text-muted small mb-2">Models are selected per provider. Selecting a provider does not automatically allow all models.</div>
+  <div class="text-muted small mb-2">Models are selected per provider. Check a provider first to enable its model boxes. Selecting a provider does not automatically allow all models.</div>
   {% for provider, models in model_choices.items() %}
     <div class="border rounded p-2 mb-2 external-ai-model-group {% if provider not in selected_providers %}opacity-50{% endif %}" data-model-provider="{{ provider }}">
       <div class="fw-semibold small mb-1">{{ provider }}</div>

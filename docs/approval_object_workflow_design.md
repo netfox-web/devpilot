@@ -67,7 +67,7 @@ Draft JSON shape:
   "execution_mode": "none|dry_run|manual|system_after_approval",
   "target": {
     "provider": "gemini",
-    "model": "gemini-1.5-flash",
+    "model": "gemini-2.5-flash",
     "domain": null,
     "source_system": null
   },

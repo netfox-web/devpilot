@@ -36,7 +36,7 @@ Supported query parameters:
 Example:
 
 ```text
-GET /api/external/ai/usage?provider=gemini&model=gemini-1.5-flash&status=completed
+GET /api/external/ai/usage?provider=gemini&model=gemini-2.5-flash&status=completed
 ```
 
 ## Response Example
@@ -54,7 +54,7 @@ GET /api/external/ai/usage?provider=gemini&model=gemini-1.5-flash&status=complet
       "idempotency_key": "generate:ad-job-123",
       "external_ref": "ad-job-123",
       "provider": "gemini",
-      "model": "gemini-1.5-flash",
+      "model": "gemini-2.5-flash",
       "capability": "summary",
       "status": "completed",
       "input_chars": 240,
@@ -77,7 +77,7 @@ GET /api/external/ai/usage?provider=gemini&model=gemini-1.5-flash&status=complet
     "average_latency_ms": 950,
     "estimated_cost_usd": null,
     "grouped_by_model": {
-      "gemini-1.5-flash": {
+      "gemini-2.5-flash": {
         "total_requests": 1,
         "success_count": 1,
         "failed_count": 0,

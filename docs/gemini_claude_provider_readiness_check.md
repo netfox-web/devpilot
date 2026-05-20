@@ -26,8 +26,8 @@ Status: gateway deployed; provider live verification still not performed.
 - Allowed models:
   - `gpt-4.1-mini`
   - `gpt-4o-mini`
-  - `gemini-1.5-flash`
-  - `claude-3-5-haiku`
+  - `gemini-2.5-flash`
+  - `claude-3-5-haiku-20241022`
 - Conservative MVP limits:
   - `max_tokens_per_request=1000`
   - `daily_request_limit=100`
@@ -93,7 +93,8 @@ Policy:
 Provider behavior:
 
 - Mocked Gemini success path is covered before any live check.
-- Mocked Gemini failure path records a safe structured error.
+- Mocked Gemini failure path records a safe structured error with upstream HTTP status when available.
+- Legacy request model `gemini-1.5-flash` resolves to upstream model `gemini-2.5-flash` for compatibility with existing clients and source policies.
 - Idempotent replay does not duplicate a completed provider call.
 - Usage logging records provider, model, status, source system, and request metadata without secrets.
 
@@ -122,10 +123,11 @@ Policy:
 Provider behavior:
 
 - Mocked Claude success path is covered before any live check.
-- Mocked Claude failure path records a safe structured error.
+- Mocked Claude failure path records a safe structured error with upstream HTTP status when available.
 - Idempotent replay does not duplicate a completed provider call.
 - Usage logging records provider, model, status, source system, and request metadata without secrets.
-- External AI Generate supports `provider: "claude"` with `model: "claude-3-5-haiku"` through the policy-gated external gateway.
+- External AI Generate supports `provider: "claude"` with `model: "claude-3-5-haiku-20241022"` through the policy-gated external gateway.
+- Legacy request model `claude-3-5-haiku` resolves to upstream model `claude-3-5-haiku-20241022` for compatibility with existing clients and source policies.
 - The Claude gateway adapter exists, but live verification is still not recorded here unless a separate explicit live-provider approval runs a real provider call.
 
 Enablement gate:

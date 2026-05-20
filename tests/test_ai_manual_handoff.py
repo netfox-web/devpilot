@@ -151,8 +151,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertFalse(providers["claude"]["live_verified"])
         self.assertFalse(providers["gemini"]["live_call_enabled"])
         self.assertFalse(providers["claude"]["live_call_enabled"])
-        self.assertEqual(providers["gemini"]["allowed_models"], ["gemini-1.5-flash"])
-        self.assertEqual(providers["claude"]["allowed_models"], ["claude-3-5-haiku"])
+        self.assertEqual(providers["gemini"]["allowed_models"], ["gemini-2.5-flash"])
+        self.assertEqual(providers["claude"]["allowed_models"], ["claude-3-5-haiku-20241022"])
         combined = json.dumps(payload, sort_keys=True)
         self.assertNotIn("gemini-test-raw-secret-1234", combined)
         self.assertNotIn("claude-test-raw-secret-5678", combined)
@@ -185,8 +185,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("Gemini", page)
         self.assertIn("Claude", page)
         self.assertIn("verified_with_mock", page)
-        self.assertIn("gemini-1.5-flash", page)
-        self.assertIn("claude-3-5-haiku", page)
+        self.assertIn("gemini-2.5-flash", page)
+        self.assertIn("claude-3-5-haiku-20241022", page)
         self.assertNotIn("gemini-page-raw-secret-1234", page)
         self.assertNotIn("claude-page-raw-secret-5678", page)
         self.assertNotIn("Authorization", page)
@@ -243,8 +243,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(payload["safety"]["no_secret_output"])
         providers = {item["id"]: item for item in payload["providers"]}
         self.assertEqual(set(providers), {"gemini", "claude"})
-        self.assertEqual(providers["gemini"]["default_model"], "gemini-1.5-flash")
-        self.assertEqual(providers["claude"]["default_model"], "claude-3-5-haiku")
+        self.assertEqual(providers["gemini"]["default_model"], "gemini-2.5-flash")
+        self.assertEqual(providers["claude"]["default_model"], "claude-3-5-haiku-20241022")
         self.assertTrue(providers["gemini"]["mock_verified"])
         self.assertTrue(providers["claude"]["mock_verified"])
         self.assertFalse(providers["gemini"]["live_verified"])
@@ -292,8 +292,8 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("Live verification is not allowed", page)
         self.assertIn("Gemini", page)
         self.assertIn("Claude", page)
-        self.assertIn("gemini-1.5-flash", page)
-        self.assertIn("claude-3-5-haiku", page)
+        self.assertIn("gemini-2.5-flash", page)
+        self.assertIn("claude-3-5-haiku-20241022", page)
         self.assertIn("Product owner approval", page)
         self.assertIn("Return exactly OK.", page)
         self.assertNotIn("gemini-live-page-raw-secret-1234", page)
@@ -441,7 +441,7 @@ class AiManualHandoffTest(unittest.TestCase):
                             "title": "Persist Gemini live verification draft",
                             "source_surface": "/admin/external-ai-live-verification-gate",
                             "risk_level": "high",
-                            "target": {"provider": "gemini", "model": "gemini-1.5-flash"},
+                            "target": {"provider": "gemini", "model": "gemini-2.5-flash"},
                             "dry_run_snapshot": {"preview_only": True},
                         })
 
@@ -1490,7 +1490,7 @@ class AiManualHandoffTest(unittest.TestCase):
                             "source_system": "grouped-model-source",
                             "label": "Grouped model policy",
                             "allowed_providers": ["openai", "gemini"],
-                            "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash"],
+                            "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash"],
                             "allowed_capabilities": "summary",
                         },
                     )
@@ -1501,7 +1501,7 @@ class AiManualHandoffTest(unittest.TestCase):
                             "source_system": "manual-source",
                             "label": "Manual policy",
                             "allowed_providers": "gemini",
-                            "allowed_models": "gemini-1.5-flash",
+                            "allowed_models": "gemini-2.5-flash",
                             "allowed_capabilities": "extraction",
                         },
                     )
@@ -1540,7 +1540,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("grouped-model-source", sources)
         self.assertIn("manual-source", sources)
         self.assertEqual(policies["grouped-model-source"]["allowed_providers"], ["openai", "gemini"])
-        self.assertEqual(policies["grouped-model-source"]["allowed_models"], ["gpt-4.1-mini", "gemini-1.5-flash"])
+        self.assertEqual(policies["grouped-model-source"]["allowed_models"], ["gpt-4.1-mini", "gemini-2.5-flash"])
 
         with self.app.app_context():
             approval_count_after = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
@@ -1565,7 +1565,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn("video-review-only", profiles)
         self.assertEqual(profiles["basic-text"]["daily_request_limit"], 1000)
         self.assertEqual(profiles["text-multi-provider"]["allowed_providers"], ["openai", "gemini", "claude"])
-        self.assertEqual(profiles["text-multi-provider"]["allowed_models"], ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku"])
+        self.assertEqual(profiles["text-multi-provider"]["allowed_models"], ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022"])
         self.assertEqual(profiles["image-basic"]["daily_request_limit"], 300)
         self.assertEqual(profiles["image-pro"]["daily_request_limit"], 1000)
         self.assertEqual(profiles["video-review-only"]["daily_request_limit"], 20)
@@ -1619,7 +1619,7 @@ class AiManualHandoffTest(unittest.TestCase):
         policies = {item["source_system"]: item for item in response.get_json()["policies"]}
         self.assertEqual(policies["profile-b"]["profile_id"], "text-multi-provider")
         self.assertEqual(policies["profile-b"]["allowed_providers"], ["openai", "gemini", "claude"])
-        self.assertEqual(policies["profile-b"]["allowed_models"], ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku"])
+        self.assertEqual(policies["profile-b"]["allowed_models"], ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022"])
 
         response = self.client().post(
             "/api/admin/external-ai-policies/apply-profile",
@@ -1696,13 +1696,13 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('name="allowed_providers"', page_body)
         self.assertIn('value="openai"', page_body)
         self.assertIn('value="runway"', page_body)
-        self.assertIn("Models are selected per provider. Selecting a provider does not automatically allow all models.", page_body)
+        self.assertIn("Models are selected per provider. Check a provider first to enable its model boxes.", page_body)
         self.assertIn('data-model-provider="openai"', page_body)
         self.assertIn('data-model-provider="gemini"', page_body)
         self.assertIn('data-provider-model="openai"', page_body)
         self.assertIn('data-provider-model="fal"', page_body)
         self.assertIn('value="gpt-4.1-mini" data-provider-model="openai" checked', page_body)
-        self.assertIn('value="gemini-1.5-flash" data-provider-model="gemini" checked', page_body)
+        self.assertIn('value="gemini-2.5-flash" data-provider-model="gemini" checked', page_body)
         self.assertIn('value="gpt-image-1"', page_body)
         self.assertIn('value="fal-flux-pro"', page_body)
         self.assertNotIn("key_hash", page_body)
@@ -1714,7 +1714,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "enabled": True,
             "enabled_by_default": True,
             "allowed_providers": ["openai", "gemini", "claude", "replicate", "fal"],
-            "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku", "flux-schnell", "fal-flux-pro"],
+            "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022", "flux-schnell", "fal-flux-pro"],
             "allowed_capabilities": [
                 "summary",
                 "classification",
@@ -1771,7 +1771,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "enabled": True,
             "enabled_by_default": False,
             "allowed_providers": ["openai", "gemini"],
-            "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash"],
+            "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash"],
             "allowed_capabilities": ["summary", "extraction"],
             "max_tokens_per_request": 2000,
             "daily_request_limit": 200,
@@ -1813,7 +1813,7 @@ class AiManualHandoffTest(unittest.TestCase):
             ({"id": "bad-provider", "name": "Bad Provider", "allowed_providers": ["unknown-provider"]}, "unknown provider"),
             ({"id": "bad-model", "name": "Bad Model", "allowed_providers": ["openai"], "allowed_models": ["unknown-model"]}, "unknown model"),
             ({"id": "bad-capability", "name": "Bad Capability", "allowed_providers": ["openai"], "allowed_capabilities": ["unknown-capability"]}, "unknown capability"),
-            ({"id": "bad-mismatch", "name": "Bad Mismatch", "allowed_providers": ["openai"], "allowed_models": ["gemini-1.5-flash"]}, "model/provider mismatch"),
+            ({"id": "bad-mismatch", "name": "Bad Mismatch", "allowed_providers": ["openai"], "allowed_models": ["gemini-2.5-flash"]}, "model/provider mismatch"),
         ]
         for payload, expected_error in cases:
             response = self.client().post("/api/admin/external-ai-permission-profiles", json=payload)
@@ -2048,7 +2048,7 @@ class AiManualHandoffTest(unittest.TestCase):
                 "idempotency_key": "diag-usage",
                 "external_ref": "diag-ref",
                 "provider": "gemini",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "capability": "summary",
                 "status": "completed",
                 "input_chars": 11,
@@ -2161,7 +2161,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "label": "Source Detail Policy",
             "enabled": True,
             "allowed_providers": ["gemini"],
-            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_models": ["gemini-2.5-flash"],
             "allowed_capabilities": ["summary", "rewrite"],
             "daily_request_limit": 100,
             "daily_token_limit": 1000,
@@ -2201,7 +2201,7 @@ class AiManualHandoffTest(unittest.TestCase):
                 "idempotency_key": "source-detail-usage",
                 "external_ref": "source-detail-ref",
                 "provider": "gemini",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "capability": "summary",
                 "status": "completed",
                 "input_chars": 33,
@@ -2267,7 +2267,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn(active_record["key_prefix"], page)
         self.assertIn(revoked_record["key_prefix"], page)
         self.assertIn("Source Detail Policy", page)
-        self.assertIn("gemini-1.5-flash", page)
+        self.assertIn("gemini-2.5-flash", page)
         self.assertIn("summary, rewrite", page)
         self.assertIn("Source Detail Project", page)
         self.assertIn("deploy_success", page)
@@ -2723,7 +2723,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('value="fal"', page_body)
         self.assertIn('value="runway"', page_body)
         self.assertIn('value="kling"', page_body)
-        self.assertIn("Models are selected per provider. Selecting a provider does not automatically allow all models.", page_body)
+        self.assertIn("Models are selected per provider. Check a provider first to enable its model boxes.", page_body)
         self.assertIn('data-model-provider="openai"', page_body)
         self.assertIn('data-model-provider="gemini"', page_body)
         self.assertIn('data-model-provider="claude"', page_body)
@@ -2731,7 +2731,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertIn('data-provider-model="gemini"', page_body)
         self.assertIn('value="gpt-4.1-mini"', page_body)
         self.assertIn('value="gpt-image-1"', page_body)
-        self.assertIn('value="gemini-1.5-flash"', page_body)
+        self.assertIn('value="gemini-2.5-flash"', page_body)
         self.assertIn('value="claude-3-5-sonnet"', page_body)
         self.assertIn('value="flux-schnell"', page_body)
         self.assertIn('value="fal-flux-pro"', page_body)
@@ -2764,7 +2764,7 @@ class AiManualHandoffTest(unittest.TestCase):
             json={
                 "source_system": "multi-policy-source",
                 "allowed_providers": ["openai", "gemini", "claude", "replicate", "fal", "runway", "kling"],
-                "allowed_models": ["gpt-4.1-mini", "gpt-image-1", "gemini-1.5-flash", "claude-3-5-haiku", "flux-schnell", "fal-flux-pro"],
+                "allowed_models": ["gpt-4.1-mini", "gpt-image-1", "gemini-2.5-flash", "claude-3-5-haiku-20241022", "flux-schnell", "fal-flux-pro"],
                 "allowed_capabilities": [
                     "summary",
                     "classification",
@@ -2789,7 +2789,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(valid.status_code, 201, valid.get_data(as_text=True))
         policy = valid.get_json()["policy"]
         self.assertEqual(policy["allowed_providers"], ["openai", "gemini", "claude", "replicate", "fal", "runway", "kling"])
-        self.assertEqual(policy["allowed_models"], ["gpt-4.1-mini", "gpt-image-1", "gemini-1.5-flash", "claude-3-5-haiku", "flux-schnell", "fal-flux-pro"])
+        self.assertEqual(policy["allowed_models"], ["gpt-4.1-mini", "gpt-image-1", "gemini-2.5-flash", "claude-3-5-haiku-20241022", "flux-schnell", "fal-flux-pro"])
         self.assertIn("image_generation", policy["allowed_capabilities"])
         self.assertIn("video_generation", policy["allowed_capabilities"])
         self.assertIn("product_image", policy["allowed_capabilities"])
@@ -2803,7 +2803,7 @@ class AiManualHandoffTest(unittest.TestCase):
             ({"allowed_providers": ["unknown-provider"]}, "unknown provider"),
             ({"allowed_providers": ["openai"], "allowed_models": ["unknown-model"]}, "unknown model"),
             ({"allowed_providers": ["openai"], "allowed_capabilities": ["unknown-capability"]}, "unknown capability"),
-            ({"allowed_providers": ["openai"], "allowed_models": ["gemini-1.5-flash"]}, "model/provider mismatch"),
+            ({"allowed_providers": ["openai"], "allowed_models": ["gemini-2.5-flash"]}, "model/provider mismatch"),
             ({"allowed_providers": ["replicate"], "allowed_models": ["fal-flux-schnell"]}, "model/provider mismatch"),
             ({"allowed_models": ["gpt-4.1-mini"]}, "model/provider mismatch"),
         ]
@@ -2832,7 +2832,7 @@ class AiManualHandoffTest(unittest.TestCase):
             approval_count_before = self.app_module.query_one("SELECT COUNT(*) AS count FROM approval_requests")["count"]
         body = {
             "capability": "summary",
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.5-flash",
             "prompt": "Summarize this safely.",
             "external_ref": "gateway-ticket-1",
         }
@@ -2859,7 +2859,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": False,
             "allowed_providers": ["gemini"],
-            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_models": ["gemini-2.5-flash"],
             "allowed_capabilities": ["summary"],
         })
         self.assertFalse(disabled_policy["enabled"])
@@ -2901,7 +2901,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     "source_system": "external-a",
                     "enabled": True,
                     "allowed_providers": ["gemini"],
-                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_models": ["gemini-2.5-flash"],
                     "allowed_capabilities": ["rewrite"],
                 },
                 body,
@@ -2914,7 +2914,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     "source_system": "external-a",
                     "enabled": True,
                     "allowed_providers": ["gemini"],
-                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_models": ["gemini-2.5-flash"],
                     "allowed_capabilities": ["summary"],
                     "allow_tool_calling": True,
                 },
@@ -2928,7 +2928,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     "source_system": "external-a",
                     "enabled": True,
                     "allowed_providers": ["gemini"],
-                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_models": ["gemini-2.5-flash"],
                     "allowed_capabilities": ["summary"],
                     "allow_streaming": True,
                 },
@@ -2942,7 +2942,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     "source_system": "external-a",
                     "enabled": True,
                     "allowed_providers": ["gemini"],
-                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_models": ["gemini-2.5-flash"],
                     "allowed_capabilities": ["image_generation"],
                 },
                 {**body, "capability": "image_generation"},
@@ -2955,7 +2955,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     "source_system": "external-a",
                     "enabled": True,
                     "allowed_providers": ["gemini"],
-                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_models": ["gemini-2.5-flash"],
                     "allowed_capabilities": ["summary"],
                     "max_tokens_per_request": 1,
                 },
@@ -2986,7 +2986,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["gemini"],
-            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_models": ["gemini-2.5-flash"],
             "allowed_capabilities": ["summary"],
         })
         with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""}, clear=False):
@@ -3010,7 +3010,7 @@ class AiManualHandoffTest(unittest.TestCase):
         long_response = "This is a concise Gemini summary. " * 8
         body = {
             "capability": "generate",
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.5-flash",
             "prompt": long_prompt,
             "external_ref": "gateway-ticket-2",
             "metadata": {"project": "AD-Studio_AI"},
@@ -3020,7 +3020,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["gemini"],
-            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_models": ["gemini-2.5-flash"],
             "allowed_capabilities": ["generate", "summary", "rewrite", "classification", "extraction", "planning", "chat"],
             "max_tokens_per_request": 1000,
         })
@@ -3044,7 +3044,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["idempotent_replay"])
         self.assertEqual(payload["provider"], "gemini")
-        self.assertEqual(payload["model"], "gemini-1.5-flash")
+        self.assertEqual(payload["model"], "gemini-2.5-flash")
         self.assertEqual(payload["capability"], "generate")
         self.assertEqual(payload["text"], long_response)
         self.assertEqual(payload["usage"]["total_tokens"], 21)
@@ -3058,7 +3058,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(replay_payload["idempotent_replay"])
         self.assertFalse(replay_payload["provider_calls_executed"])
         self.assertEqual(replay_payload["text"], long_response)
-        gemini_call.assert_called_once_with(long_prompt, "gemini-1.5-flash", "test-provider-key")
+        gemini_call.assert_called_once_with(long_prompt, "gemini-2.5-flash", "test-provider-key")
         provider_call.assert_not_called()
         run_task.assert_not_called()
         console_dispatch.assert_not_called()
@@ -3073,7 +3073,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(usage["status"], "completed")
         self.assertEqual(usage["source_system"], "external-a")
         self.assertEqual(usage["provider"], "gemini")
-        self.assertEqual(usage["model"], "gemini-1.5-flash")
+        self.assertEqual(usage["model"], "gemini-2.5-flash")
         self.assertEqual(usage["capability"], "generate")
         self.assertTrue(usage["prompt_hash"])
         self.assertTrue(usage["response_hash"])
@@ -3089,12 +3089,114 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(approval_count_after, approval_count_before)
         self.assertEqual(self.state_snapshot(), before)
 
+    def test_external_ai_generate_resolves_legacy_gateway_model_aliases(self):
+        before = self.state_snapshot()
+        self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["gemini", "claude"],
+            "allowed_models": ["gemini-1.5-flash", "claude-3-5-haiku"],
+            "allowed_capabilities": ["generate"],
+            "max_tokens_per_request": 1000,
+        })
+
+        gemini_body = {
+            "provider": "gemini",
+            "capability": "generate",
+            "model": "gemini-1.5-flash",
+            "prompt": "Confirm legacy Gemini alias.",
+        }
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "test-provider-key", "GOOGLE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate", return_value={
+                "ok": True,
+                "text": "Gemini alias resolved.",
+                "usage": {"input_tokens": 4, "output_tokens": 3, "total_tokens": 7},
+            }) as gemini_call:
+                gemini_response = self.client().post(
+                    "/api/external/ai/generate",
+                    json=gemini_body,
+                    headers=self.external_headers(request_id="gateway-gemini-alias", idempotency_key="gateway-gemini-alias"),
+                )
+        self.assertEqual(gemini_response.status_code, 200, gemini_response.get_data(as_text=True))
+        gemini_payload = gemini_response.get_json()
+        self.assertEqual(gemini_payload["model"], "gemini-2.5-flash")
+        self.assertEqual(gemini_payload["requested_model"], "gemini-1.5-flash")
+        gemini_call.assert_called_once_with("Confirm legacy Gemini alias.", "gemini-2.5-flash", "test-provider-key")
+
+        claude_body = {
+            "provider": "claude",
+            "capability": "generate",
+            "model": "claude-3-5-haiku",
+            "prompt": "Confirm legacy Claude alias.",
+        }
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "ANTHROPIC_API_KEY": "test-claude-provider-key", "CLAUDE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_claude_external_ai_generate", return_value={
+                "ok": True,
+                "text": "Claude alias resolved.",
+                "usage": {"input_tokens": 4, "output_tokens": 3, "total_tokens": 7},
+            }) as claude_call:
+                claude_response = self.client().post(
+                    "/api/external/ai/generate",
+                    json=claude_body,
+                    headers=self.external_headers(request_id="gateway-claude-alias", idempotency_key="gateway-claude-alias"),
+                )
+        self.assertEqual(claude_response.status_code, 200, claude_response.get_data(as_text=True))
+        claude_payload = claude_response.get_json()
+        self.assertEqual(claude_payload["model"], "claude-3-5-haiku-20241022")
+        self.assertEqual(claude_payload["requested_model"], "claude-3-5-haiku")
+        claude_call.assert_called_once_with("Confirm legacy Claude alias.", "claude-3-5-haiku-20241022", "test-claude-provider-key")
+
+        self.assertNotIn("test-provider-key", gemini_response.get_data(as_text=True))
+        self.assertNotIn("test-claude-provider-key", claude_response.get_data(as_text=True))
+        self.assertEqual(self.state_snapshot(), before)
+
+    def test_external_ai_generate_provider_failure_reports_sanitized_upstream_status(self):
+        self.app_module.create_external_ai_policy({
+            "source_system": "external-a",
+            "enabled": True,
+            "allowed_providers": ["gemini"],
+            "allowed_models": ["gemini-2.5-flash"],
+            "allowed_capabilities": ["generate"],
+            "max_tokens_per_request": 1000,
+        })
+        body = {
+            "provider": "gemini",
+            "capability": "generate",
+            "model": "gemini-2.5-flash",
+            "prompt": "Summarize this safely.",
+        }
+        provider_result = {
+            "ok": False,
+            "error": "gemini_http_error",
+            "status_code": 404,
+            "upstream_error": "NOT_FOUND model missing api_key=secret-token Bearer secret-bearer-token",
+        }
+        with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "test-provider-key", "GOOGLE_API_KEY": ""}, clear=False):
+            with patch.object(self.app_module, "call_gemini_generate", return_value=provider_result):
+                response = self.client().post(
+                    "/api/external/ai/generate",
+                    json=body,
+                    headers=self.external_headers(request_id="gateway-upstream-status", idempotency_key="gateway-upstream-status"),
+                )
+        self.assertEqual(response.status_code, 502, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertEqual(payload["error"], "external_ai_provider_call_failed")
+        self.assertEqual(payload["provider_error"], "gemini_http_error")
+        self.assertEqual(payload["provider_status_code"], 404)
+        self.assertEqual(payload["upstream_status_code"], 404)
+        self.assertIn("NOT_FOUND", payload["provider_error_summary"])
+        response_text = response.get_data(as_text=True)
+        self.assertIn("REDACTED", response_text)
+        self.assertNotIn("secret-token", response_text)
+        self.assertNotIn("secret-bearer-token", response_text)
+        self.assertNotIn("test-provider-key", response_text)
+
     def test_external_ai_generate_claude_rejects_policy_and_missing_config_without_live_call(self):
         before = self.state_snapshot()
         body = {
             "provider": "claude",
             "capability": "summary",
-            "model": "claude-3-5-haiku",
+            "model": "claude-3-5-haiku-20241022",
             "prompt": "Summarize this safely.",
             "external_ref": "claude-policy-ticket",
         }
@@ -3107,7 +3209,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     "source_system": "external-a",
                     "enabled": True,
                     "allowed_providers": ["gemini"],
-                    "allowed_models": ["gemini-1.5-flash"],
+                    "allowed_models": ["gemini-2.5-flash"],
                     "allowed_capabilities": ["summary"],
                 },
                 403,
@@ -3141,7 +3243,7 @@ class AiManualHandoffTest(unittest.TestCase):
                     self.assertEqual(response.status_code, expected_status, response.get_data(as_text=True))
                     payload = response.get_json()
                     self.assertEqual(payload["provider"], "claude")
-                    self.assertEqual(payload["model"], "claude-3-5-haiku")
+                    self.assertEqual(payload["model"], "claude-3-5-haiku-20241022")
                     self.assertEqual(payload["error"], expected_error)
                     self.assertFalse(payload["provider_calls_executed"])
                     self.assertNotIn("test-claude-key", response.get_data(as_text=True))
@@ -3153,7 +3255,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["claude"],
-            "allowed_models": ["claude-3-5-haiku"],
+            "allowed_models": ["claude-3-5-haiku-20241022"],
             "allowed_capabilities": ["summary"],
         })
         with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "ANTHROPIC_API_KEY": "", "CLAUDE_API_KEY": ""}, clear=False):
@@ -3176,7 +3278,7 @@ class AiManualHandoffTest(unittest.TestCase):
         body = {
             "provider": "claude",
             "capability": "generate",
-            "model": "claude-3-5-haiku",
+            "model": "claude-3-5-haiku-20241022",
             "prompt": long_prompt,
             "external_ref": "claude-gateway-ticket",
             "metadata": {"project": "AD-Studio_AI"},
@@ -3186,7 +3288,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["claude"],
-            "allowed_models": ["claude-3-5-haiku"],
+            "allowed_models": ["claude-3-5-haiku-20241022"],
             "allowed_capabilities": ["generate", "summary", "rewrite", "classification", "extraction", "planning", "chat"],
             "max_tokens_per_request": 1000,
         })
@@ -3211,7 +3313,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["idempotent_replay"])
         self.assertEqual(payload["provider"], "claude")
-        self.assertEqual(payload["model"], "claude-3-5-haiku")
+        self.assertEqual(payload["model"], "claude-3-5-haiku-20241022")
         self.assertEqual(payload["capability"], "generate")
         self.assertEqual(payload["text"], long_response)
         self.assertEqual(payload["usage"]["total_tokens"], 25)
@@ -3225,9 +3327,9 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertTrue(replay_payload["idempotent_replay"])
         self.assertFalse(replay_payload["provider_calls_executed"])
         self.assertEqual(replay_payload["provider"], "claude")
-        self.assertEqual(replay_payload["model"], "claude-3-5-haiku")
+        self.assertEqual(replay_payload["model"], "claude-3-5-haiku-20241022")
         self.assertEqual(replay_payload["text"], long_response)
-        claude_call.assert_called_once_with(long_prompt, "claude-3-5-haiku", "test-claude-provider-key")
+        claude_call.assert_called_once_with(long_prompt, "claude-3-5-haiku-20241022", "test-claude-provider-key")
         gemini_call.assert_not_called()
         provider_call.assert_not_called()
         run_task.assert_not_called()
@@ -3243,7 +3345,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(usage["status"], "completed")
         self.assertEqual(usage["source_system"], "external-a")
         self.assertEqual(usage["provider"], "claude")
-        self.assertEqual(usage["model"], "claude-3-5-haiku")
+        self.assertEqual(usage["model"], "claude-3-5-haiku-20241022")
         self.assertEqual(usage["capability"], "generate")
         self.assertTrue(usage["prompt_hash"])
         self.assertTrue(usage["response_hash"])
@@ -3267,12 +3369,12 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["gemini"],
-            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_models": ["gemini-2.5-flash"],
             "allowed_capabilities": ["summary"],
         })
         body = {
             "capability": "summary",
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.5-flash",
             "prompt": "Summarize this safely.",
             "external_ref": "gateway-ticket-invalid-store",
         }
@@ -3295,7 +3397,7 @@ class AiManualHandoffTest(unittest.TestCase):
     def test_external_ai_generate_failed_result_can_retry(self):
         body = {
             "capability": "summary",
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.5-flash",
             "prompt": "Summarize this safely.",
             "external_ref": "gateway-ticket-retry",
         }
@@ -3304,7 +3406,7 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["gemini"],
-            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_models": ["gemini-2.5-flash"],
             "allowed_capabilities": ["summary"],
         })
         with patch.dict(self.app_module.os.environ, {**self.external_api_env(), "GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""}, clear=False):
@@ -3432,14 +3534,14 @@ class AiManualHandoffTest(unittest.TestCase):
             {
                 "provider": "gemini",
                 "db_provider": "google",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "key": "managed-gemini-provider-key",
                 "call_name": "call_gemini_generate",
             },
             {
                 "provider": "claude",
                 "db_provider": "anthropic",
-                "model": "claude-3-5-haiku",
+                "model": "claude-3-5-haiku-20241022",
                 "key": "managed-claude-provider-key",
                 "call_name": "call_claude_external_ai_generate",
             },
@@ -3518,7 +3620,7 @@ class AiManualHandoffTest(unittest.TestCase):
                 "idempotency_key": "idem-a-1",
                 "external_ref": "ticket-a",
                 "provider": "gemini",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "capability": "summary",
                 "status": "completed",
                 "error_code": "",
@@ -3542,7 +3644,7 @@ class AiManualHandoffTest(unittest.TestCase):
                 "idempotency_key": "idem-a-2",
                 "external_ref": "ticket-b",
                 "provider": "gemini",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "capability": "rewrite",
                 "status": "failed",
                 "error_code": "provider_not_configured",
@@ -3564,7 +3666,7 @@ class AiManualHandoffTest(unittest.TestCase):
                 "idempotency_key": "idem-b-1",
                 "external_ref": "ticket-other",
                 "provider": "gemini",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "capability": "summary",
                 "status": "completed",
                 "input_chars": 999,
@@ -3586,7 +3688,7 @@ class AiManualHandoffTest(unittest.TestCase):
             wrong = self.client().get("/api/external/ai/usage", headers=self.external_headers(key="wrong"))
             response = self.client().get("/api/external/ai/usage", headers=self.external_headers())
             filtered = self.client().get(
-                "/api/external/ai/usage?provider=gemini&model=gemini-1.5-flash&capability=summary&status=completed&external_ref=ticket-a&from=2026-05-13&to=2026-05-13",
+                "/api/external/ai/usage?provider=gemini&model=gemini-2.5-flash&capability=summary&status=completed&external_ref=ticket-a&from=2026-05-13&to=2026-05-13",
                 headers=self.external_headers(),
             )
             forced_other = self.client().get("/api/external/ai/usage?source_system=external-b", headers=self.external_headers())
@@ -3602,7 +3704,7 @@ class AiManualHandoffTest(unittest.TestCase):
         self.assertEqual(payload["summary"]["total_input_chars"], 160)
         self.assertEqual(payload["summary"]["total_output_chars"], 50)
         self.assertEqual(payload["summary"]["average_latency_ms"], 150)
-        self.assertIn("gemini-1.5-flash", payload["summary"]["grouped_by_model"])
+        self.assertIn("gemini-2.5-flash", payload["summary"]["grouped_by_model"])
         self.assertIn("summary", payload["summary"]["grouped_by_capability"])
         response_text = response.get_data(as_text=True)
         self.assertNotIn("FULL_PROMPT_SECRET_SHOULD_NOT_LEAK", response_text)
@@ -3637,7 +3739,7 @@ class AiManualHandoffTest(unittest.TestCase):
                 "idempotency_key": "idem-budget-1",
                 "external_ref": "budget-ticket",
                 "provider": "gemini",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "capability": "summary",
                 "status": "completed",
                 "input_token_estimate": 9,
@@ -3658,7 +3760,7 @@ class AiManualHandoffTest(unittest.TestCase):
                 "idempotency_key": "idem-budget-2",
                 "external_ref": "budget-ticket",
                 "provider": "gemini",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "capability": "summary",
                 "status": "completed",
                 "input_token_estimate": 9,
@@ -3678,13 +3780,13 @@ class AiManualHandoffTest(unittest.TestCase):
             "source_system": "external-a",
             "enabled": True,
             "allowed_providers": ["gemini"],
-            "allowed_models": ["gemini-1.5-flash"],
+            "allowed_models": ["gemini-2.5-flash"],
             "allowed_capabilities": ["summary"],
             "daily_request_limit": 2,
             "daily_token_limit": 20,
             "monthly_budget_usd": 50,
         })
-        response = self.client().get("/admin/external-ai-usage?source_system=external-a&q=budget-ticket&provider=gemini&model=gemini-1.5-flash&capability=summary&status=completed")
+        response = self.client().get("/admin/external-ai-usage?source_system=external-a&q=budget-ticket&provider=gemini&model=gemini-2.5-flash&capability=summary&status=completed")
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         page = response.get_data(as_text=True)
         self.assertIn("budget-ticket", page)

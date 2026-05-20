@@ -49,7 +49,7 @@ Goal:
 Draft request constraints:
 
 - Provider: `gemini`
-- Model: lowest-cost approved Gemini text model, currently expected `gemini-1.5-flash`
+- Model: lowest-cost approved Gemini text model, currently expected `gemini-2.5-flash`
 - Prompt: a harmless fixed prompt such as `Return exactly OK.`
 - Max output: minimal
 - Temperature: low
@@ -86,7 +86,7 @@ Current boundary:
 Draft request constraints for a future live phase:
 
 - Provider: `claude`
-- Model: lowest-cost approved Claude text model, currently expected `claude-3-5-haiku` or a later approved replacement
+- Model: lowest-cost approved Claude text model, currently expected `claude-3-5-haiku-20241022` or a later approved replacement
 - Prompt: a harmless fixed prompt such as `Return exactly OK.`
 - Max output: minimal
 - Temperature: low

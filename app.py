@@ -2532,7 +2532,7 @@ AI_PROVIDER_READINESS_CONFIGS = [
         "name": "Gemini",
         "env_vars": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
         "gateway_route": "external_ai_generate",
-        "default_model": "gemini-1.5-flash",
+        "default_model": "gemini-2.5-flash",
         "readiness": "verified_with_mock",
         "mock_verified": True,
         "live_verified": False,
@@ -2548,7 +2548,7 @@ AI_PROVIDER_READINESS_CONFIGS = [
         "name": "Claude",
         "env_vars": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
         "gateway_route": "external_ai_generate_mock_path",
-        "default_model": "claude-3-5-haiku",
+        "default_model": "claude-3-5-haiku-20241022",
         "readiness": "verified_with_mock",
         "mock_verified": True,
         "live_verified": False,
@@ -2761,7 +2761,7 @@ def external_ai_live_verification_gate_context():
         {
             "id": "gemini",
             "name": "Gemini",
-            "default_model": "gemini-1.5-flash",
+            "default_model": "gemini-2.5-flash",
             "one_call_plan_ready": True,
             "route": "external_ai_generate",
             "notes": [
@@ -2772,7 +2772,7 @@ def external_ai_live_verification_gate_context():
         {
             "id": "claude",
             "name": "Claude",
-            "default_model": "claude-3-5-haiku",
+            "default_model": "claude-3-5-haiku-20241022",
             "one_call_plan_ready": False,
             "route": "external_ai_generate_mock_path",
             "notes": [
@@ -3355,8 +3355,8 @@ EXTERNAL_AI_POLICY_DEFAULT_MONTHLY_BUDGET_USD = 10.0
 EXTERNAL_AI_PROVIDER_OPTIONS = ["openai", "gemini", "claude", "replicate", "fal", "runway", "kling"]
 EXTERNAL_AI_MODEL_OPTIONS = {
     "openai": ["gpt-4.1-mini", "gpt-4o-mini", "o4-mini", "gpt-image-1"],
-    "gemini": ["gemini-1.5-flash", "gemini-1.5-pro"],
-    "claude": ["claude-3-5-haiku", "claude-3-5-sonnet"],
+    "gemini": ["gemini-2.5-flash", "gemini-1.5-pro"],
+    "claude": ["claude-3-5-haiku-20241022", "claude-3-5-sonnet"],
     "replicate": ["flux-schnell", "flux-pro"],
     "fal": ["fal-flux-schnell", "fal-flux-pro"],
     "runway": [],
@@ -3370,11 +3370,19 @@ EXTERNAL_AI_CAPABILITY_GROUPS = {
 }
 EXTERNAL_AI_CAPABILITY_OPTIONS = [capability for capabilities in EXTERNAL_AI_CAPABILITY_GROUPS.values() for capability in capabilities]
 EXTERNAL_AI_GENERATE_MVP_PROVIDER = "gemini"
-EXTERNAL_AI_GENERATE_MVP_MODEL = "gemini-1.5-flash"
+EXTERNAL_AI_GENERATE_MVP_MODEL = "gemini-2.5-flash"
 EXTERNAL_AI_GENERATE_PROVIDER_MODELS = {
     "openai": ["gpt-4.1-mini", "gpt-4o-mini"],
-    "gemini": ["gemini-1.5-flash"],
-    "claude": ["claude-3-5-haiku"],
+    "gemini": ["gemini-2.5-flash"],
+    "claude": ["claude-3-5-haiku-20241022"],
+}
+EXTERNAL_AI_GENERATE_MODEL_ALIASES = {
+    "gemini": {
+        "gemini-1.5-flash": "gemini-2.5-flash",
+    },
+    "claude": {
+        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+    },
 }
 EXTERNAL_AI_GENERATE_MVP_CAPABILITIES = set(EXTERNAL_AI_CAPABILITY_GROUPS["Text"])
 EXTERNAL_AI_GENERATE_PROMPT_SUMMARY_LIMIT = 120
@@ -3405,7 +3413,7 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
         "description": "Text work across approved small models from OpenAI, Gemini, and Claude.",
         "enabled": True,
         "allowed_providers": ["openai", "gemini", "claude"],
-        "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku"],
+        "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022"],
         "allowed_capabilities": ["summary", "classification", "rewrite", "extraction", "planning"],
         "max_tokens_per_request": 2000,
         "daily_request_limit": 1000,
@@ -3481,7 +3489,7 @@ EXTERNAL_AI_PERMISSION_PROFILE_DEFAULTS = [
         "description": "Disabled-by-default internal/testing draft profile.",
         "enabled": False,
         "allowed_providers": ["openai", "gemini", "claude"],
-        "allowed_models": ["gpt-4.1-mini", "gemini-1.5-flash", "claude-3-5-haiku"],
+        "allowed_models": ["gpt-4.1-mini", "gemini-2.5-flash", "claude-3-5-haiku-20241022"],
         "allowed_capabilities": ["summary", "rewrite", "planning", "chat", "generate"],
         "max_tokens_per_request": 2000,
         "daily_request_limit": 100,
@@ -3538,8 +3546,12 @@ def external_ai_policy_list(value):
 
 
 def external_ai_model_provider(model):
+    model_key = str(model or "").strip().lower()
     for provider, models in EXTERNAL_AI_MODEL_OPTIONS.items():
-        if model in models:
+        if model_key in models:
+            return provider
+    for provider, aliases in EXTERNAL_AI_GENERATE_MODEL_ALIASES.items():
+        if model_key in aliases:
             return provider
     return ""
 
@@ -3547,6 +3559,7 @@ def external_ai_model_provider(model):
 def validate_external_ai_policy_allowlists(providers, models, capabilities):
     provider_set = set(EXTERNAL_AI_PROVIDER_OPTIONS)
     model_set = {model for models_for_provider in EXTERNAL_AI_MODEL_OPTIONS.values() for model in models_for_provider}
+    model_set.update(alias for aliases in EXTERNAL_AI_GENERATE_MODEL_ALIASES.values() for alias in aliases)
     capability_set = set(EXTERNAL_AI_CAPABILITY_OPTIONS)
     unknown_providers = [item for item in providers if item not in provider_set]
     unknown_models = [item for item in models if item not in model_set]
@@ -3591,9 +3604,11 @@ def evaluate_external_ai_policy_warnings(policy):
     selected_models = set(models)
     for provider in providers:
         provider_models = set(EXTERNAL_AI_MODEL_OPTIONS.get(provider) or [])
+        provider_aliases = set(EXTERNAL_AI_GENERATE_MODEL_ALIASES.get(provider) or {})
+        provider_resolved_models = {external_ai_generate_resolve_model(provider, model) for model in selected_models}
         if not provider_models:
             warnings.append(f"Provider {provider} has no controlled model selected or available.")
-        elif not selected_models.intersection(provider_models):
+        elif not selected_models.intersection(provider_models.union(provider_aliases)) and not provider_resolved_models.intersection(provider_models):
             warnings.append(f"Provider {provider} is selected but no matching model is selected.")
     if external_ai_policy_float(policy.get("monthly_budget_usd"), 0.0, 0.0, 1000000.0) > 100:
         warnings.append("Monthly budget is high. Confirm approval before production use.")
@@ -4330,6 +4345,53 @@ def external_ai_generate_default_model(provider):
     return models[0] if models else EXTERNAL_AI_GENERATE_MVP_MODEL
 
 
+def external_ai_generate_resolve_model(provider, model):
+    provider_key = str(provider or "").strip().lower()
+    model_key = str(model or "").strip().lower()
+    return EXTERNAL_AI_GENERATE_MODEL_ALIASES.get(provider_key, {}).get(model_key, model_key)
+
+
+def external_ai_policy_allows_model(policy, provider, requested_model, resolved_model):
+    allowed_models = {str(item or "").strip().lower() for item in (policy or {}).get("allowed_models") or [] if str(item or "").strip()}
+    if not allowed_models:
+        return False
+    requested = str(requested_model or "").strip().lower()
+    resolved = str(resolved_model or "").strip().lower()
+    if requested in allowed_models or resolved in allowed_models:
+        return True
+    return any(external_ai_generate_resolve_model(provider, item) == resolved for item in allowed_models)
+
+
+def sanitize_external_ai_provider_error_text(value, limit=240):
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.sub(r"(?i)(authorization|api[_-]?key|x-api-key|token|secret)(\s*[:=]\s*)[^\s,;}]+", r"\1\2REDACTED", text)
+    text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1REDACTED", text)
+    return external_ai_text_summary(text, limit)
+
+
+def external_ai_provider_error_summary(exc, limit=240):
+    try:
+        raw = exc.read(4096)
+    except Exception:
+        return ""
+    try:
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:
+        text = str(raw or "")
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict):
+        error = parsed.get("error")
+        if isinstance(error, dict):
+            parts = [error.get("status"), error.get("code"), error.get("type"), error.get("message")]
+            text = " ".join(str(part) for part in parts if part not in (None, ""))
+        elif error:
+            text = str(error)
+    return sanitize_external_ai_provider_error_text(text, limit)
+
+
 def call_gemini_generate(prompt, model, api_key, timeout=60):
     model_name = str(model or EXTERNAL_AI_GENERATE_MVP_MODEL).strip()
     if model_name.startswith("models/"):
@@ -4350,7 +4412,12 @@ def call_gemini_generate(prompt, model, api_key, timeout=60):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "error": "gemini_http_error", "status_code": exc.code}
+        return {
+            "ok": False,
+            "error": "gemini_http_error",
+            "status_code": exc.code,
+            "upstream_error": external_ai_provider_error_summary(exc),
+        }
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
         return {"ok": False, "error": "gemini_network_error"}
     except Exception:
@@ -4392,7 +4459,12 @@ def call_openai_external_ai_generate(prompt, model, api_key, timeout=60):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "error": "openai_http_error", "status_code": exc.code}
+        return {
+            "ok": False,
+            "error": "openai_http_error",
+            "status_code": exc.code,
+            "upstream_error": external_ai_provider_error_summary(exc),
+        }
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
         return {"ok": False, "error": "openai_network_error"}
     except Exception:
@@ -4432,7 +4504,12 @@ def call_claude_external_ai_generate(prompt, model, api_key, timeout=60):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "error": "claude_http_error", "status_code": exc.code}
+        return {
+            "ok": False,
+            "error": "claude_http_error",
+            "status_code": exc.code,
+            "upstream_error": external_ai_provider_error_summary(exc),
+        }
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
         return {"ok": False, "error": "claude_network_error"}
     except Exception:
@@ -4501,12 +4578,14 @@ def external_ai_generate_validate_request(identity, payload):
         return None, None, external_ai_generate_error_payload(identity, "invalid_request", "JSON object body is required.", 400)
     provider = external_ai_policy_preview(payload.get("provider") or EXTERNAL_AI_GENERATE_MVP_PROVIDER, 80).lower()
     capability = external_ai_policy_preview(payload.get("capability") or "generate", 80).lower()
-    model = external_ai_policy_preview(payload.get("model") or external_ai_generate_default_model(provider), 120).lower()
+    requested_model = external_ai_policy_preview(payload.get("model") or external_ai_generate_default_model(provider), 120).lower()
+    model = external_ai_generate_resolve_model(provider, requested_model)
     prompt = str(payload.get("prompt") or "")
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     normalized = {
         "provider": provider,
         "model": model,
+        "requested_model": requested_model if requested_model != model else "",
         "capability": capability,
         "prompt": prompt,
         "external_ref": external_ai_policy_preview(payload.get("external_ref"), 200),
@@ -4554,7 +4633,7 @@ def external_ai_generate_validate_request(identity, payload):
             403,
             provider=provider,
             model=model,
-            requested_model=model,
+            requested_model=requested_model,
             policy_id=policy.get("id") or "",
         )
     if capability not in EXTERNAL_AI_GENERATE_MVP_CAPABILITIES:
@@ -4578,7 +4657,7 @@ def external_ai_generate_validate_request(identity, payload):
             model=model,
             policy_id=policy.get("id") or "",
         )
-    if model not in set(policy.get("allowed_models") or []):
+    if not external_ai_policy_allows_model(policy, provider, requested_model, model):
         return policy, normalized, external_ai_generate_error_payload(
             identity,
             "external_ai_model_not_allowed",
@@ -4586,6 +4665,7 @@ def external_ai_generate_validate_request(identity, payload):
             403,
             provider=provider,
             model=model,
+            requested_model=requested_model,
             policy_id=policy.get("id") or "",
         )
     if capability not in set(policy.get("allowed_capabilities") or []):
@@ -18322,7 +18402,7 @@ def admin_approval_object_preview_page():
             "title": "Preview external AI live verification approval",
             "source_surface": "/admin/external-ai-live-verification-gate",
             "risk_level": "high",
-            "target": {"provider": "gemini", "model": "gemini-1.5-flash"},
+            "target": {"provider": "gemini", "model": "gemini-2.5-flash"},
             "dry_run_snapshot": {"preview_only": True},
         }),
         approval_types=sorted(APPROVAL_PREVIEW_REQUIRED_ROLES),
@@ -24182,6 +24262,16 @@ def api_external_ai_generate():
     latency_ms = int((time.time() - started_at) * 1000)
     if not provider_result.get("ok"):
         error_code = provider_result.get("error") or "external_ai_provider_call_failed"
+        provider_status_code = coerce_int(provider_result.get("status_code"), None)
+        upstream_error = sanitize_external_ai_provider_error_text(provider_result.get("upstream_error"), 240)
+        provider_error_details = {}
+        if provider_status_code is not None:
+            provider_error_details["provider_status_code"] = provider_status_code
+            provider_error_details["upstream_status_code"] = provider_status_code
+        if upstream_error:
+            provider_error_details["provider_error_summary"] = upstream_error
+        if normalized.get("requested_model"):
+            provider_error_details["requested_model"] = normalized["requested_model"]
         error_payload, status_code = external_ai_generate_error_payload(
             identity,
             "external_ai_provider_call_failed",
@@ -24190,6 +24280,7 @@ def api_external_ai_generate():
             provider=provider,
             model=model,
             provider_error=error_code,
+            **provider_error_details,
             policy_id=policy.get("id") if policy else "",
         )
         append_external_ai_usage_log(external_ai_generate_usage_record(
@@ -24228,6 +24319,8 @@ def api_external_ai_generate():
         "side_effects": False,
         "provider_calls_executed": True,
     }
+    if normalized.get("requested_model"):
+        response_payload["requested_model"] = normalized["requested_model"]
     append_external_ai_usage_log(external_ai_generate_usage_record(
         identity,
         normalized,

@@ -559,7 +559,7 @@ class AutomationPlannerExternalProjectHealthTest(unittest.TestCase):
                     "source_system": "health-source",
                     "request_id": "req-health",
                     "provider": "gemini",
-                    "model": "gemini-1.5-flash",
+                    "model": "gemini-2.5-flash",
                     "capability": "summary",
                     "status": "completed",
                     "input_chars": 10,
@@ -705,7 +705,7 @@ class AutomationPlannerExternalProjectHealthTest(unittest.TestCase):
                             "title": "Preview Gemini live verification",
                             "source_surface": "/admin/external-ai-live-verification-gate",
                             "risk_level": "high",
-                            "target": {"provider": "gemini", "model": "gemini-1.5-flash"},
+                            "target": {"provider": "gemini", "model": "gemini-2.5-flash"},
                             "dry_run_snapshot": {"preview_only": True},
                         })
                         domain_response = self.client().post("/api/admin/approval-object-preview", json={
