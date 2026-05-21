@@ -109,6 +109,7 @@
   <div class="gateway-model-selector p-3">
   <div class="alert alert-primary small mb-2">
     Pick a preset or select provider cards below. Only selected cards are added to the policy.
+    This page is the External AI Gateway MVP allowlist, not a full provider model catalog.
     External projects still call DevPilot only; they never receive raw provider keys.
   </div>
   <div class="gateway-provider-tabs" data-provider-tabs>
@@ -120,7 +121,7 @@
   <div class="d-flex justify-content-between align-items-center mt-3 mb-2">
     <div>
       <div class="fw-semibold small">Active Gateway Models</div>
-      <div class="small text-muted">Currently wired for External AI Generate.</div>
+      <div class="small text-muted">Enabled models that can be written into a production source policy allowlist.</div>
     </div>
     <span class="badge text-bg-primary">MVP live set</span>
   </div>
@@ -131,15 +132,67 @@
   </div>
 
   <details class="candidate-models-panel my-2">
-    <summary class="small fw-semibold">Candidate models, not enabled</summary>
-    <div class="small text-muted mt-2 mb-2">Planning only. These require separate approval, adapter verification, policy update, deployment, and one-provider-at-a-time live smoke before becoming selectable.</div>
+    <summary class="small fw-semibold">Candidate / Future Models, not enabled</summary>
+    <div class="small text-muted mt-2 mb-2">
+      Candidate models are roadmap options only. They cannot be selected directly and are not submitted with this policy form.
+      Opening one shows the Gateway model onboarding gates required before external projects may use it.
+    </div>
     <div class="candidate-model-grid">
-      <span class="candidate-model-card">OpenAI candidate: gpt-5.2</span>
-      <span class="candidate-model-card">OpenAI candidate: gpt-5.1</span>
-      <span class="candidate-model-card">OpenAI candidate: gpt-5</span>
-      <span class="candidate-model-card">OpenAI candidate: o4-mini</span>
-      <span class="candidate-model-card">OpenAI image candidate: gpt-image-1</span>
-      <span class="candidate-model-card">Claude candidate: claude-sonnet-4-6</span>
+      <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="gpt-5.2">
+        <span class="candidate-model-provider">OpenAI</span>
+        <code>gpt-5.2</code>
+        <span class="candidate-model-status">candidate / not enabled</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
+      </div>
+      <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="gpt-5.1">
+        <span class="candidate-model-provider">OpenAI</span>
+        <code>gpt-5.1</code>
+        <span class="candidate-model-status">candidate / not enabled</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
+      </div>
+      <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="gpt-5">
+        <span class="candidate-model-provider">OpenAI</span>
+        <code>gpt-5</code>
+        <span class="candidate-model-status">candidate / not enabled</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
+      </div>
+      <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="o4-mini">
+        <span class="candidate-model-provider">OpenAI</span>
+        <code>o4-mini</code>
+        <span class="candidate-model-status">candidate / not enabled</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
+      </div>
+      <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="gpt-image-1">
+        <span class="candidate-model-provider">OpenAI image</span>
+        <code>gpt-image-1</code>
+        <span class="candidate-model-status">candidate / not enabled</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
+      </div>
+      <div class="candidate-model-card" data-candidate-card data-candidate-provider="claude" data-candidate-model="claude-sonnet-4-6">
+        <span class="candidate-model-provider">Claude</span>
+        <code>claude-sonnet-4-6</code>
+        <span class="candidate-model-status">candidate / not enabled</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
+      </div>
+    </div>
+    <div class="candidate-onboarding-panel mt-3" data-candidate-onboarding hidden>
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <div>
+          <div class="fw-semibold">Gateway model onboarding</div>
+          <div class="small text-muted">Provider: <span data-candidate-provider-output>-</span></div>
+          <div class="small text-muted">Model: <code data-candidate-model-output>-</code></div>
+          <div class="small text-muted">Status: candidate / not enabled</div>
+        </div>
+        <span class="badge text-bg-warning">requires approval</span>
+      </div>
+      <ol class="small mt-2 mb-0">
+        <li>Backend allowlist update.</li>
+        <li>Provider adapter compatibility check.</li>
+        <li>Tests and docs update.</li>
+        <li>NAS production deployment approval.</li>
+        <li>Single-provider live smoke approval.</li>
+      </ol>
+      <div class="small text-muted mt-2">This button does not change policy data or submit a provider/model.</div>
     </div>
   </details>
 
@@ -345,8 +398,7 @@
     flex-wrap: wrap;
     gap: .25rem;
   }
-  .model-badge,
-  .candidate-model-card {
+  .model-badge {
     border-radius: 999px;
     border: 1px solid #dce3ec;
     background: #f8fafc;
@@ -367,9 +419,39 @@
     background: #fbfcfe;
   }
   .candidate-model-grid {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: .4rem;
+  }
+  .candidate-model-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .3rem;
+    border: 1px solid #dce3ec;
+    border-radius: 8px;
+    background: #fff;
+    color: #475569;
+    font-size: .8rem;
+    padding: .6rem;
+  }
+  .candidate-model-provider {
+    font-weight: 800;
+    color: #334155;
+  }
+  .candidate-model-status {
+    border-radius: 999px;
+    background: #fff3cd;
+    border: 1px solid #ffecb5;
+    color: #664d03;
+    font-size: .72rem;
+    padding: .1rem .45rem;
+  }
+  .candidate-onboarding-panel {
+    border: 1px solid #ffecb5;
+    border-radius: 8px;
+    background: #fffdf4;
+    padding: .75rem;
   }
   .capability-chip-grid {
     display: flex;
@@ -548,6 +630,7 @@
             <div class="small"><span class="text-muted">models:</span> <span data-summary-models>-</span></div>
             <div class="small"><span class="text-muted">capabilities:</span> <span data-summary-capabilities>-</span></div>
             <div class="small"><span class="text-muted">limits:</span> <span data-summary-limits>-</span></div>
+            <div class="small text-muted mt-2">External projects can call only the selected allowlist models through DevPilot.</div>
           </div>
 
           <label class="form-label">Source system from managed key</label>
@@ -883,6 +966,23 @@
     }
     setProviderTab("all");
     updateModelGroups();
+  }
+})();
+
+(() => {
+  const panel = document.querySelector("[data-candidate-onboarding]");
+  if (!panel) return;
+  const providerOutput = panel.querySelector("[data-candidate-provider-output]");
+  const modelOutput = panel.querySelector("[data-candidate-model-output]");
+  for (const button of document.querySelectorAll("[data-candidate-enable]")) {
+    button.addEventListener("click", () => {
+      const card = button.closest("[data-candidate-card]");
+      if (!card) return;
+      if (providerOutput) providerOutput.textContent = card.dataset.candidateProvider || "-";
+      if (modelOutput) modelOutput.textContent = card.dataset.candidateModel || "-";
+      panel.hidden = false;
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   }
 })();
 

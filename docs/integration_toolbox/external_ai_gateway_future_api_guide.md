@@ -97,6 +97,20 @@ Compatibility aliases:
 
 Prefer the current model IDs above for new integrations.
 
+## Candidate Models Are Not Available By Default
+
+DevPilot may show Candidate / Future Models in the External AI Policies admin UI. Those entries are planning aids only and are not a full provider model catalog.
+
+External projects can call only Active Gateway Models that have been written into their source policy allowlist. Candidate models must complete Gateway model onboarding before use:
+
+1. Backend allowlist update.
+2. Provider adapter compatibility check.
+3. Tests and docs update.
+4. NAS production deployment approval.
+5. Single-provider live smoke approval.
+
+Do not ask external projects to switch to GPT-5.x, Claude Sonnet, image, video, or other candidate models until DevPilot marks that model active and the source policy explicitly allows it.
+
 If `provider` is omitted, DevPilot defaults to Gemini for compatibility with the original MVP. New integrations should send the provider explicitly.
 
 ## Three Files To Give An External Project

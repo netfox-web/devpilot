@@ -219,7 +219,15 @@ Supported text gateway providers:
 - `gemini` with `gemini-2.5-flash`
 - `claude` with `claude-haiku-4-5-20251001`
 
-Legacy request values `gemini-1.5-flash` and `claude-3-5-haiku` are accepted for compatibility and resolved inside DevPilot to the current Gemini and Claude upstream model IDs. New integrations should use the current IDs listed above.
+Legacy request values are accepted for compatibility and resolved inside DevPilot to the current upstream model IDs:
+
+- `gemini-1.5-flash` -> `gemini-2.5-flash`
+- `claude-3-5-haiku` -> `claude-haiku-4-5-20251001`
+- `claude-3-5-haiku-20241022` -> `claude-haiku-4-5-20251001`
+
+New integrations should use the current IDs listed above.
+
+Candidate / Future Models shown in DevPilot admin are not available to external projects until DevPilot completes Gateway model onboarding: backend allowlist, adapter compatibility, tests/docs, NAS deployment approval, and one-provider-at-a-time live smoke approval. Do not configure external projects to call candidate model IDs before DevPilot marks them active.
 
 DevPilot must first enable an External AI Policy for the source system with the requested provider, model, and capability. If no enabled policy exists, the gateway returns `external_ai_policy_not_enabled`.
 

@@ -13,7 +13,7 @@ This file records the current operational state of DevPilot automation governanc
 - Latest automation governance commit: `206ca75 docs: add automation decision gates`.
 - Latest route verification commit: `3d814d0 docs: record AI Handoffs production route verification`.
 - Latest External AI Gateway deployment: `fbf058b feat: enable external AI gateway providers` deployed to NAS production on 2026-05-20.
-- Latest External AI Policies UI deployment: `d4058a2 feat: improve external AI policy model selection UI` deployed to NAS production on 2026-05-20.
+- Latest External AI Policies UI deployment: `453c2b6 feat: refine external AI policy selection UI` deployed to NAS production on 2026-05-21.
 - Current automation maturity estimate: 80-85%.
 - Target next maturity band: 85-90%.
 - Production route verification: passed.
@@ -42,15 +42,19 @@ This file records the current operational state of DevPilot automation governanc
 ## External AI Policies UI State
 
 - Route: `/admin/external-ai-policies`.
-- Latest deployed UI commit: `d4058a2 feat: improve external AI policy model selection UI`.
+- Latest deployed UI commit: `453c2b6 feat: refine external AI policy selection UI`.
 - Deployment status: completed.
 - UI-only changes:
-  - Gateway MVP quick presets.
-  - OpenAI/Gemini/Claude main provider grouping.
+  - Gateway MVP preset cards.
+  - OpenAI/Gemini/Claude provider tabs.
+  - Model cards for active gateway models.
+  - Candidate / Future Models section for non-active model roadmap entries.
+  - Capabilities rendered as pill/chip choices.
   - Advanced / Future Providers section for non-MVP providers.
-  - Provider model counts and disabled/muted model groups.
   - Live selected summary.
   - Client-side policy table filter.
+- Active Gateway Models only: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, `claude-haiku-4-5-20251001`.
+- Candidate / Future Models are not active allowlist entries and require Gateway model onboarding before external projects can use them.
 - Post-deploy smoke:
   - `/admin/external-ai-policies`: `302` to login while unauthenticated.
 - Provider live calls performed during UI deployment: no.

@@ -39,6 +39,22 @@ Example:
 GET /api/external/ai/usage?provider=gemini&model=gemini-2.5-flash&status=completed
 ```
 
+## Model Scope
+
+Usage records should be interpreted against the active External AI Gateway allowlist:
+
+- OpenAI: `gpt-4.1-mini`, `gpt-4o-mini`
+- Gemini: `gemini-2.5-flash`
+- Claude: `claude-haiku-4-5-20251001`
+
+Legacy request aliases may appear in request metadata while the final usage record reports the resolved upstream model:
+
+- `gemini-1.5-flash` -> `gemini-2.5-flash`
+- `claude-3-5-haiku` -> `claude-haiku-4-5-20251001`
+- `claude-3-5-haiku-20241022` -> `claude-haiku-4-5-20251001`
+
+Candidate / Future Models are not production allowlist entries until they complete Gateway model onboarding. Do not treat a candidate model label in the admin UI as evidence that external projects can call it.
+
 ## Response Example
 
 ```json

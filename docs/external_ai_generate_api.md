@@ -116,6 +116,26 @@ Source policy matching accepts either the legacy request value or the resolved c
 
 The response `model` field reports the upstream model used. When a legacy alias is requested, `requested_model` records the submitted alias.
 
+## Active Versus Candidate Models
+
+Active Gateway Models are the only models that may be written into a production External AI Policy allowlist:
+
+- OpenAI: `gpt-4.1-mini`, `gpt-4o-mini`
+- Gemini: `gemini-2.5-flash`
+- Claude: `claude-haiku-4-5-20251001`
+
+Candidate / Future Models shown in the admin UI are roadmap options only. They are not a full provider model catalog, and they cannot be selected directly for production source policies.
+
+Before any candidate model becomes active, it must pass the Gateway model onboarding flow:
+
+1. Backend allowlist update.
+2. Provider adapter compatibility check.
+3. Tests and docs update.
+4. NAS production deployment approval.
+5. Single-provider live smoke approval.
+
+Do not expose unverified GPT-5.x, Claude Sonnet, image, video, or other candidate models to external projects by UI-only changes.
+
 If no policy is enabled, DevPilot returns:
 
 ```json
@@ -157,6 +177,12 @@ If the requested provider key is not configured, DevPilot returns:
 The provider key is never returned, logged, or exposed to external systems.
 
 If a provider upstream returns an HTTP error, DevPilot returns `external_ai_provider_call_failed` with a sanitized `provider_error`, `provider_status_code`, and redacted `provider_error_summary` when available. DevPilot must not return provider keys, prompt contents, auth headers, or raw upstream response bodies.
+
+## Live Smoke Boundary
+
+Provider live smoke tests require separate explicit approval and must be run one provider/model at a time. Do not mix OpenAI, Gemini, and Claude in one live smoke task.
+
+Live smoke records should include only safe summaries, request IDs, provider/model, and sanitized upstream status. They must not print prompts containing secrets, raw provider keys, DevPilot external API keys, auth headers, or full upstream response bodies.
 
 ## External Project Integration Package
 

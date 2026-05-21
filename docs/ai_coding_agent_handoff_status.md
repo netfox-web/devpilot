@@ -22,6 +22,22 @@ Codex completes local work
   -> ChatGPT reads GitHub and continues from this file / latest commit / PR
 ```
 
+## Current External AI Gateway Model Boundary
+
+This handoff file contains older historical notes from the first Claude mock path. The current production External AI Gateway model boundary is:
+
+- OpenAI: `gpt-4.1-mini`, `gpt-4o-mini`
+- Gemini: `gemini-2.5-flash`
+- Claude: `claude-haiku-4-5-20251001`
+
+Compatibility aliases:
+
+- `gemini-1.5-flash` -> `gemini-2.5-flash`
+- `claude-3-5-haiku` -> `claude-haiku-4-5-20251001`
+- `claude-3-5-haiku-20241022` -> `claude-haiku-4-5-20251001`
+
+Candidate / Future Models displayed in `/admin/external-ai-policies` are not active production allowlist entries. They require Gateway model onboarding before use: backend allowlist, adapter compatibility, tests/docs, NAS deployment approval, and one-provider-at-a-time live smoke approval.
+
 ## Latest Run
 
 - Agent: Codex

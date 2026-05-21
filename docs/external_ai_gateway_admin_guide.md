@@ -1,7 +1,7 @@
 # External AI Gateway Admin Guide
 
-Date: 2026-05-13
-Status: governance groundwork, provider calls disabled
+Date: 2026-05-21
+Status: production gateway active for policy-gated MVP text models
 
 ## Purpose
 
@@ -19,9 +19,10 @@ Production-verified capabilities:
 
 Current gateway status:
 
-- Provider calls are not enabled yet.
-- `/api/external/ai/generate` is planned as the first gateway endpoint.
-- Any disabled/stub gateway endpoint must return a not-enabled response and must not call providers.
+- `POST /api/external/ai/generate` is active for policy-gated text generation.
+- Active Gateway Models are OpenAI `gpt-4.1-mini` / `gpt-4o-mini`, Gemini `gemini-2.5-flash`, and Claude `claude-haiku-4-5-20251001`.
+- Candidate / Future Models shown in the policy UI are planning entries only and are not directly selectable for production source policies.
+- Any new model must complete Gateway model onboarding before external projects may call it.
 
 ## Admin Surfaces
 
@@ -112,6 +113,13 @@ Policy controls:
 - Tool calling allowed or denied.
 - Prompt/response storage policy.
 - Enabled/disabled status.
+
+Model selection boundary:
+
+- The policy page is the External AI Gateway MVP allowlist editor, not a full provider model catalog.
+- Active Gateway Models can be selected into a policy.
+- Candidate / Future Models cannot be submitted as `allowed_models` until onboarding is complete.
+- Onboarding gates: backend allowlist, adapter compatibility, tests/docs, NAS deployment approval, and one-provider-at-a-time live smoke approval.
 
 ## Key And Policy Layer Comparison
 

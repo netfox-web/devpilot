@@ -213,7 +213,8 @@ Task classes are defined in `docs/automation_decision_gates.md`.
   - Source system created: `external_project_default`.
   - DevPilot-issued external API key created for the source system; key value is not stored in docs.
   - External AI Policy created and enabled for `openai`, `gemini`, and `claude`.
-  - Allowed models: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-1.5-flash`, `claude-3-5-haiku`.
+  - Allowed models: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, `claude-haiku-4-5-20251001`.
+  - Legacy aliases remain compatible: `gemini-1.5-flash`, `claude-3-5-haiku`, and `claude-3-5-haiku-20241022` resolve to the current upstream model IDs.
   - Limits: `max_tokens_per_request=1000`, `daily_request_limit=100`, `daily_token_limit=50000`, `monthly_budget_usd=10.0`.
 - Safety confirmation:
   - no raw OpenAI, Gemini, Claude, Anthropic, or Google provider keys exposed.
@@ -238,6 +239,7 @@ Task classes are defined in `docs/automation_decision_gates.md`.
 - Task class: Class D - Deploy / restart / Docker / NAS / staging operation.
 - Operator intent: deploy the UI-only External AI Policies model-selection optimization to the confirmed DevPilot production target.
 - Commit deployed: `d4058a2 feat: improve external AI policy model selection UI`.
+- Latest follow-up UI commit deployed: `453c2b6 feat: refine external AI policy selection UI` on 2026-05-21.
 - Deployment record commit: pending until docs commit.
 - Files changed:
   - `templates/external_ai_policies.html`
@@ -273,11 +275,14 @@ Task classes are defined in `docs/automation_decision_gates.md`.
   - Safe log checks found no visible `error`, `traceback`, or `importerror` lines after deploy.
 - UI changes deployed:
   - Gateway MVP quick presets.
-  - OpenAI/Gemini/Claude main provider grouping.
+  - OpenAI/Gemini/Claude provider tabs and model cards.
+  - Candidate / Future Models section for non-active roadmap entries.
+  - Capability pill/chip controls.
   - Advanced / Future Providers section for non-MVP providers.
-  - Provider model counts and disabled/muted model groups.
   - Live selected policy summary.
   - Client-side policy table filter.
+  - Active Gateway Models only: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, `claude-haiku-4-5-20251001`.
+  - Candidate / Future Models require Gateway model onboarding before policy use.
 - Safety confirmation:
   - no provider dispatcher logic changed.
   - no provider allowlist behavior changed.

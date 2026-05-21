@@ -40,6 +40,30 @@ Before any live provider call is allowed, all prerequisites must be satisfied:
 - The runbook confirms no deploy, DNS, SSL, Nginx, Cloudflare, R2, registrar, or production setting changes are included.
 - A rollback/abort owner is named, even though the expected verification is one read-only provider request.
 
+## Gateway Model Onboarding Boundary
+
+The External AI Policies admin UI may display Candidate / Future Models, but those models are not active production allowlist entries. A candidate model cannot be selected directly for an external source system until all model onboarding gates pass:
+
+1. Backend allowlist update.
+2. Provider adapter compatibility check.
+3. Tests and docs update.
+4. NAS production deployment approval.
+5. Single-provider live smoke approval.
+
+Current Active Gateway Models:
+
+- OpenAI: `gpt-4.1-mini`, `gpt-4o-mini`
+- Gemini: `gemini-2.5-flash`
+- Claude: `claude-haiku-4-5-20251001`
+
+Legacy aliases remain compatibility inputs only:
+
+- `gemini-1.5-flash` -> `gemini-2.5-flash`
+- `claude-3-5-haiku` -> `claude-haiku-4-5-20251001`
+- `claude-3-5-haiku-20241022` -> `claude-haiku-4-5-20251001`
+
+Live smoke tests must be approved and run one provider/model at a time. Do not mix OpenAI, Gemini, and Claude in a single live verification task.
+
 ## Gemini One-Call Verification Plan
 
 Goal:

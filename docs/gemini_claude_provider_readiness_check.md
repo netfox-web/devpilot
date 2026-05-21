@@ -40,6 +40,26 @@ Status: gateway deployed; provider live verification still not performed.
 
 Live Gemini, OpenAI, and Claude generation checks remain Class F provider live call tasks. Each provider live smoke requires separate explicit approval before token spend.
 
+## External AI Policy Model Selection Boundary
+
+The `/admin/external-ai-policies` model selector is an External AI Gateway MVP allowlist editor. It is not a full provider model catalog.
+
+Active Gateway Models:
+
+- OpenAI: `gpt-4.1-mini`, `gpt-4o-mini`
+- Gemini: `gemini-2.5-flash`
+- Claude: `claude-haiku-4-5-20251001`
+
+Candidate / Future Models are planning entries only. They cannot be selected directly into production policies and must complete Gateway model onboarding before use:
+
+1. Backend allowlist update.
+2. Adapter compatibility check.
+3. Tests and docs update.
+4. NAS production deployment approval.
+5. Single-provider live smoke approval.
+
+Live smoke must be one provider/model at a time and must record only safe summaries plus sanitized upstream status. Do not print raw keys, prompts with secrets, provider raw bodies, or DevPilot external API keys.
+
 ## Scope
 
 Providers covered:

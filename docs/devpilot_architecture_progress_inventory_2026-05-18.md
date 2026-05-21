@@ -328,9 +328,18 @@ POST /api/external/ai/generate
 Current provider support:
 
 ```text
-Gemini default provider: gemini-1.5-flash
-Claude mocked/tested path: claude-3-5-haiku
+OpenAI active models: gpt-4.1-mini, gpt-4o-mini
+Gemini active model: gemini-2.5-flash
+Claude active model: claude-haiku-4-5-20251001
 ```
+
+Compatibility aliases:
+
+- `gemini-1.5-flash` -> `gemini-2.5-flash`
+- `claude-3-5-haiku` -> `claude-haiku-4-5-20251001`
+- `claude-3-5-haiku-20241022` -> `claude-haiku-4-5-20251001`
+
+Candidate / Future Models are roadmap entries only. They are not active production allowlist entries until Gateway model onboarding passes backend allowlist, adapter compatibility, tests/docs, NAS deployment approval, and one-provider-at-a-time live smoke approval.
 
 Implemented read-only governance surfaces:
 
