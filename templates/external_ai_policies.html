@@ -36,24 +36,60 @@
   {%- endif -%}
 {%- endmacro %}
 
+{% macro model_label(model) -%}
+  {%- if model == "gpt-4.1-mini" -%}GPT-4.1 Mini
+  {%- elif model == "gpt-4o-mini" -%}GPT-4o Mini
+  {%- elif model == "gemini-2.5-flash" -%}Gemini 2.5 Flash
+  {%- elif model == "claude-haiku-4-5-20251001" -%}Claude Haiku 4.5
+  {%- else -%}{{ model }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro model_note(provider, model) -%}
+  {%- if model == "gpt-4.1-mini" -%}Primary GPT text model for balanced quality and cost.
+  {%- elif model == "gpt-4o-mini" -%}Fast OpenAI fallback for lightweight tasks.
+  {%- elif model == "gemini-2.5-flash" -%}Fast Gemini model for low-latency summaries and extraction.
+  {%- elif model == "claude-haiku-4-5-20251001" -%}Claude text model for concise reasoning and writing tasks.
+  {%- else -%}Provider-specific model controlled by this policy.
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro model_badges(provider, model) -%}
+  <span class="model-badge">text</span>
+  {%- if provider == "openai" -%}<span class="model-badge">GPT</span>{%- endif -%}
+  {%- if provider == "gemini" -%}<span class="model-badge">fast</span>{%- endif -%}
+  {%- if provider == "claude" -%}<span class="model-badge">Claude</span>{%- endif -%}
+  {%- if model in ["gpt-4.1-mini", "gemini-2.5-flash", "claude-haiku-4-5-20251001"] -%}<span class="model-badge recommended">recommended</span>{%- endif -%}
+{%- endmacro %}
+
 {% macro render_model_group(provider, models, selected_providers=[], selected_models=[]) -%}
-  <div class="border rounded p-3 mb-2 external-ai-model-group {% if provider not in selected_providers %}opacity-50{% endif %}" data-model-provider="{{ provider }}">
-    <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
-      <label class="form-check d-flex gap-2 align-items-start m-0">
-        <input class="form-check-input mt-1" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}" {% if provider in selected_providers %}checked{% endif %}>
-        <span>
-          <span class="fw-semibold">{{ provider_label(provider) }}</span>
-          <span class="d-block small text-muted">{{ provider }}</span>
+  {% set provider_selected = provider in selected_providers %}
+  <div class="external-ai-provider-panel {% if not provider_selected %}is-muted{% endif %}" data-model-provider="{{ provider }}" data-provider-panel="{{ provider }}">
+    <div class="provider-panel-header">
+      <label class="provider-toggle-card">
+        <input class="sr-only-input" type="checkbox" name="allowed_providers" value="{{ provider }}" data-provider-toggle="{{ provider }}" {% if provider_selected %}checked{% endif %}>
+        <span class="provider-toggle-visual">
+          <span class="provider-title">{{ provider_label(provider) }}</span>
+          <span class="provider-id">{{ provider }}</span>
+          <span class="provider-state" data-provider-state="{{ provider }}">Select provider</span>
         </span>
       </label>
-      <span class="badge text-bg-light border text-nowrap" data-provider-count="{{ provider }}">0/{{ models|length }}</span>
+      <span class="model-count-pill" data-provider-count="{{ provider }}">0/{{ models|length }}</span>
     </div>
     {% if models %}
-      <div class="d-grid gap-2">
+      <div class="model-card-grid">
         {% for model in models %}
-          <label class="form-check border rounded px-2 py-2 mb-0">
-            <input class="form-check-input me-1" type="checkbox" name="allowed_models" value="{{ model }}" data-provider-model="{{ provider }}" {% if model in selected_models %}checked{% endif %} {% if provider not in selected_providers %}disabled{% endif %}>
-            <span class="form-check-label">{{ model }}</span>
+          <label class="external-ai-model-card {% if model in selected_models %}is-selected{% endif %} {% if not provider_selected %}is-disabled{% endif %}" data-model-card>
+            <input class="sr-only-input" type="checkbox" name="allowed_models" value="{{ model }}" data-provider-model="{{ provider }}" {% if model in selected_models %}checked{% endif %} {% if not provider_selected %}disabled{% endif %}>
+            <span class="model-card-body">
+              <span class="model-card-topline">
+                <span class="model-title">{{ model_label(model) }}</span>
+                <span class="model-selected-indicator">Selected</span>
+              </span>
+              <code class="model-id">{{ model }}</code>
+              <span class="model-note">{{ model_note(provider, model) }}</span>
+              <span class="model-badge-row">{{ model_badges(provider, model) }}</span>
+            </span>
           </label>
         {% endfor %}
       </div>
@@ -70,29 +106,44 @@
     "gemini": ["gemini-2.5-flash"],
     "claude": ["claude-haiku-4-5-20251001"],
   } %}
+  <div class="gateway-model-selector p-3">
   <div class="alert alert-primary small mb-2">
-    Select a provider card, then choose only the models that external projects may call through DevPilot.
-    The active External AI Generate Gateway uses the OpenAI, Gemini, and Claude text models below.
+    Pick a preset or select provider cards below. Only selected cards are added to the policy.
+    External projects still call DevPilot only; they never receive raw provider keys.
   </div>
-  <div class="fw-semibold small mb-2">Active Gateway Models</div>
-  {% for provider, models in gateway_mvp_models.items() %}
-    {{ render_model_group(provider, models, selected_providers, selected_models) }}
-  {% endfor %}
-
-  <div class="border rounded bg-light p-2 my-2">
-    <div class="fw-semibold small mb-1">Candidate models, not enabled</div>
-    <div class="small text-muted mb-2">Planning only. These require separate approval, adapter verification, policy update, deployment, and one-provider-at-a-time live smoke before becoming selectable.</div>
-    <div class="d-flex flex-wrap gap-2">
-      <span class="badge text-bg-secondary">OpenAI candidate: gpt-5.2</span>
-      <span class="badge text-bg-secondary">OpenAI candidate: gpt-5.1</span>
-      <span class="badge text-bg-secondary">OpenAI candidate: gpt-5</span>
-      <span class="badge text-bg-secondary">OpenAI candidate: o4-mini</span>
-      <span class="badge text-bg-secondary">OpenAI image candidate: gpt-image-1</span>
-      <span class="badge text-bg-secondary">Claude candidate: claude-sonnet-4-6</span>
+  <div class="gateway-provider-tabs" data-provider-tabs>
+    <button class="gateway-provider-tab active" type="button" data-provider-tab="all">All</button>
+    {% for provider in gateway_mvp_providers %}
+      <button class="gateway-provider-tab" type="button" data-provider-tab="{{ provider }}">{{ provider_label(provider) }}</button>
+    {% endfor %}
+  </div>
+  <div class="d-flex justify-content-between align-items-center mt-3 mb-2">
+    <div>
+      <div class="fw-semibold small">Active Gateway Models</div>
+      <div class="small text-muted">Currently wired for External AI Generate.</div>
     </div>
+    <span class="badge text-bg-primary">MVP live set</span>
+  </div>
+  <div class="gateway-model-panels">
+    {% for provider, models in gateway_mvp_models.items() %}
+      {{ render_model_group(provider, models, selected_providers, selected_models) }}
+    {% endfor %}
   </div>
 
-  <details class="mt-2">
+  <details class="candidate-models-panel my-2">
+    <summary class="small fw-semibold">Candidate models, not enabled</summary>
+    <div class="small text-muted mt-2 mb-2">Planning only. These require separate approval, adapter verification, policy update, deployment, and one-provider-at-a-time live smoke before becoming selectable.</div>
+    <div class="candidate-model-grid">
+      <span class="candidate-model-card">OpenAI candidate: gpt-5.2</span>
+      <span class="candidate-model-card">OpenAI candidate: gpt-5.1</span>
+      <span class="candidate-model-card">OpenAI candidate: gpt-5</span>
+      <span class="candidate-model-card">OpenAI candidate: o4-mini</span>
+      <span class="candidate-model-card">OpenAI image candidate: gpt-image-1</span>
+      <span class="candidate-model-card">Claude candidate: claude-sonnet-4-6</span>
+    </div>
+  </details>
+
+  <details class="advanced-provider-panel mt-2">
     <summary class="small fw-semibold text-muted">Advanced / Future Providers</summary>
     <div class="alert alert-warning small my-2">
       These providers are available for broader governance records, but they are not part of the current External AI Generate MVP.
@@ -103,8 +154,260 @@
       {% endif %}
     {% endfor %}
   </details>
+  </div>
 {%- endmacro %}
 {% block content %}
+<style>
+  .gateway-model-selector,
+  .gateway-preset-panel,
+  .policy-summary-panel {
+    border: 1px solid #dce3ec;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .gateway-preset-grid {
+    display: grid;
+    gap: .5rem;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .gateway-preset-card,
+  .gateway-provider-tab {
+    border: 1px solid #cfd8e3;
+    background: #fff;
+    color: #1f2937;
+    border-radius: 8px;
+    padding: .65rem .75rem;
+    text-align: left;
+    line-height: 1.25;
+  }
+  .gateway-preset-card:hover,
+  .gateway-provider-tab:hover {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, .08);
+  }
+  .gateway-preset-title {
+    display: block;
+    font-weight: 700;
+  }
+  .gateway-preset-note {
+    display: block;
+    color: #64748b;
+    font-size: .78rem;
+    margin-top: .15rem;
+  }
+  .gateway-provider-tabs {
+    display: grid;
+    gap: .4rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .gateway-provider-tab {
+    text-align: center;
+    font-weight: 700;
+  }
+  .gateway-provider-tab.active {
+    border-color: #0d6efd;
+    background: #eef5ff;
+    color: #084298;
+  }
+  .external-ai-provider-panel {
+    border: 1px solid #dce3ec;
+    border-radius: 8px;
+    padding: .75rem;
+    margin-bottom: .75rem;
+    background: #fdfefe;
+  }
+  .external-ai-provider-panel.is-muted {
+    background: #f8fafc;
+  }
+  .provider-panel-header {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: .75rem;
+    margin-bottom: .75rem;
+  }
+  .provider-toggle-card {
+    flex: 1 1 auto;
+    margin: 0;
+    cursor: pointer;
+  }
+  .provider-toggle-visual {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    border: 1px solid #cfd8e3;
+    border-radius: 8px;
+    padding: .6rem .7rem;
+    background: #fff;
+  }
+  .provider-title {
+    font-weight: 800;
+  }
+  .provider-id {
+    color: #64748b;
+    font-size: .8rem;
+  }
+  .provider-state {
+    margin-left: auto;
+    border-radius: 999px;
+    border: 1px solid #cfd8e3;
+    color: #64748b;
+    padding: .12rem .45rem;
+    font-size: .74rem;
+    white-space: nowrap;
+  }
+  .provider-toggle-card:has(input:checked) .provider-toggle-visual {
+    border-color: #198754;
+    background: #effaf3;
+  }
+  .provider-toggle-card:has(input:checked) .provider-state {
+    border-color: #198754;
+    color: #0f5132;
+    background: #d1e7dd;
+  }
+  .model-count-pill {
+    align-self: center;
+    border: 1px solid #dce3ec;
+    border-radius: 999px;
+    padding: .25rem .55rem;
+    font-size: .8rem;
+    background: #fff;
+    white-space: nowrap;
+  }
+  .model-card-grid {
+    display: grid;
+    gap: .55rem;
+  }
+  .external-ai-model-card {
+    display: block;
+    border: 1px solid #dce3ec;
+    border-radius: 8px;
+    background: #fff;
+    padding: .65rem;
+    cursor: pointer;
+    margin: 0;
+  }
+  .external-ai-model-card:hover {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, .08);
+  }
+  .external-ai-model-card.is-selected,
+  .external-ai-model-card:has(input:checked) {
+    border-color: #198754;
+    background: #f2fbf5;
+  }
+  .external-ai-model-card.is-disabled {
+    opacity: .48;
+    cursor: not-allowed;
+  }
+  .model-card-body,
+  .model-card-topline,
+  .model-badge-row {
+    display: flex;
+  }
+  .model-card-body {
+    flex-direction: column;
+    gap: .28rem;
+  }
+  .model-card-topline {
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+  }
+  .model-title {
+    font-weight: 800;
+  }
+  .model-selected-indicator {
+    display: none;
+    border-radius: 999px;
+    background: #d1e7dd;
+    color: #0f5132;
+    font-size: .72rem;
+    padding: .1rem .45rem;
+  }
+  .external-ai-model-card.is-selected .model-selected-indicator,
+  .external-ai-model-card:has(input:checked) .model-selected-indicator {
+    display: inline-flex;
+  }
+  .model-id {
+    color: #495057;
+    background: #f8fafc;
+    border: 1px solid #edf2f7;
+    border-radius: 6px;
+    padding: .12rem .35rem;
+    width: fit-content;
+  }
+  .model-note {
+    color: #64748b;
+    font-size: .82rem;
+  }
+  .model-badge-row {
+    flex-wrap: wrap;
+    gap: .25rem;
+  }
+  .model-badge,
+  .candidate-model-card {
+    border-radius: 999px;
+    border: 1px solid #dce3ec;
+    background: #f8fafc;
+    color: #475569;
+    font-size: .73rem;
+    padding: .12rem .45rem;
+  }
+  .model-badge.recommended {
+    background: #e7f1ff;
+    border-color: #b6d4fe;
+    color: #084298;
+  }
+  .candidate-models-panel,
+  .advanced-provider-panel {
+    border: 1px dashed #cfd8e3;
+    border-radius: 8px;
+    padding: .65rem .75rem;
+    background: #fbfcfe;
+  }
+  .candidate-model-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+  }
+  .capability-chip-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .45rem;
+  }
+  .capability-chip {
+    border: 1px solid #dce3ec;
+    border-radius: 999px;
+    background: #fff;
+    color: #1f2937;
+    padding: .42rem .7rem;
+    cursor: pointer;
+    margin: 0;
+    line-height: 1;
+  }
+  .capability-chip:hover {
+    border-color: #0d6efd;
+  }
+  .capability-chip.is-selected,
+  .capability-chip:has(input:checked) {
+    background: #eef5ff;
+    border-color: #0d6efd;
+    color: #084298;
+    font-weight: 700;
+  }
+  .sr-only-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h1 class="h3 mb-1">External AI Policies</h1>
@@ -210,19 +513,35 @@
           Providers are AI platforms. Models are provider-specific model IDs. Capabilities are the AI use cases this source system may call.
         </div>
         <form method="post" action="/admin/external-ai-policies" data-policy-builder>
-          <div class="border rounded bg-light p-2 mb-3">
-            <div class="fw-semibold small mb-2">Gateway MVP quick presets</div>
-            <div class="d-flex flex-wrap gap-2">
-              <button class="btn btn-sm btn-outline-primary" type="button" data-policy-preset data-providers="openai,gemini,claude" data-models="gpt-4.1-mini,gpt-4o-mini,gemini-2.5-flash,claude-haiku-4-5-20251001" data-capabilities="summary,generate">GPT/Gemini/Claude all</button>
-              <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="openai" data-models="gpt-4.1-mini,gpt-4o-mini" data-capabilities="summary,generate">OpenAI only</button>
-              <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="gemini" data-models="gemini-2.5-flash" data-capabilities="summary,generate">Gemini only</button>
-              <button class="btn btn-sm btn-outline-secondary" type="button" data-policy-preset data-providers="claude" data-models="claude-haiku-4-5-20251001" data-capabilities="summary,generate">Claude only</button>
-              <button class="btn btn-sm btn-outline-danger" type="button" data-policy-clear>Clear selection</button>
+          <div class="gateway-preset-panel p-3 mb-3">
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+              <div>
+                <div class="fw-semibold small">Step 1. Choose a gateway setup</div>
+                <div class="small text-muted">Presets pick safe provider/model/capability combinations. You can still adjust cards manually.</div>
+              </div>
+              <button class="btn btn-sm btn-outline-danger" type="button" data-policy-clear>Clear</button>
             </div>
-            <div class="form-text">Presets select current gateway text models and keep streaming/tool calling off for MVP compatibility.</div>
+            <div class="gateway-preset-grid">
+              <button class="gateway-preset-card" type="button" data-policy-preset data-providers="openai,gemini,claude" data-models="gpt-4.1-mini,gpt-4o-mini,gemini-2.5-flash,claude-haiku-4-5-20251001" data-capabilities="summary,generate">
+                <span class="gateway-preset-title">GPT/Gemini/Claude all</span>
+                <span class="gateway-preset-note">Default MVP gateway set.</span>
+              </button>
+              <button class="gateway-preset-card" type="button" data-policy-preset data-providers="openai" data-models="gpt-4.1-mini,gpt-4o-mini" data-capabilities="summary,generate">
+                <span class="gateway-preset-title">OpenAI only</span>
+                <span class="gateway-preset-note">GPT text generation.</span>
+              </button>
+              <button class="gateway-preset-card" type="button" data-policy-preset data-providers="gemini" data-models="gemini-2.5-flash" data-capabilities="summary,generate">
+                <span class="gateway-preset-title">Gemini only</span>
+                <span class="gateway-preset-note">Fast Gemini text tasks.</span>
+              </button>
+              <button class="gateway-preset-card" type="button" data-policy-preset data-providers="claude" data-models="claude-haiku-4-5-20251001" data-capabilities="summary,generate">
+                <span class="gateway-preset-title">Claude only</span>
+                <span class="gateway-preset-note">Claude writing/reasoning.</span>
+              </button>
+            </div>
           </div>
 
-          <div class="border rounded p-2 mb-3" data-policy-summary>
+          <div class="policy-summary-panel p-3 mb-3" data-policy-summary>
             <div class="fw-semibold small mb-2">Selected summary</div>
             <div class="small"><span class="text-muted">source_system:</span> <span data-summary-source>-</span></div>
             <div class="small"><span class="text-muted">providers:</span> <span data-summary-providers>-</span></div>
@@ -249,14 +568,14 @@
           <label class="form-label">Providers and models</label>
           {{ render_model_selector(model_choices) }}
 
-          <div class="form-label">Allowed capabilities</div>
+          <div class="form-label mt-3">Allowed capabilities</div>
           {% for group, capabilities in capability_groups.items() %}
             <div class="small text-muted mt-2">{{ group }}</div>
-            <div class="d-flex flex-wrap gap-2 mb-2">
+            <div class="capability-chip-grid mb-2">
               {% for capability in capabilities %}
-                <label class="form-check border rounded px-2 py-1">
-                  <input class="form-check-input me-1" type="checkbox" name="allowed_capabilities" value="{{ capability }}">
-                  <span class="form-check-label">{{ capability }}</span>
+                <label class="capability-chip" data-capability-chip>
+                  <input class="sr-only-input" type="checkbox" name="allowed_capabilities" value="{{ capability }}">
+                  <span>{{ capability }}</span>
                 </label>
               {% endfor %}
             </div>
@@ -422,6 +741,17 @@
   const toList = (value) => (value || "").split(",").map((item) => item.trim()).filter(Boolean);
   const labelsFor = (inputs) => inputs.map((input) => input.value).filter(Boolean);
   const textOrDash = (items) => items.length ? items.join(", ") : "-";
+  const syncChoiceVisuals = (form) => {
+    for (const card of form.querySelectorAll("[data-model-card]")) {
+      const input = card.querySelector("[name='allowed_models']");
+      card.classList.toggle("is-selected", Boolean(input?.checked));
+      card.classList.toggle("is-disabled", Boolean(input?.disabled));
+    }
+    for (const chip of form.querySelectorAll("[data-capability-chip]")) {
+      const input = chip.querySelector("[name='allowed_capabilities']");
+      chip.classList.toggle("is-selected", Boolean(input?.checked));
+    }
+  };
 
   const updateSummary = (form) => {
     const summary = form.querySelector("[data-policy-summary]");
@@ -447,6 +777,7 @@
   for (const form of document.querySelectorAll("[data-policy-builder]")) {
     const toggles = Array.from(form.querySelectorAll("[data-provider-toggle]"));
     const groups = Array.from(form.querySelectorAll("[data-model-provider]"));
+    const providerTabs = Array.from(form.querySelectorAll("[data-provider-tab]"));
     if (!toggles.length || !groups.length) continue;
 
     const updateModelGroups = () => {
@@ -456,7 +787,7 @@
       for (const group of groups) {
         const provider = group.dataset.modelProvider;
         const active = enabledProviders.has(provider);
-        group.classList.toggle("opacity-50", !active);
+        group.classList.toggle("is-muted", !active);
         const modelInputs = Array.from(group.querySelectorAll("[data-provider-model]"));
         for (const input of modelInputs) {
           if (!active) input.checked = false;
@@ -465,8 +796,20 @@
         const selected = modelInputs.filter((input) => input.checked).length;
         const counter = form.querySelector(`[data-provider-count="${provider}"]`);
         if (counter) counter.textContent = `${selected}/${modelInputs.length}`;
+        const state = form.querySelector(`[data-provider-state="${provider}"]`);
+        if (state) state.textContent = active ? "Enabled" : "Select provider";
       }
+      syncChoiceVisuals(form);
       updateSummary(form);
+    };
+    const setProviderTab = (selectedProvider) => {
+      for (const button of providerTabs) {
+        button.classList.toggle("active", button.dataset.providerTab === selectedProvider);
+      }
+      for (const group of groups) {
+        const visible = selectedProvider === "all" || group.dataset.modelProvider === selectedProvider;
+        group.hidden = !visible;
+      }
     };
 
     for (const toggle of toggles) {
@@ -478,6 +821,9 @@
         }
         updateModelGroups();
       });
+    }
+    for (const button of providerTabs) {
+      button.addEventListener("click", () => setProviderTab(button.dataset.providerTab || "all"));
     }
     for (const input of form.querySelectorAll("[data-provider-model]")) {
       input.addEventListener("change", () => {
@@ -520,6 +866,12 @@
         updateModelGroups();
       });
     }
+    for (const chipInput of form.querySelectorAll("[data-capability-chip] input")) {
+      chipInput.addEventListener("change", () => {
+        syncChoiceVisuals(form);
+        updateSummary(form);
+      });
+    }
     const clearButton = form.querySelector("[data-policy-clear]");
     if (clearButton) {
       clearButton.addEventListener("click", () => {
@@ -529,6 +881,7 @@
         updateModelGroups();
       });
     }
+    setProviderTab("all");
     updateModelGroups();
   }
 })();
