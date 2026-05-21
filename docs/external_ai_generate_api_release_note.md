@@ -13,6 +13,8 @@ Production deployment: PASS
 
 Production functional verification: PASS
 
+Historical note: this release note records the first Slice 5A Gemini-only production verification. The current External AI Gateway MVP boundary is broader and policy-gated: OpenAI `gpt-4.1-mini` / `gpt-4o-mini`, Gemini `gemini-2.5-flash`, and Claude `claude-haiku-4-5-20251001`. Candidate / Future Models shown in the admin UI are not active allowlist entries until Gateway model onboarding, NAS deployment approval, and a single-provider live smoke approval are complete.
+
 ## Verified Behavior
 
 Deployment passed and the production Docker runtime loaded the Slice 5A code.
@@ -92,11 +94,11 @@ Functional verification did not perform:
 - Approval creation.
 - Normal task/project/phase mutation.
 
-## Current MVP Limits
+## Slice 5A MVP Limits At Time Of Verification
 
 Slice 5A remains intentionally narrow:
 
-- Gemini only.
+- At Slice 5A verification time, Gemini only.
 - `gemini-1.5-flash` only.
 - Text only.
 - Non-streaming only.

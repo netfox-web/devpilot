@@ -54,15 +54,17 @@
   {%- endif -%}
 {%- endmacro %}
 
-{% macro model_badges(provider, model) -%}
+{% macro model_badges(provider, model, is_gateway_active=false) -%}
+  {%- if is_gateway_active -%}<span class="model-badge active">Active</span>{%- else -%}<span class="model-badge">future</span>{%- endif -%}
   <span class="model-badge">text</span>
   {%- if provider == "openai" -%}<span class="model-badge">GPT</span>{%- endif -%}
   {%- if provider == "gemini" -%}<span class="model-badge">fast</span>{%- endif -%}
   {%- if provider == "claude" -%}<span class="model-badge">Claude</span>{%- endif -%}
+  {%- if is_gateway_active -%}<span class="model-badge">MVP</span>{%- endif -%}
   {%- if model in ["gpt-4.1-mini", "gemini-2.5-flash", "claude-haiku-4-5-20251001"] -%}<span class="model-badge recommended">recommended</span>{%- endif -%}
 {%- endmacro %}
 
-{% macro render_model_group(provider, models, selected_providers=[], selected_models=[]) -%}
+{% macro render_model_group(provider, models, selected_providers=[], selected_models=[], is_gateway_active=false) -%}
   {% set provider_selected = provider in selected_providers %}
   <div class="external-ai-provider-panel {% if not provider_selected %}is-muted{% endif %}" data-model-provider="{{ provider }}" data-provider-panel="{{ provider }}">
     <div class="provider-panel-header">
@@ -84,11 +86,14 @@
             <span class="model-card-body">
               <span class="model-card-topline">
                 <span class="model-title">{{ model_label(model) }}</span>
-                <span class="model-selected-indicator">Selected</span>
+                <span class="model-status-row">
+                  <span class="model-active-indicator {% if not is_gateway_active %}is-future{% endif %}">{% if is_gateway_active %}Active / Available{% else %}Advanced / Future{% endif %}</span>
+                  <span class="model-selected-indicator">Selected</span>
+                </span>
               </span>
               <code class="model-id">{{ model }}</code>
               <span class="model-note">{{ model_note(provider, model) }}</span>
-              <span class="model-badge-row">{{ model_badges(provider, model) }}</span>
+              <span class="model-badge-row">{{ model_badges(provider, model, is_gateway_active) }}</span>
             </span>
           </label>
         {% endfor %}
@@ -108,7 +113,8 @@
   } %}
   <div class="gateway-model-selector p-3">
   <div class="alert alert-primary small mb-2">
-    Pick a preset or select provider cards below. Only selected cards are added to the policy.
+    <div class="fw-semibold">External AI Gateway MVP allowlist</div>
+    Pick a preset or select provider cards below. Only Active Gateway Models are submitted into the production policy allowlist.
     This page is the External AI Gateway MVP allowlist, not a full provider model catalog.
     External projects still call DevPilot only; they never receive raw provider keys.
   </div>
@@ -121,13 +127,13 @@
   <div class="d-flex justify-content-between align-items-center mt-3 mb-2">
     <div>
       <div class="fw-semibold small">Active Gateway Models</div>
-      <div class="small text-muted">Enabled models that can be written into a production source policy allowlist.</div>
+      <div class="small text-muted">Enabled provider/model choices that can be written into a production source policy allowlist.</div>
     </div>
     <span class="badge text-bg-primary">MVP live set</span>
   </div>
   <div class="gateway-model-panels">
     {% for provider, models in gateway_mvp_models.items() %}
-      {{ render_model_group(provider, models, selected_providers, selected_models) }}
+      {{ render_model_group(provider, models, selected_providers, selected_models, true) }}
     {% endfor %}
   </div>
 
@@ -142,36 +148,42 @@
         <span class="candidate-model-provider">OpenAI</span>
         <code>gpt-5.2</code>
         <span class="candidate-model-status">candidate / not enabled</span>
+        <span class="candidate-model-reason">Requires Gateway model onboarding.</span>
         <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
       </div>
       <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="gpt-5.1">
         <span class="candidate-model-provider">OpenAI</span>
         <code>gpt-5.1</code>
         <span class="candidate-model-status">candidate / not enabled</span>
+        <span class="candidate-model-reason">Requires Gateway model onboarding.</span>
         <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
       </div>
       <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="gpt-5">
         <span class="candidate-model-provider">OpenAI</span>
         <code>gpt-5</code>
         <span class="candidate-model-status">candidate / not enabled</span>
+        <span class="candidate-model-reason">Requires Gateway model onboarding.</span>
         <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
       </div>
       <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="o4-mini">
         <span class="candidate-model-provider">OpenAI</span>
         <code>o4-mini</code>
         <span class="candidate-model-status">candidate / not enabled</span>
+        <span class="candidate-model-reason">Requires Gateway model onboarding.</span>
         <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
       </div>
       <div class="candidate-model-card" data-candidate-card data-candidate-provider="openai" data-candidate-model="gpt-image-1">
         <span class="candidate-model-provider">OpenAI image</span>
         <code>gpt-image-1</code>
         <span class="candidate-model-status">candidate / not enabled</span>
+        <span class="candidate-model-reason">Requires Gateway model onboarding.</span>
         <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
       </div>
       <div class="candidate-model-card" data-candidate-card data-candidate-provider="claude" data-candidate-model="claude-sonnet-4-6">
         <span class="candidate-model-provider">Claude</span>
         <code>claude-sonnet-4-6</code>
         <span class="candidate-model-status">candidate / not enabled</span>
+        <span class="candidate-model-reason">Requires Gateway model onboarding.</span>
         <button class="btn btn-sm btn-outline-secondary" type="button" data-candidate-enable>Request enable</button>
       </div>
     </div>
@@ -192,14 +204,14 @@
         <li>NAS production deployment approval.</li>
         <li>Single-provider live smoke approval.</li>
       </ol>
-      <div class="small text-muted mt-2">This button does not change policy data or submit a provider/model.</div>
+      <div class="small text-muted mt-2">Candidate models cannot be used by external projects until they complete onboarding. This button does not change policy data or submit a provider/model.</div>
     </div>
   </details>
 
   <details class="advanced-provider-panel mt-2">
     <summary class="small fw-semibold text-muted">Advanced / Future Providers</summary>
     <div class="alert alert-warning small my-2">
-      These providers are available for broader governance records, but they are not part of the current External AI Generate MVP.
+      These providers are available for broader governance records, but they are not part of the current External AI Generate MVP. Do not treat them as active Gateway models without a separate onboarding phase.
     </div>
     {% for provider, models in model_choices.items() %}
       {% if provider not in gateway_mvp_providers %}
@@ -213,10 +225,26 @@
 <style>
   .gateway-model-selector,
   .gateway-preset-panel,
-  .policy-summary-panel {
+  .policy-summary-panel,
+  .policy-builder-hero {
     border: 1px solid #dce3ec;
     border-radius: 8px;
     background: #fff;
+  }
+  .policy-builder-hero {
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  }
+  .policy-builder-kicker {
+    color: #0d6efd;
+    font-size: .78rem;
+    font-weight: 800;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+  }
+  .policy-builder-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
   }
   .gateway-preset-grid {
     display: grid;
@@ -378,6 +406,26 @@
     font-size: .72rem;
     padding: .1rem .45rem;
   }
+  .model-status-row {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: .25rem;
+  }
+  .model-active-indicator {
+    border-radius: 999px;
+    background: #e7f1ff;
+    border: 1px solid #b6d4fe;
+    color: #084298;
+    font-size: .72rem;
+    padding: .1rem .45rem;
+    white-space: nowrap;
+  }
+  .model-active-indicator.is-future {
+    background: #f8fafc;
+    border-color: #dce3ec;
+    color: #64748b;
+  }
   .external-ai-model-card.is-selected .model-selected-indicator,
   .external-ai-model-card:has(input:checked) .model-selected-indicator {
     display: inline-flex;
@@ -410,6 +458,11 @@
     background: #e7f1ff;
     border-color: #b6d4fe;
     color: #084298;
+  }
+  .model-badge.active {
+    background: #d1e7dd;
+    border-color: #a3cfbb;
+    color: #0f5132;
   }
   .candidate-models-panel,
   .advanced-provider-panel {
@@ -446,6 +499,10 @@
     color: #664d03;
     font-size: .72rem;
     padding: .1rem .45rem;
+  }
+  .candidate-model-reason {
+    color: #64748b;
+    font-size: .78rem;
   }
   .candidate-onboarding-panel {
     border: 1px solid #ffecb5;
@@ -489,6 +546,23 @@
     white-space: nowrap;
     border: 0;
   }
+  @media (max-width: 768px) {
+    .gateway-provider-tabs {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .provider-panel-header,
+    .model-card-topline {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+    .provider-toggle-card,
+    .provider-toggle-visual {
+      width: 100%;
+    }
+    .provider-state {
+      margin-left: 0;
+    }
+  }
 </style>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
@@ -499,6 +573,19 @@
     <a class="btn btn-outline-secondary" href="/admin/external-ai-permission-profiles">Permission Profiles</a>
     <a class="btn btn-outline-secondary" href="/admin/ai-providers">AI Providers</a>
     <a class="btn btn-outline-secondary" href="/admin/external-api-keys">External API Keys</a>
+  </div>
+</div>
+
+<div class="policy-builder-hero p-3 mb-3">
+  <div class="policy-builder-kicker mb-1">External AI Gateway MVP allowlist</div>
+  <div class="h5 mb-1">Control which provider/model pairs external projects may call through DevPilot.</div>
+  <div class="text-muted small mb-2">
+    This is not a full provider model catalog. Active Gateway Models can be written into production policies; Candidate / Future Models are roadmap entries that require onboarding before use.
+  </div>
+  <div class="policy-builder-facts small">
+    <span class="badge text-bg-success">Active: GPT / Gemini / Claude text models</span>
+    <span class="badge text-bg-secondary">Candidate models do not submit</span>
+    <span class="badge text-bg-secondary">External projects never receive raw provider keys</span>
   </div>
 </div>
 
@@ -592,14 +679,14 @@
       <div class="card-header fw-bold">Advanced Manual Policy</div>
       <div class="card-body">
         <div class="alert alert-secondary small">
-          Providers are AI platforms. Models are provider-specific model IDs. Capabilities are the AI use cases this source system may call.
+          Providers are AI platforms. Active Gateway Models are the only provider/model pairs currently available for External AI Generate. Candidate and future entries require model onboarding before they can be used by external projects.
         </div>
         <form method="post" action="/admin/external-ai-policies" data-policy-builder>
           <div class="gateway-preset-panel p-3 mb-3">
             <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
               <div>
                 <div class="fw-semibold small">Step 1. Choose a gateway setup</div>
-                <div class="small text-muted">Presets pick safe provider/model/capability combinations. You can still adjust cards manually.</div>
+                <div class="small text-muted">Presets select Active Gateway Models only. They never enable Candidate / Future Models.</div>
               </div>
               <button class="btn btn-sm btn-outline-danger" type="button" data-policy-clear>Clear</button>
             </div>
@@ -630,7 +717,7 @@
             <div class="small"><span class="text-muted">models:</span> <span data-summary-models>-</span></div>
             <div class="small"><span class="text-muted">capabilities:</span> <span data-summary-capabilities>-</span></div>
             <div class="small"><span class="text-muted">limits:</span> <span data-summary-limits>-</span></div>
-            <div class="small text-muted mt-2">External projects can call only the selected allowlist models through DevPilot.</div>
+            <div class="small text-muted mt-2">External projects can call only the selected allowlist models through DevPilot. Candidate models shown below are not included in the submitted policy.</div>
           </div>
 
           <label class="form-label">Source system from managed key</label>
@@ -652,6 +739,7 @@
           {{ render_model_selector(model_choices) }}
 
           <div class="form-label mt-3">Allowed capabilities</div>
+          <div class="form-text mb-2">Select the use cases this source system may call. Chips submit the existing capability values; no provider call is made here.</div>
           {% for group, capabilities in capability_groups.items() %}
             <div class="small text-muted mt-2">{{ group }}</div>
             <div class="capability-chip-grid mb-2">

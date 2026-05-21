@@ -120,6 +120,8 @@ Model selection boundary:
 - Active Gateway Models can be selected into a policy.
 - Candidate / Future Models cannot be submitted as `allowed_models` until onboarding is complete.
 - Onboarding gates: backend allowlist, adapter compatibility, tests/docs, NAS deployment approval, and one-provider-at-a-time live smoke approval.
+- Presets select Active Gateway Models only and must not enable GPT-5.x, Claude Sonnet, image, video, or other candidate models by UI-only change.
+- Candidate model `Request enable` controls are front-end guidance only; they do not submit a policy, write the database, or call providers.
 
 ## Key And Policy Layer Comparison
 
@@ -160,16 +162,16 @@ Future generate/chat endpoints should be:
 - Idempotency-aware.
 - Non-mutating by default.
 
-Expected first enabled endpoint:
+Enabled endpoint:
 
 ```text
 POST /api/external/ai/generate
 ```
 
-Initial recommended scope:
+Current MVP scope:
 
-- One provider.
-- One model.
+- OpenAI, Gemini, and Claude text providers only.
+- Active Gateway Models only: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, `claude-haiku-4-5-20251001`.
 - Non-streaming.
 - Strict source allowlist.
 - No tool calling.
@@ -183,5 +185,19 @@ Initial recommended scope:
 - Provider keys must never be printed in logs, UI, API responses, or exports.
 - External systems receive DevPilot external API keys only.
 - Source AI policies must fail closed.
-- No provider calls are enabled until a separate implementation and production verification phase.
+- Admin policy pages must not perform provider live calls.
+- Provider live smoke tests require a separate explicit approval, one provider/model at a time.
 - No deploy, restart, migration, DNS, SSL, Nginx, Cloudflare, redirect, or infrastructure change is implied by this groundwork.
+
+## Final Acceptance Checklist
+
+Before marking the External AI Gateway policy builder as ready for operator acceptance, verify:
+
+- `/admin/external-ai-policies` clearly presents `External AI Gateway MVP allowlist` and says it is not a full provider model catalog.
+- Active Gateway Models are visually primary and selectable: `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, and `claude-haiku-4-5-20251001`.
+- Candidate / Future Models are visually secondary, non-submitting, and show the Gateway model onboarding gates.
+- Presets select only Active Gateway Models.
+- The selected summary shows source system, selected providers, selected active models, capabilities, limits, and the note that candidate models are not submitted.
+- Deployment to NAS production `5010` remains a separate approval gate.
+- Post-deployment read-only smoke should verify `/ai-handoffs`, `/admin/external-ai-policies`, and `/api/external/ai/generate` without running provider live calls.
+- Gemini and Claude live smoke checks remain separate one-provider-at-a-time approval gates unless already approved and recorded.

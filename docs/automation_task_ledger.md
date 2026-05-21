@@ -299,6 +299,58 @@ Task classes are defined in `docs/automation_decision_gates.md`.
   - Manual authenticated browser check for the new External AI Policies controls.
   - Separate approval to fix or replace policies that still have `allow_streaming` or `allow_tool_calling` enabled for the External AI Generate MVP.
 
+### External AI model onboarding UI deployment
+
+- Date/time: 2026-05-21.
+- Task class: Class D - Deploy / restart / Docker / NAS / production operation.
+- Operator intent: deploy the External AI Policy onboarding UI to NAS production `5010`.
+- Commit: `daa0941 feat: improve external AI model onboarding UI`.
+- Files changed by deployed commit:
+  - `templates/external_ai_policies.html`
+  - `tests/test_ai_manual_handoff.py`
+  - External AI Gateway and automation docs.
+- Commands run:
+  - local verification: `python -m py_compile app.py`, targeted pytest suites, `git diff --check`.
+  - `git archive` for latest `HEAD`.
+  - SSH binary stdin pipe to `/tmp/production-source-sync-daa0941.tar`.
+  - NAS checksum verification.
+  - NAS source backup.
+  - NAS archive extract into `/volume1/docker/devpilot`.
+  - NAS `/usr/local/bin/docker compose config`.
+  - NAS `/usr/local/bin/docker compose build devpilot`.
+  - NAS `/usr/local/bin/docker compose up -d --no-deps --force-recreate devpilot`.
+  - unauthenticated read-only smoke checks.
+- Verification:
+  - Local and remote archive SHA-256 matched: `050206430af28d1beca89d6ee1d068c6adb45d2360d112893745eb7bc67ccbf7`.
+  - Production backup created at `/volume1/docker/devpilot/backups/source-sync-20260521-091326/source-before-sync.tar.gz` with size `50M`.
+  - Production source contained the onboarding UI markers: `Candidate / Future Models`, `Gateway model onboarding`, `Request enable`, and non-submitting candidate model cards.
+  - DevPilot production container `devpilot-project-manager` was rebuilt and recreated.
+  - Production port remained `5010->5000`.
+  - `/ai-handoffs` returned `302` to login while unauthenticated.
+  - `/admin/external-ai-policies` returned `302` to login while unauthenticated.
+  - `/api/external/ai/generate` returned `405 Method Not Allowed` for HEAD, confirming the route remains present and POST-only.
+  - Safe log checks found no visible `error`, `traceback`, or `importerror` lines after deploy.
+- UI changes deployed:
+  - Candidate / Future Models are non-submitting cards.
+  - Candidate `Request enable` opens only front-end onboarding guidance.
+  - Active Gateway Models are the only production allowlist model inputs.
+  - Active Gateway Models remain `gpt-4.1-mini`, `gpt-4o-mini`, `gemini-2.5-flash`, `claude-haiku-4-5-20251001`.
+- Safety confirmation:
+  - no provider live call.
+  - no `.env` contents printed or changed.
+  - no external project key changed.
+  - no `source_system` changed.
+  - no External AI Policy DB data changed.
+  - no staging / `5012` mutation.
+  - no Nginx / DNS / Cloudflare / SSL changes.
+  - no rollback.
+- Push status: pushed before deployment.
+- Final git status: clean at the time of deployment.
+- Follow-up candidates:
+  - Final authenticated UI acceptance check.
+  - Deploy any later local UI polish only after a separate NAS production approval.
+  - Run Gemini and Claude live smoke separately only after explicit provider-specific approval.
+
 ## New Entry Template
 
 ```markdown

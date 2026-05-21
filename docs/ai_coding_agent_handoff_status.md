@@ -53,7 +53,7 @@ Candidate / Future Models displayed in `/admin/external-ai-policies` are not act
 
 Codex implemented GitHub Issue #4: `Add Claude mock path to External AI Generate gateway`.
 
-The External AI Generate gateway now accepts an explicit `provider` field while preserving Gemini as the default provider when `provider` is omitted. Gemini remains available with `gemini-1.5-flash`. Claude is now supported as a mocked/tested gateway path with `claude-3-5-haiku`.
+Historical note: this older run introduced the first explicit provider field and mocked Claude path. The current production model boundary is the one listed above: `gemini-2.5-flash` for Gemini and `claude-haiku-4-5-20251001` for Claude, with legacy aliases preserved only for compatibility.
 
 Claude gateway support is intentionally non-live in this phase. The new `call_claude_external_ai_generate(...)` function returns `claude_external_ai_gateway_not_live_enabled` unless tests patch it. This keeps the route testable without adding a live Anthropic call.
 

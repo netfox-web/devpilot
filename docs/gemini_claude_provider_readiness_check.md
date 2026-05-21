@@ -15,7 +15,7 @@ Approval workflow boundary: Phase 8 defines future `external_ai_live_verificatio
 
 ## External AI Gateway Production Deployment
 
-Status: gateway deployed; provider live verification still not performed.
+Status: gateway deployed; OpenAI has a prior operator-reported live smoke pass; latest Gemini and Claude production live smoke checks remain pending unless separately approved and recorded.
 
 - Date: 2026-05-20.
 - Deployed commit: `fbf058b feat: enable external AI gateway providers`.
@@ -36,7 +36,11 @@ Status: gateway deployed; provider live verification still not performed.
 - Post-deploy route smoke:
   - `/api/external/ai/generate` returned `405` for HEAD, confirming the route is present and POST-only.
   - unauthenticated POST returned `403`, confirming missing external auth is rejected.
-- Provider live calls performed: no.
+- Provider live calls during deployment: no.
+- Latest live smoke status:
+  - OpenAI: prior operator-reported pass for `openai` / `gpt-4.1-mini`.
+  - Gemini: pending latest production live smoke for `gemini` / `gemini-2.5-flash`.
+  - Claude: pending latest production live smoke for `claude` / `claude-haiku-4-5-20251001`.
 
 Live Gemini, OpenAI, and Claude generation checks remain Class F provider live call tasks. Each provider live smoke requires separate explicit approval before token spend.
 
